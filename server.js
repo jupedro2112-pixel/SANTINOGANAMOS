@@ -17153,7 +17153,7 @@ app.delete('/api/admin/reviews/:id', authMiddleware, adminMiddleware, async (req
 
 // Devuelve el bono de carga vigente de un usuario (o null). Vigente =
 // status 'active' y no vencido. De paso vence los que pasaron su ventana.
-async function _getActivePromoBonus(username) {
+async function _getActivePromoBonus(username, opts = {}) {
   const u = String(username || '').toLowerCase();
   if (!u) return null;
   const now = new Date();
@@ -17164,14 +17164,22 @@ async function _getActivePromoBonus(username) {
   // Sólo bonos de carga (percent > 0) para el banner "% en la carga". Los regalos
   // de monto fijo (percent 0, ej. regalo ticket alto) se entregan por push / soporte
   // y se trackean aparte — no se muestran en este banner para no mostrar "0%".
-  const b = await PromoBonus.findOne({ username: u, status: 'active', percent: { $gt: 0 }, expiresAt: { $gt: now } })
+  // EXCEPCIÓN (opts.includeFixed === true, lo pasa SOLO el endpoint admin): suma
+  // también los regalos de $ fijo — los lotes de notificaciones (#155) crean
+  // PromoBonus de monto fijo que el AGENTE tiene que ver como "REGALO PENDIENTE".
+  const valueMatch = opts.includeFixed === true
+    ? { $or: [{ percent: { $gt: 0 } }, { montoFijoARS: { $gt: 0 } }] }
+    : { percent: { $gt: 0 } };
+  const b = await PromoBonus.findOne({ username: u, status: 'active', expiresAt: { $gt: now }, ...valueMatch })
     .sort({ activatedAt: -1 })
     .lean();
   if (!b) return null;
-  // Tope de LECTURA (decisión owner 2026-07-08): los bonos automáticos están
+  // Tope de LECTURA (decisión owner 2026-07-08): los bonos AUTOMÁTICOS están
   // capeados a 30%. Aunque quede un PromoBonus viejo en la DB con 50/100%,
   // ni el usuario ni el agente vuelven a ver más de 30%.
-  if (Number(b.percent) > 30) b.percent = 30;
+  // EXENTOS los de LOTE (sourceRuleCode 'lote'): no son automáticos — los
+  // configura un agente a mano desde el panel (hasta 200%).
+  if (b.sourceRuleCode !== 'lote' && Number(b.percent) > 30) b.percent = 30;
   return b;
 }
 
@@ -17195,12 +17203,14 @@ app.get('/api/admin/promo-bonus', authMiddleware, adminMiddleware, async (req, r
   try {
     const username = String(req.query.username || '').trim();
     if (!username) return res.status(400).json({ error: 'Falta username' });
-    const b = await _getActivePromoBonus(username);
+    // includeFixed: el agente también ve los regalos de $ fijo de los lotes.
+    const b = await _getActivePromoBonus(username, { includeFixed: true });
     if (!b) return res.json({ bonus: null });
     res.json({
       bonus: {
         id: b.id,
         percent: b.percent,
+        montoFijoARS: b.montoFijoARS || 0,
         activatedAt: b.activatedAt,
         expiresAt: b.expiresAt,
         sourceRuleCode: b.sourceRuleCode,

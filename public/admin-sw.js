@@ -34,7 +34,7 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v27'; // v27: fix badge APP/NAVEGADOR en vivo (recarga loadUserInfo, no clasifica por último token)
+const CACHE_VERSION = 'v28'; // v28: cartel verde con regalos $ fijo, origen de lote y vencimiento en horas
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).

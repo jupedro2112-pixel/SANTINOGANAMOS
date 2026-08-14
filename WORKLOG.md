@@ -8,6 +8,26 @@
 
 ## Sesión 2026-08-14
 
+### 155. PromoBonus listo para los lotes: regalos de $ fijo visibles al agente, cap 30% con exención 'lote'
+- **Preparación del cartel verde para los lotes de notificaciones (#156):**
+- **`_getActivePromoBonus(username, opts)`:** por default sigue filtrando
+  `percent > 0`. Con `opts.includeFixed === true` (lo pasa SOLO el endpoint
+  admin) suma los regalos de $ fijo (`$or: percent>0 | montoFijoARS>0`). El
+  endpoint de la PWA (`/api/promo-bonus/mine`) NO cambia.
+- **Cap de lectura de 30%** sobre `percent` queda SOLO para bonos automáticos:
+  los de lote (`sourceRuleCode === 'lote'`) están EXENTOS (los configura un
+  agente a mano, hasta 200%).
+- **`GET /api/admin/promo-bonus`:** agrega `montoFijoARS` a la respuesta y pide
+  con `includeFixed`.
+- **Panel (`loadChatPromoBonus`):** si `montoFijoARS > 0 && !(percent > 0)` →
+  título "REGALO PENDIENTE: $X — sumáselo en su próxima carga"; si no, el "%
+  en la carga" de siempre. Origen: lote → `sourceRuleName` ("Lote de AGENTE —
+  nombre"); si no, "regla <code>". Vencimiento en horas cuando ≥ 120 min.
+  admin-sw a **v28**.
+- **Sin tocar:** el depósito con bonus sigue marcando el PromoBonus activo como
+  usado automáticamente (con cargaMonto).
+- **Validado:** `node --check` OK. Back necesita redeploy.
+
 ### 154. Fixes de push: sendPushIfOffline con resultado + forcePush, socket fantasma del chat, badge APP/NAVEGADOR en vivo
 - **Base para los lotes de notificaciones (#155+), y 2 bugs reales:**
 - **(a) `sendPushIfOffline(user, title, body, data, opts)` ahora DEVUELVE**

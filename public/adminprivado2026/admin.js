@@ -10582,11 +10582,24 @@ async function loadChatPromoBonus(username) {
             return;
         }
         const mins = Math.max(0, Math.round((new Date(b.expiresAt).getTime() - Date.now()) / 60000));
+        // Vencimiento en horas cuando queda mucho (los lotes duran hasta 168h).
+        const vence = mins >= 120 ? ('Vence en ' + Math.round(mins / 60) + ' hs') : ('Vence en ' + mins + ' min');
+        // Origen: los lotes muestran su nombre completo ("Lote de AGENTE — nombre");
+        // el resto sigue como "regla <code>".
+        const origen = b.sourceRuleCode === 'lote'
+            ? escapeHtml(b.sourceRuleName || 'Lote de notificaciones')
+            : 'regla ' + escapeHtml(b.sourceRuleCode || '-');
+        // Regalo de $ fijo (lote de fichas "cartel al agente" no existe; esto cubre
+        // regalos con montoFijoARS y percent 0): el agente lo SUMA en la carga.
+        const esRegalo = Number(b.montoFijoARS) > 0 && !(Number(b.percent) > 0);
+        const titulo = esRegalo
+            ? 'REGALO PENDIENTE: $' + Number(b.montoFijoARS).toLocaleString('es-AR') + ' — sumáselo en su próxima carga'
+            : 'BONO VIGENTE: ' + b.percent + '% en la carga';
         el.style.background = 'linear-gradient(90deg,#0f8a2f,#0a6b25)';
         el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:#fff;">' +
             '<span style="font-size:18px;">🎁</span>' +
-            '<div style="flex:1;min-width:120px;"><strong style="font-size:13px;">BONO VIGENTE: ' + b.percent + '% en la carga</strong>' +
-            '<div style="font-size:11px;opacity:0.9;">Vence en ' + mins + ' min · regla ' + escapeHtml(b.sourceRuleCode || '-') + '</div></div>' +
+            '<div style="flex:1;min-width:120px;"><strong style="font-size:13px;">' + titulo + '</strong>' +
+            '<div style="font-size:11px;opacity:0.9;">' + vence + ' · ' + origen + '</div></div>' +
             '<button onclick="markChatPromoBonusUsed(\'' + b.id + '\')" style="background:#fff;color:#0a7a2f;border:none;border-radius:7px;padding:6px 11px;font-weight:800;font-size:11.5px;cursor:pointer;">✓ Marcar usado</button>' +
             '</div>';
     } catch (e) {
