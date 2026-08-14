@@ -1029,11 +1029,20 @@ VIP.ui._showCasinoFrame = function() {
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'casinoOverlay';
+    // iPhone standalone (viewport-fit=cover + status bar translúcida): el
+    // viewport ocupa también el notch y la zona del home indicator. El resto
+    // del front compensa con env(safe-area-inset-*) en los CSS; este overlay
+    // se arma inline, así que compensa acá: padding-bottom para que el iframe
+    // termine antes del home indicator (esa franja queda del color del
+    // overlay, no blanca) y padding-top en la barra para arrancar debajo del
+    // reloj. En navegador normal env() vale 0 → cero cambio.
     overlay.style.cssText =
-      'position:fixed;inset:0;z-index:99999;background:#0d0d1a;display:flex;flex-direction:column;';
+      'position:fixed;inset:0;z-index:99999;background:#0d0d1a;display:flex;flex-direction:column;' +
+      'padding-bottom:env(safe-area-inset-bottom,0px);';
     overlay.innerHTML =
       '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;' +
-      'padding:8px 12px;background:#12101a;border-bottom:1px solid rgba(212,175,55,0.25);' +
+      'padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top,0px));' +
+      'background:#12101a;border-bottom:1px solid rgba(212,175,55,0.25);' +
       'flex:0 0 auto;">' +
         '<span style="color:#d4af37;font-weight:800;font-size:15px;">🎰 CASINO</span>' +
         '<div style="display:flex;gap:8px;align-items:center;">' +
