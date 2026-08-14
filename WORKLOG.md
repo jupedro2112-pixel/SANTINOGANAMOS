@@ -8,6 +8,74 @@
 
 ## Sesión 2026-08-14
 
+### 156. LOTES DE NOTIFICACIONES CON REGALO (sistema completo)
+- **Feature grande portada del proyecto hermano.** Envío masivo con regalo:
+  - **Regla de oro (quién pone la plata):** `percent` = lo aplica EL AGENTE en
+    la carga (al activarse crea un PromoBonus `sourceRuleCode:'lote'` → cartel
+    verde + Marcar usado, exento del cap 30%, ver #155); `fixed` (fichas) =
+    SIEMPRE automático vía `_creditNotifBatchGift` (por código al canjear; por
+    tiempo al enviarse el lote) — sin PromoBonus, el agente recibe nota
+    admin-only "no hay que hacer nada".
+  - **Modelo `src/models/NotifBatch.js`** (nuevo): lote con `mode`
+    code/window, giftType percent/fixed, amount, rolloverX, code (UPPERCASE),
+    isPublic+maxClaims, validHours (1..168, UN reloj por lote), sentAt/
+    expiresAt, audiencia, `sendDone`, y `recipients[]` embebidos con channel
+    (app/browser/none al enviar), delivery (null/sending/socket/push/none/
+    error), claimedAt, promoBonusId, creditedAt/creditTxId/creditError.
+    Índices: `{mode, code, expiresAt:-1}` y `{'recipients.userId':1}`.
+  - **Candados anti-abuso** (`_creditNotifBatchGift`): máx **3 créditos/24h** y
+    **$300.000/7d** POR USUARIO cruzando TODOS los lotes (aggregate sobre
+    Transaction `metadata.source:'notif_batch'`); guard bono-sobre-bono contra
+    la plataforma; crédito con reference ESTABLE `vip-nbatch-{batchId}-{userId}`
+    (reintentos jamás pagan dos veces); auto-claim v1.7; Transaction `bonus`
+    (NO cuenta como carga). Rollover validado contra **bonus.multipliers** (⚠️
+    no rollover.multipliers). Tope pasado → `_emitNotifBatchSecurityAlert`:
+    log ERROR + nota admin-only + `io.to('admins').emit('security_alert')` →
+    toast ROJO en vivo en el panel.
+  - **Motor reanudable** (`_processNotifBatchQueue`, setImmediate al crear +
+    setInterval 45s): claim atómico por destinatario con findOneAndUpdate +
+    proyección posicional (multi-instancia EB safe; un 'sending' colgado >10
+    min se re-reclama solo). window+fixed acredita y avisa; window+percent
+    activa el PromoBonus; notifica con Message de sistema + `sendPushIfOffline`
+    (tag notif-batch) y guarda `delivery` real (#154). Pausa 35ms entre
+    destinatarios. Cierre → `sendDone` ("COMPLETADO").
+  - **Endpoints:** `POST /api/admin/notif-batches/preview` (audiencia sin
+    enviar: chips con canal, máx 150 visibles + truncated, notFound, skipped,
+    totals), `POST /api/admin/notif-batches` (validaciones completas; código
+    de 8 chars sin confundibles autogenerado; sin colisión con el welcome code
+    ni con otro lote ACTIVO; audiencias list/inactive/all/public),
+    `GET /api/admin/notif-batches` (tamaños por aggregation, sin recipients) y
+    `GET .../:id` (detalle por usuario con join a PromoBonus). Roles: enviar/
+    preview admin+depositor; historial también withdrawer.
+  - **Código PÚBLICO** (Telegram/redes): sin envío (`sendDone:true`,
+    recipients vacíos); canje de CUALQUIER role user UNA vez con append
+    atómico (`$not $elemMatch` + `$expr $size < maxClaims`); fallo de crédito
+    → `$pull` (no consume cupo); vencido → "venció" (no "no válido").
+  - **Canje por código:** hook `_tryClaimNotifBatchCode` en
+    `POST /api/community-code/claim` ANTES del welcome code (null = no es de
+    lote → flujo intacto). Membresía sin revelar códigos ajenos; reserva
+    atómica; fixed acredita + mensajes; percent activa cartel + mensajes.
+    **SIN gate de app instalada** (la exclusividad es la membresía).
+  - **PWA:** modal renombrado "🎁 Reclamar Bono con Código" (menú ☰ ídem);
+    CRÍTICO: los estados pending/used/credited del welcome code ahora muestran
+    un input extra ("¿Te llegó OTRO código?") → quien ya usó la bienvenida
+    puede canjear códigos de lote. SW PWA a **v95**.
+  - **Panel:** card "🎁 Lote con regalo" (modo/regalo/rollover/vigencia/código
+    con 🎲/título/mensaje/audiencias con radios + Validar lista + confirm con
+    conteo real y avisos por caso + guía "❓ Cómo funciona") y card "📤 Lotes
+    enviados" (historial con progreso en vivo "⏳ enviando (X/N)", quién lo
+    envió, "👥 Ver lote" con detalle por usuario capado a 400 filas). Listener
+    `security_alert` → toast rojo. admin-sw a **v29**.
+- **Validado:** `node --check` OK (server.js, NotifBatch.js, admin.js, SWs) +
+  parse de los 7 scripts inline de index.html. **Back necesita redeploy.**
+  PROBAR (mínimo): lote código % a 2-3 cuentas (push+chat, canje → cartel
+  verde, código desde cuenta ajena → "no válido"); lote fichas por código
+  (saldo entra solo + nota al agente); lote fichas por tiempo a 2 cuentas
+  (confirm muestra el total, acredita solo); 4 créditos seguidos a la misma
+  cuenta → el 4° se bloquea + toast rojo; código público con cupo 2 → tercera
+  cuenta rechazada; usuario que ya usó el welcome code canjea códigos de lote;
+  reiniciar el server a mitad de un lote → el motor lo termina solo.
+
 ### 155. PromoBonus listo para los lotes: regalos de $ fijo visibles al agente, cap 30% con exención 'lote'
 - **Preparación del cartel verde para los lotes de notificaciones (#156):**
 - **`_getActivePromoBonus(username, opts)`:** por default sigue filtrando

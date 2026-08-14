@@ -1264,6 +1264,13 @@ function initSocket() {
             loadUserInfo(data.userId);
         }
     });
+
+    // Alerta URGENTE de seguridad (posible abuso de regalos de lote): toast
+    // rojo en vivo. El detalle queda también como nota gris en el chat del
+    // usuario y en los logs del server.
+    socket.on('security_alert', (data) => {
+        if (data && data.message) showToast(escapeHtml(data.message), 'error');
+    });
     
     // CHAT UPDATED - Actualizar lista lateral en tiempo real cuando llega un mensaje
     socket.on('chat_updated', (data) => {
@@ -6587,8 +6594,309 @@ async function loadNotificationsPanel() {
         loadNotifUsers(1, filter),
         loadNotifStrategy(),
         loadSchedules(),
-        loadTagBroadcastOptions()
+        loadTagBroadcastOptions(),
+        loadNotifBatches()
     ]);
+}
+
+// ============================================
+// 🎁 LOTES DE NOTIFICACIONES CON REGALO
+// ============================================
+// Card "Lote con regalo": envío masivo con regalo (% que aplica el agente, o
+// fichas automáticas), por código o por tiempo, con audiencias (lista pegada /
+// inactivos / todos / código público). Card "Lotes enviados": historial con
+// progreso en vivo y detalle por usuario. Backend: /api/admin/notif-batches*.
+
+function toggleNbHelp() {
+    const el = document.getElementById('nbHelp');
+    if (!el) return;
+    if (el.style.display === 'none') {
+        el.innerHTML = _nbHelpHtml();
+        el.style.display = '';
+    } else {
+        el.style.display = 'none';
+    }
+}
+
+function _nbHelpHtml() {
+    return '<strong style="color:#d4af37">❓ Cómo funciona el lote con regalo</strong><br><br>' +
+        '<strong>💸 ¿Quién pone la plata?</strong><br>' +
+        '· <strong>％ en la carga</strong>: el regalo lo aplicás VOS — al activarse, en el chat del cliente te aparece el CARTEL VERDE de siempre: sumale el % en su próxima carga y tocá "✓ Marcar usado".<br>' +
+        '· <strong>💵 Fichas</strong>: se acreditan SOLAS por la API (con el rollover que elijas). No tenés que hacer NADA — te llega una nota gris al chat avisando.<br><br>' +
+        '<strong>⏱ Modos</strong><br>' +
+        '· <strong>🔑 Código</strong>: el cliente mete el código en su app (menú ☰ → "🎁 Reclamar Bono con Código"). Una vez por cuenta. Sirve para que el regalo lo cobre solo el que VUELVE.<br>' +
+        '· <strong>⏰ Por tiempo</strong>: el regalo aplica a TODOS los destinatarios apenas se envía. ⚠️ Con fichas esto ACREDITA PLATA A CADA UNO al enviar — el confirm te muestra el total.<br><br>' +
+        '<strong>👥 Audiencias</strong><br>' +
+        '· 📋 <strong>Lista pegada</strong>: usuarios separados por coma/espacio/enter.<br>' +
+        '· 😴 <strong>Inactivos</strong>: sin entrar hace N días, con cupo opcional (toma los más recientes primero — son los más fáciles de recuperar).<br>' +
+        '· 🌍 <strong>Lote completo</strong>: todos los clientes activos.<br>' +
+        '· 📣 <strong>Código PÚBLICO</strong>: no se envía nada — se crea el código y VOS lo publicás en Telegram/redes. Cualquier cliente lo canjea UNA vez, hasta el cupo que pongas. Paso a paso: elegí 📣 → definí regalo, cupo y vigencia → 🚀 Enviar → copiá el código del cartel → publicalo.<br><br>' +
+        '<strong>🔍 Validar lista</strong>: antes de enviar, mirá quién recibe qué: 📱 con app (push seguro), 🌐 solo navegador, 🔕 sin notis (le queda el mensaje en el CHAT igual — lo ve al entrar).<br><br>' +
+        '<strong>🔒 Candados anti-abuso (fichas)</strong>: máximo 3 regalos en 24 hs y $300.000 acumulados en 7 días POR CUENTA, cruzando todos los lotes. Si alguien se pasa, el crédito se BLOQUEA solo y te salta un TOAST ROJO + una nota en su chat: revisá esa cuenta antes de darle nada a mano. También se bloquea si el cliente ya tiene un bono activo en el casino (dárselo se lo pisaría).<br><br>' +
+        '<strong>📤 Historial</strong>: en "Lotes enviados" ves cada lote con su progreso en vivo, quién lo envió y el "👥 Ver lote" con el estado por usuario (entrega + canje/acreditación/cartel).<br><br>' +
+        '<strong>💬 Respuestas rápidas a clientes</strong><br>' +
+        '· "No me llegó el código" → está en su CHAT de la app (el push es solo el aviso).<br>' +
+        '· "Dice que ya venció" → pasó la vigencia del lote; si querés, mandale otro.<br>' +
+        '· "No me acredita" → o tiene un bono activo en el casino (que lo termine) o saltó el tope de seguridad (mirá la nota gris en su chat antes de darle nada).';
+}
+
+function nbFormChanged() {
+    const gift = document.querySelector('input[name="nbGift"]:checked')?.value || 'percent';
+    const aud = document.querySelector('input[name="nbAudience"]:checked')?.value || 'list';
+    const modeWindowRadio = document.querySelector('input[name="nbMode"][value="window"]');
+    const modeCodeRadio = document.querySelector('input[name="nbMode"][value="code"]');
+    // El código público fuerza modo código y deshabilita "por tiempo".
+    if (aud === 'public') {
+        if (modeCodeRadio) modeCodeRadio.checked = true;
+        if (modeWindowRadio) modeWindowRadio.disabled = true;
+    } else if (modeWindowRadio) {
+        modeWindowRadio.disabled = false;
+    }
+    const mode = document.querySelector('input[name="nbMode"]:checked')?.value || 'code';
+    const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
+    show('nbCodeWrap', mode === 'code');
+    show('nbRolloverWrap', gift === 'fixed');
+    const lbl = document.getElementById('nbAmountLabel');
+    if (lbl) lbl.textContent = gift === 'fixed' ? 'Monto ($ fichas)' : 'Monto (%)';
+    show('nbListWrap', aud === 'list');
+    show('nbInactiveWrap', aud === 'inactive');
+    show('nbAllWrap', aud === 'all');
+    show('nbPublicWrap', aud === 'public');
+}
+
+function nbGenCode() {
+    // Mismo alfabeto sin confundibles que el server.
+    const AB = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+    let out = '';
+    for (let i = 0; i < 8; i++) out += AB[Math.floor(Math.random() * AB.length)];
+    const el = document.getElementById('nbCode');
+    if (el) el.value = out;
+}
+
+function _nbCollectBody() {
+    const aud = document.querySelector('input[name="nbAudience"]:checked')?.value || 'list';
+    const mode = aud === 'public' ? 'code' : (document.querySelector('input[name="nbMode"]:checked')?.value || 'code');
+    const gift = document.querySelector('input[name="nbGift"]:checked')?.value || 'percent';
+    const body = {
+        name: document.getElementById('nbName')?.value.trim() || '',
+        mode,
+        giftType: gift,
+        amount: Number(document.getElementById('nbAmount')?.value || 0),
+        validHours: Number(document.getElementById('nbValidHours')?.value || 24),
+        title: document.getElementById('nbTitle')?.value.trim() || '',
+        message: document.getElementById('nbMessage')?.value.trim() || '',
+        audienceType: aud
+    };
+    if (gift === 'fixed') body.rolloverX = Number(document.getElementById('nbRollover')?.value || 0);
+    if (mode === 'code') {
+        const c = document.getElementById('nbCode')?.value.trim();
+        if (c) body.code = c.toUpperCase();
+    }
+    if (aud === 'list') body.usernames = document.getElementById('nbUsernames')?.value || '';
+    if (aud === 'inactive') {
+        body.audienceDays = Number(document.getElementById('nbAudienceDays')?.value || 0);
+        const lim = document.getElementById('nbAudienceLimit')?.value;
+        if (lim) body.audienceLimit = Number(lim);
+    }
+    if (aud === 'public') {
+        const mc = document.getElementById('nbMaxClaims')?.value;
+        if (mc) body.maxClaims = Number(mc);
+    }
+    return body;
+}
+
+async function nbValidateList() {
+    const prev = document.getElementById('nbPreview');
+    const body = _nbCollectBody();
+    if (body.audienceType === 'public') {
+        if (prev) prev.innerHTML = '<span style="color:#bbb;font-size:.8rem">📣 Código público: no hay lista que validar — lo canjea cualquiera hasta el cupo.</span>';
+        return { totals: { ok: 0 }, isPublic: true };
+    }
+    if (prev) prev.innerHTML = '<span style="color:#888">⏳ Resolviendo audiencia…</span>';
+    try {
+        const r = await authFetch('/api/admin/notif-batches/preview', { method: 'POST', body: JSON.stringify(body) });
+        const j = await r.json();
+        if (!r.ok) {
+            if (prev) prev.innerHTML = '<span style="color:#ff6b6b">' + escapeHtml(j.error || 'Error') + '</span>';
+            return null;
+        }
+        if (prev) prev.innerHTML = _nbPreviewHtml(j);
+        return j;
+    } catch (e) {
+        if (prev) prev.innerHTML = '<span style="color:#ff6b6b">Error de conexión</span>';
+        return null;
+    }
+}
+
+function _nbPreviewHtml(j) {
+    const t = j.totals || {};
+    const chip = (u) => {
+        const ic = u.channel === 'app' ? '📱' : u.channel === 'browser' ? '🌐' : '🔕';
+        return '<span style="display:inline-block;background:rgba(255,255,255,0.07);border-radius:6px;padding:2px 7px;margin:2px;font-size:.75rem">' + ic + ' ' + escapeHtml(u.username) + '</span>';
+    };
+    let html = '<div style="font-size:.8rem;color:#ccc;margin-bottom:.4rem"><strong>' + (t.ok || 0) + '</strong> destinatarios · 📱 ' + (t.app || 0) + ' con app · 🌐 ' + (t.browser || 0) + ' navegador · 🔕 ' + (t.none || 0) + ' sin notis (solo chat)</div>';
+    html += '<div>' + (j.users || []).map(chip).join('') +
+        (j.truncated ? '<span style="color:#888;font-size:.75rem"> … y ' + j.truncated + ' más</span>' : '') + '</div>';
+    if (j.notFound && j.notFound.length) html += '<div style="color:#ff6b6b;font-size:.75rem;margin-top:.4rem">❌ No encontrados: ' + j.notFound.map(escapeHtml).join(', ') + '</div>';
+    if (j.skipped && j.skipped.length) html += '<div style="color:#ffaa44;font-size:.75rem;margin-top:.2rem">⛔ Bloqueados (excluidos): ' + j.skipped.map(escapeHtml).join(', ') + '</div>';
+    return html;
+}
+
+async function nbSendBatch() {
+    const status = document.getElementById('nbStatus');
+    const btn = document.getElementById('nbSendBtn');
+    const body = _nbCollectBody();
+    if (!(body.amount > 0)) { showToast('Poné el monto del regalo', 'error'); return; }
+    if (body.audienceType !== 'public' && (!body.message || body.message.length < 5)) {
+        showToast('El mensaje tiene que tener al menos 5 caracteres', 'error');
+        return;
+    }
+    // SIEMPRE corre el preview por atrás para confirmar con el CONTEO REAL.
+    let totals = { ok: 0, app: 0, browser: 0, none: 0 };
+    if (body.audienceType !== 'public') {
+        const j = await nbValidateList();
+        if (!j) return;
+        totals = j.totals || totals;
+        if (!totals.ok) { showToast('La audiencia quedó vacía — no hay a quién enviarle', 'error'); return; }
+    }
+    const giftTxt = body.giftType === 'percent'
+        ? '+' + body.amount + '% EXTRA'
+        : '$' + Number(body.amount).toLocaleString('es-AR') + ' en fichas' + (body.rolloverX > 0 ? ' (rollover x' + body.rolloverX + ')' : '');
+    const lines = ['¿Enviar este lote?', '',
+        '🎁 Regalo: ' + giftTxt,
+        '⏱ Modo: ' + (body.mode === 'code' ? '🔑 por código' : '⏰ por tiempo') + ' · vigencia ' + body.validHours + ' hs'];
+    if (body.audienceType === 'public') {
+        lines.push('📣 Audiencia: CÓDIGO PÚBLICO' + (body.maxClaims ? ' (cupo ' + body.maxClaims + ' canjes)' : ''));
+        if (!body.maxClaims && body.giftType === 'fixed') {
+            lines.push('🚨 Fichas SIN CUPO TOTAL — cualquiera que consiga el código cobra. Pensalo bien.');
+        }
+    } else {
+        lines.push('👥 Destinatarios: ' + totals.ok + ' (📱' + (totals.app || 0) + ' · 🌐' + (totals.browser || 0) + ' · 🔕' + (totals.none || 0) + ')');
+    }
+    if (body.giftType === 'fixed') {
+        if (body.mode === 'code') {
+            lines.push('💵 Las fichas se acreditan AUTOMÁTICAMENTE al canjear el código.');
+        } else {
+            lines.push('🚨 $' + Number(body.amount).toLocaleString('es-AR') + ' A CADA UNO apenas se envíe — TOTAL ≈ $' + (body.amount * totals.ok).toLocaleString('es-AR') + '.');
+        }
+    } else {
+        lines.push('％ Este regalo lo aplicás VOS en la próxima carga de cada uno (cartel verde en su chat).');
+    }
+    if (!confirm(lines.join('\n'))) return;
+    if (btn) btn.disabled = true;
+    if (status) status.textContent = '⏳ Enviando…';
+    try {
+        const r = await authFetch('/api/admin/notif-batches', { method: 'POST', body: JSON.stringify(body) });
+        const j = await r.json();
+        if (!r.ok || !j.success) {
+            showToast(escapeHtml(j.error || 'No se pudo enviar el lote'), 'error');
+            if (status) status.textContent = '';
+            return;
+        }
+        if (j.isPublic) {
+            if (status) status.textContent = '✅ Código público creado: ' + j.code;
+            prompt('📣 Código PÚBLICO listo — copialo y publicalo en Telegram/redes:', j.code);
+        } else {
+            if (status) status.textContent = '✅ Lote creado (' + ((j.totals && j.totals.ok) || 0) + ' destinatarios)' + (j.code ? ' · código ' + j.code : '') + ' — el envío sigue solo.';
+            showToast('Lote enviado — mirá el progreso en "Lotes enviados"', 'success');
+        }
+        loadNotifBatches();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+        if (status) status.textContent = '';
+    } finally {
+        if (btn) btn.disabled = false;
+    }
+}
+
+async function loadNotifBatches() {
+    const cont = document.getElementById('nbListContainer');
+    if (!cont) return;
+    try {
+        const r = await authFetch('/api/admin/notif-batches?limit=30');
+        if (!r.ok) { cont.innerHTML = '<span style="color:#888">Sin acceso.</span>'; return; }
+        const j = await r.json();
+        const rows = j.batches || [];
+        if (!rows.length) { cont.innerHTML = '<span style="color:#888">Todavía no se envió ningún lote.</span>'; return; }
+        cont.innerHTML = rows.map(_nbBatchRowHtml).join('');
+    } catch (e) {
+        cont.innerHTML = '<span style="color:#ff6b6b">Error cargando lotes.</span>';
+    }
+}
+
+function _nbBatchRowHtml(b) {
+    const vigente = new Date(b.expiresAt).getTime() > Date.now();
+    const gift = b.giftType === 'percent'
+        ? ('+' + b.amount + '%')
+        : ('$' + Number(b.amount).toLocaleString('es-AR') + (b.rolloverX > 0 ? ' x' + b.rolloverX : ''));
+    const modo = b.mode === 'code' ? ('🔑 ' + escapeHtml(b.code || '')) : ('⏰ ' + b.validHours + ' hs');
+    let aud;
+    if (b.isPublic) aud = '📣 público (' + (b.claimed || 0) + (b.maxClaims ? ' de ' + b.maxClaims : '') + ' canjes)';
+    else if (b.audienceType === 'inactive') aud = '😴 inactivos ' + (b.audienceDays || '?') + 'd' + (b.audienceLimit ? ' (cupo ' + b.audienceLimit + ')' : '');
+    else if (b.audienceType === 'all') aud = '🌍 todos';
+    else aud = '📋 lista';
+    const fecha = new Date(b.sentAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    const progreso = (!b.isPublic && b.pendientes > 0)
+        ? '<span style="color:#ffd54f"> · ⏳ enviando (' + ((b.total || 0) - b.pendientes) + '/' + (b.total || 0) + ')</span>' : '';
+    const sinNotis = b.sinNotis > 0 ? '<span style="color:#ffaa44"> · 🔕 ' + b.sinNotis + ' sin notis</span>' : '';
+    return '<div style="border-bottom:1px solid rgba(255,255,255,0.07);padding:.5rem 0;display:flex;justify-content:space-between;gap:.6rem;flex-wrap:wrap;align-items:center">' +
+        '<div style="flex:1;min-width:230px">' +
+            '<div><strong style="color:' + (vigente ? '#00e676' : '#888') + '">' + gift + '</strong> · ' + modo + ' · ' + aud +
+                ' · <span style="color:' + (vigente ? '#00e676' : '#ff6b6b') + '">' + (vigente ? 'VIGENTE' : 'vencido') + '</span></div>' +
+            '<div style="color:#999;font-size:.75rem">' + fecha + ' · envió <strong>' + escapeHtml(b.sentBy || '-') + '</strong>' +
+                (b.name ? ' · ' + escapeHtml(b.name) : '') +
+                (b.isPublic ? '' : ' · 👥 ' + (b.total || 0) + ' · entregadas ' + (b.delivered || 0) + ' · canjes ' + (b.claimed || 0) +
+                    (b.giftType === 'fixed' ? ' · 💰 ' + (b.credited || 0) + ' acreditados' : '')) +
+                progreso + sinNotis + '</div>' +
+        '</div>' +
+        '<button class="btn btn-secondary btn-sm" onclick="nbShowDetail(\'' + b.id + '\')">👥 Ver lote</button>' +
+    '</div>';
+}
+
+async function nbShowDetail(id) {
+    const cont = document.getElementById('nbDetailContainer');
+    if (!cont) return;
+    cont.innerHTML = '<span style="color:#888">⏳ Cargando detalle…</span>';
+    try {
+        const r = await authFetch('/api/admin/notif-batches/' + encodeURIComponent(id));
+        const j = await r.json();
+        if (!r.ok) { cont.innerHTML = '<span style="color:#ff6b6b">' + escapeHtml(j.error || 'Error') + '</span>'; return; }
+        const b = j.batch;
+        const all = b.recipients || [];
+        // Render capado a 400 filas para no colgar el DOM con lotes gigantes.
+        const rows = all.slice(0, 400);
+        const more = all.length - rows.length;
+        const canalIc = (c) => (c === 'app' ? '📱' : c === 'browser' ? '🌐' : '🔕');
+        const entrega = (rcp) => {
+            if (rcp.delivery === 'socket') return '🟢 en la app';
+            if (rcp.delivery === 'push') return '🔔 push';
+            if (rcp.delivery === 'error') return '⚠ falló';
+            if (rcp.delivery === 'none') return 'solo chat';
+            return '⏳ enviando';
+        };
+        const estado = (rcp) => {
+            if (b.giftType === 'fixed') {
+                if (rcp.creditedAt) return '💰 acreditado automático';
+                if (rcp.creditError) return '⚠ sin acreditar: ' + escapeHtml(rcp.creditError);
+                if (rcp.claimedAt) return '⏳ acreditando';
+                return b.mode === 'code' ? 'sin canjear' : '⏳';
+            }
+            if (rcp.bonusStatus === 'active') return '🎁 bono ACTIVO';
+            if (rcp.bonusStatus === 'used') return '✔ usado por ' + escapeHtml(rcp.usedBy || '-');
+            if (rcp.bonusStatus === 'expired') return '⏰ vencido';
+            return rcp.claimedAt ? 'canjeado' : 'sin canjear';
+        };
+        const head = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;margin-bottom:.5rem">' +
+            '<strong style="color:#d4af37">👥 Detalle: ' + escapeHtml(b.name || (b.code ? 'código ' + b.code : b.id.slice(0, 8))) + '</strong>' +
+            '<button class="btn btn-secondary btn-sm" onclick="document.getElementById(\'nbDetailContainer\').innerHTML=\'\'">✕ Cerrar</button></div>';
+        cont.innerHTML = head +
+            '<table class="data-table" style="font-size:.8rem"><thead><tr><th>Usuario</th><th>Canal</th><th>Entrega</th><th>Estado del regalo</th></tr></thead><tbody>' +
+            rows.map((rcp) => '<tr><td>' + escapeHtml(rcp.username) + '</td><td>' + canalIc(rcp.channel) + '</td><td>' + entrega(rcp) + '</td><td>' + estado(rcp) + '</td></tr>').join('') +
+            '</tbody></table>' +
+            (more > 0 ? '<div style="color:#888;font-size:.75rem;margin-top:.3rem">… y ' + more + ' más</div>' : '');
+    } catch (e) {
+        cont.innerHTML = '<span style="color:#ff6b6b">Error de conexión</span>';
+    }
 }
 
 // ===== Notificaciones programadas =====

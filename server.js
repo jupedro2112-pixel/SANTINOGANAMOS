@@ -10424,6 +10424,12 @@ app.post('/api/community-code/claim', authMiddleware, authLimiter, async (req, r
       return res.status(400).json({ error: 'Ingresá el código que viste en la Comunidad de Telegram.' });
     }
 
+    // CÓDIGOS DE LOTE de notificaciones (#156): si el código matchea un lote,
+    // el canje es de lote y el flujo del código de bienvenida sigue INTACTO.
+    // null = no es un código de lote → continúa el welcome code de siempre.
+    const _batchClaim = await _tryClaimNotifBatchCode(req.user, attempt);
+    if (_batchClaim) return res.status(_batchClaim.http).json(_batchClaim.body);
+
     const code = String((await getConfig('communityWelcomeCode', '')) || '').trim();
     if (!code) {
       return res.status(400).json({ error: 'Por ahora no hay ningún código activo. Estate atento a la Comunidad de Telegram.' });
@@ -17238,6 +17244,806 @@ app.post('/api/admin/promo-bonus/:id/use', authMiddleware, adminMiddleware, asyn
     res.json({ success: true });
   } catch (err) {
     logger.error(`/api/admin/promo-bonus/:id/use: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+
+// ============================================================================
+// LOTES DE NOTIFICACIONES CON REGALO (NotifBatch, 2026-08-14)
+// ============================================================================
+// Envío masivo con regalo asociado. Regla de oro de QUIÉN pone la plata:
+//   - 'percent' (cualquier modo): lo aplica EL AGENTE en la carga — al activarse
+//     se crea un PromoBonus sourceRuleCode 'lote' (cartel verde + Marcar usado).
+//   - 'fixed' (fichas): SIEMPRE automático vía _creditNotifBatchGift — por
+//     código al canjear; por tiempo al enviarse el lote. SIN PromoBonus: el
+//     agente solo recibe una nota admin-only "no hay que hacer nada".
+// El envío NO vive en la request: motor reanudable con claim atómico por
+// destinatario (ver _processNotifBatchQueue). Canje de códigos: hook en
+// POST /api/community-code/claim (_tryClaimNotifBatchCode).
+const NotifBatch = require('./src/models/NotifBatch');
+
+// Topes anti-abuso POR USUARIO, cruzando TODOS los lotes.
+const NOTIF_BATCH_USER_MAX_CREDITS_24H = 3;
+const NOTIF_BATCH_USER_MAX_ARS_7D = 300000;
+// Un recipient en 'sending' hace más de esto se considera colgado (instancia
+// muerta a mitad de proceso) y el motor lo re-reclama.
+const NOTIF_BATCH_SENDING_STALE_MS = 10 * 60 * 1000;
+// Sin confundibles (0/O, 1/I/L) para dictarlo por teléfono/Telegram.
+const NOTIF_BATCH_CODE_ALPHABET = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+
+function _genNotifBatchCode() {
+  let out = '';
+  for (let i = 0; i < 8; i++) out += NOTIF_BATCH_CODE_ALPHABET[crypto.randomInt(NOTIF_BATCH_CODE_ALPHABET.length)];
+  return out;
+}
+
+function _nbFechaART(d) {
+  try {
+    return new Date(d).toLocaleString('es-AR', {
+      timeZone: 'America/Argentina/Buenos_Aires',
+      day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit'
+    }) + ' hs';
+  } catch (_) { return ''; }
+}
+
+// Capacidad de notificación de un usuario — MISMA lógica multi-token que el
+// badge del chat (loadUserInfo del panel): cualquier token standalone → 'app';
+// algún token → 'browser'; nada → 'none'. Incluye el campo legacy individual.
+function _notifChannelOf(u) {
+  const tokens = Array.isArray(u.fcmTokens) ? u.fcmTokens : [];
+  const hasStandalone = tokens.some((t) => t && t.token && t.context === 'standalone') ||
+    (!!u.fcmToken && u.fcmTokenContext === 'standalone');
+  if (hasStandalone) return 'app';
+  const hasAny = tokens.some((t) => t && t.token) || !!u.fcmToken;
+  return hasAny ? 'browser' : 'none';
+}
+
+// Activa el PromoBonus del regalo % de un lote. Antes VENCE todos los activos
+// del username (un cartel a la vez, igual que el motor de reglas). Devuelve el
+// id del PromoBonus creado.
+async function _activateBatchPromoBonus(uDoc, batch) {
+  const uname = String(uDoc.username).toLowerCase();
+  await PromoBonus.updateMany(
+    { username: uname, status: 'active' },
+    { $set: { status: 'expired' } }
+  );
+  const id = uuidv4();
+  await PromoBonus.create({
+    id,
+    userId: uDoc.id || null,
+    username: uname,
+    percent: batch.amount,
+    montoFijoARS: 0,
+    sourceRuleId: batch.id,
+    sourceRuleCode: 'lote',
+    sourceRuleName: `Lote de ${batch.sentBy || 'admin'}${batch.name ? ' — ' + batch.name : ''}`,
+    activatedAt: new Date(),
+    expiresAt: batch.expiresAt,
+    status: 'active'
+  });
+  return id;
+}
+
+// Alerta URGENTE de posible abuso: log ERROR + nota admin-only en el chat del
+// usuario + toast rojo en vivo en el panel (evento 'security_alert').
+function _emitNotifBatchSecurityAlert(uDoc, detalle) {
+  const msg = `🚨 URGENTE — POSIBLE ABUSO DE REGALOS DE LOTE: ${uDoc.username} ${detalle}. El crédito se BLOQUEÓ automáticamente — revisar la cuenta antes de acreditarle nada a mano.`;
+  logger.error(`[notif-batch][ALERTA] ${msg}`);
+  _emitAdminOnlyChatNote(uDoc.id, uDoc.username, msg).catch(() => {});
+  try {
+    io.to('admins').emit('security_alert', { username: uDoc.username, message: msg, at: new Date() });
+  } catch (_) { /* io todavía no inicializado: el log + la nota alcanzan */ }
+}
+
+// Helper ÚNICO de acreditación de fichas de lote. Devuelve {ok, txId} o
+// {ok:false, reason, blocked?, retryable?}. blocked = NO reintentar (tope de
+// seguridad o bono activo); retryable = fallo transitorio (API caída).
+async function _creditNotifBatchGift(uDoc, batch) {
+  const username = uDoc.username;
+  const amount = Number(batch.amount);
+
+  // 1. CAP-CHECK anti-abuso (por usuario, cruzando TODOS los lotes): máx 3
+  //    créditos en 24h y $300.000 acumulados en 7 días.
+  try {
+    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+    const rows = await Transaction.aggregate([
+      { $match: { type: 'bonus', 'metadata.source': 'notif_batch', userId: uDoc.id, timestamp: { $gte: since7d } } },
+      { $group: {
+        _id: null,
+        total7d: { $sum: '$amount' },
+        count24h: { $sum: { $cond: [{ $gte: ['$timestamp', since24h] }, 1, 0] } }
+      } }
+    ]);
+    const agg = (rows && rows[0]) || { total7d: 0, count24h: 0 };
+    if (agg.count24h >= NOTIF_BATCH_USER_MAX_CREDITS_24H) {
+      _emitNotifBatchSecurityAlert(uDoc, `ya recibió ${agg.count24h} regalos de lote en las últimas 24h (tope ${NOTIF_BATCH_USER_MAX_CREDITS_24H})`);
+      return { ok: false, blocked: true, reason: 'tope de seguridad (cantidad de regalos en 24h)' };
+    }
+    if (agg.total7d + amount > NOTIF_BATCH_USER_MAX_ARS_7D) {
+      _emitNotifBatchSecurityAlert(uDoc, `acumularía $${(agg.total7d + amount).toLocaleString('es-AR')} en regalos de lote en 7 días (tope $${NOTIF_BATCH_USER_MAX_ARS_7D.toLocaleString('es-AR')})`);
+      return { ok: false, blocked: true, reason: 'tope de seguridad (monto acumulado en 7 días)' };
+    }
+  } catch (e) {
+    logger.warn(`[notif-batch] cap-check falló para ${username}: ${e.message}`);
+    return { ok: false, retryable: true, reason: 'no se pudo verificar el tope de seguridad' };
+  }
+
+  // 2. GUARD bono-sobre-bono (v1.7 de la plataforma: otorgar un bono a quien
+  //    ya tiene uno activo lo PISA y le debita el resto).
+  const pInfo = await girox.getUserInfoByName(username);
+  if (!pInfo) return { ok: false, retryable: true, reason: 'no se pudo leer el estado del jugador en la plataforma' };
+  if (Number(pInfo.bonusLocked) > 0 || Number(pInfo.claimableTotal) > 0) {
+    return { ok: false, blocked: true, reason: 'bono activo en el casino' };
+  }
+
+  // 3. CRÉDITO con reference ESTABLE por lote+usuario: los reintentos jamás
+  //    pagan dos veces (la plataforma responde duplicate:true).
+  const ref = `vip-nbatch-${batch.id}-${uDoc.id}`.slice(0, 100);
+  const credit = await girox.creditUserBalance(username, amount, ref, {
+    multiplier: Number(batch.rolloverX) || 0,
+    description: `Regalo de fichas — lote de notificaciones${batch.name ? ` "${batch.name}"` : ''}`
+  });
+  if (!credit.success) {
+    return { ok: false, retryable: true, reason: credit.error || 'la plataforma rechazó el crédito' };
+  }
+
+  // 4. Auto-claim v1.7 (claim_required=true: sin esto queda "a reclamar").
+  try {
+    const cRes = await girox.claimPendingBonus(username);
+    if (!cRes.success) logger.warn(`[notif-batch] auto-claim falló para ${username}: ${cRes.error} — el cliente puede reclamarlo desde el casino`);
+  } catch (e) {
+    logger.warn(`[notif-batch] auto-claim excepción para ${username}: ${e.message}`);
+  }
+
+  // 5. Transaction de REGALO (type bonus + source notif_batch): NO cuenta como
+  //    carga real en ningún reporte.
+  const txId = uuidv4();
+  await Transaction.create({
+    id: txId,
+    type: 'bonus',
+    userId: uDoc.id,
+    username,
+    amount,
+    description: `Regalo de fichas — lote de notificaciones${batch.name ? ` "${batch.name}"` : ''}`,
+    transactionId: (credit.data && (credit.data.transfer_id || credit.data.transferId)) || null,
+    metadata: { source: 'notif_batch', batchId: batch.id },
+    timestamp: new Date()
+  }).catch((e) => logger.warn(`[notif-batch] no se pudo guardar la Transaction: ${e.message}`));
+
+  logger.info(`[notif-batch] $${amount} acreditados a ${username} (lote ${batch.id}${batch.rolloverX > 0 ? `, rollover x${batch.rolloverX}` : ''})`);
+  return { ok: true, txId };
+}
+
+// Texto del mensaje de chat (y cuerpo del push) por destinatario: el mensaje
+// del agente + el bloque del regalo/código/vigencia agregado SOLO al final.
+function _nbChatText(batch, opts = {}) {
+  const base = String(batch.message || '').trim();
+  const fecha = _nbFechaART(batch.expiresAt);
+  let giftLine;
+  if (batch.giftType === 'percent') {
+    giftLine = `+${batch.amount}% EXTRA en tu PRÓXIMA CARGA`;
+  } else {
+    const roll = Number(batch.rolloverX) > 0
+      ? ` (para retirarlo apostá $${(batch.amount * batch.rolloverX).toLocaleString('es-AR')} — rollover x${batch.rolloverX})`
+      : '';
+    giftLine = `$${Number(batch.amount).toLocaleString('es-AR')} en fichas${roll}`;
+  }
+  let tail;
+  if (batch.mode === 'code') {
+    tail = `🎁 Tu regalo: ${giftLine}\n` +
+      `🔑 Canjealo con tu código: ${batch.code} (menú ☰ → "🎁 Reclamar Bono con Código")\n` +
+      `⏰ Válido hasta ${fecha}.`;
+  } else if (batch.giftType === 'percent') {
+    tail = `🎁 Tenés un ${giftLine} — avisale al agente cuando vayas a cargar y te lo suma en el momento.\n` +
+      `⏰ Válido hasta ${fecha}.`;
+  } else if (opts.credited) {
+    tail = `💰 ¡Te ACREDITAMOS ${giftLine}! Ya están en tu cuenta. 🎰`;
+  } else {
+    tail = `🎁 Tu regalo: ${giftLine}.`;
+  }
+  return base ? `${base}\n\n${tail}` : tail;
+}
+
+// Procesa UN destinatario ya reclamado ('sending'). Actualiza su subdoc por
+// posicional filtrando por userId (único dentro del lote).
+async function _processNotifBatchRecipient(batch, rec) {
+  const setRec = (fields) => {
+    const $set = {};
+    for (const [k, v] of Object.entries(fields)) $set[`recipients.$.${k}`] = v;
+    return NotifBatch.updateOne({ id: batch.id, 'recipients.userId': rec.userId }, { $set })
+      .catch((e) => logger.warn(`[notif-batch] no se pudo actualizar recipient ${rec.username}: ${e.message}`));
+  };
+
+  let u = null;
+  try {
+    u = await User.findOne({ id: rec.userId }).select('id username fcmToken fcmTokens').lean();
+  } catch (_) {}
+  if (!u) {
+    await setRec({ delivery: 'none', deliveryAt: new Date() });
+    return;
+  }
+
+  let credited = false;
+  // Por tiempo + fichas: acreditar al enviarse el lote (a cada uno).
+  if (batch.mode === 'window' && batch.giftType === 'fixed') {
+    if (rec.creditedAt) {
+      credited = true; // retome tras caída: ya estaba acreditado, no re-acreditar
+    } else {
+      const r = await _creditNotifBatchGift(u, batch);
+      if (!r.ok && r.retryable) {
+        // Dejarlo EN 'sending': el vencimiento de 10 min lo reintenta solo (no
+        // resetear a null para no hacer un loop apretado contra la API caída).
+        // NO notificar todavía.
+        await setRec({ creditError: r.reason || 'reintentable' });
+        return;
+      }
+      if (!r.ok) {
+        // Bloqueado (tope de seguridad / bono activo): NO se le promete nada.
+        await setRec({ creditError: r.reason || 'bloqueado', claimedAt: null, delivery: 'none', deliveryAt: new Date() });
+        return;
+      }
+      await setRec({ creditedAt: new Date(), creditTxId: r.txId, creditError: null });
+      credited = true;
+    }
+  }
+
+  // Por tiempo + %: activar el PromoBonus (cartel verde) si aún no se hizo.
+  if (batch.mode === 'window' && batch.giftType === 'percent' && !rec.promoBonusId) {
+    try {
+      const pbId = await _activateBatchPromoBonus(u, batch);
+      await setRec({ promoBonusId: pbId });
+    } catch (e) {
+      // Reintentable vía el vencimiento del 'sending' colgado.
+      logger.warn(`[notif-batch] no se pudo activar PromoBonus para ${u.username}: ${e.message}`);
+      return;
+    }
+  }
+
+  // Notificar: mensaje de chat persistente + push (o socket in-app si está online).
+  const text = _nbChatText(batch, { credited });
+  try {
+    await Message.create({
+      id: uuidv4(),
+      senderId: 'system',
+      senderUsername: 'Sistema',
+      senderRole: 'admin',
+      receiverId: u.id,
+      receiverRole: 'user',
+      content: text,
+      type: 'system',
+      timestamp: new Date(),
+      read: false
+    });
+  } catch (e) {
+    logger.warn(`[notif-batch] no se pudo crear el mensaje de chat para ${u.username}: ${e.message}`);
+  }
+  let delivery = 'none';
+  try {
+    const pr = await sendPushIfOffline(u, batch.title || '🎁 Tenés un regalo', text.slice(0, 150), { tag: 'notif-batch' });
+    delivery = (pr && pr.delivery) || 'none';
+  } catch (e) {
+    delivery = 'error';
+    logger.warn(`[notif-batch] push falló para ${u.username}: ${e.message}`);
+  }
+  await setRec({ delivery, deliveryAt: new Date() });
+}
+
+// Procesa un lote entero: reclama destinatarios de a uno con findOneAndUpdate
+// atómico (dos instancias EB nunca procesan el mismo recipient; un 'sending'
+// colgado >10 min se recupera solo) y cierra el lote cuando no queda nadie.
+async function _processOneNotifBatch(batchId) {
+  const batch = await NotifBatch.findOne({ id: batchId }).select('-recipients').lean();
+  if (!batch) return;
+  for (;;) {
+    const staleCutoff = new Date(Date.now() - NOTIF_BATCH_SENDING_STALE_MS);
+    // La proyección posicional devuelve SOLO el elemento reclamado (pre-update),
+    // sin traer los N subdocs del lote.
+    const claimed = await NotifBatch.findOneAndUpdate(
+      { id: batchId, recipients: { $elemMatch: { $or: [
+        { delivery: null },
+        { delivery: 'sending', deliveryAt: { $lt: staleCutoff } }
+      ] } } },
+      { $set: { 'recipients.$.delivery': 'sending', 'recipients.$.deliveryAt': new Date() } },
+      { new: false, projection: { id: 1, 'recipients.$': 1 } }
+    ).lean();
+    if (!claimed || !claimed.recipients || !claimed.recipients.length) break;
+    const rec = claimed.recipients[0];
+    try {
+      await _processNotifBatchRecipient(batch, rec);
+    } catch (e) {
+      logger.error(`[notif-batch] error con ${rec.username} (lote ${batchId}): ${e.message}`);
+      // Queda en 'sending': el vencimiento de 10 min lo reintenta.
+    }
+    // Ritmo entre destinatarios (con fichas, el limitador local de la Partner
+    // API marca el paso real: ~3 requests por usuario).
+    await new Promise((r) => setTimeout(r, 35));
+  }
+  // Cierre: si no queda ningún recipient pendiente ni en proceso → sendDone.
+  const open = await NotifBatch.findOne({
+    id: batchId,
+    recipients: { $elemMatch: { $or: [{ delivery: null }, { delivery: 'sending' }] } }
+  }).select('id').lean();
+  if (!open) {
+    const done = await NotifBatch.updateOne({ id: batchId, sendDone: { $ne: true } }, { $set: { sendDone: true } });
+    if (done.modifiedCount > 0) logger.info(`[notif-batch] lote ${batchId} COMPLETADO`);
+  }
+}
+
+// Motor de envío reanudable. Corre por setImmediate al crear un lote y por
+// setInterval cada 45s (retoma tras deploy/reinicio y lotes creados en la OTRA
+// instancia EB). Guard booleano por proceso.
+let _notifBatchQueueRunning = false;
+async function _processNotifBatchQueue() {
+  if (_notifBatchQueueRunning) return;
+  _notifBatchQueueRunning = true;
+  try {
+    const pending = await NotifBatch.find({ sendDone: { $ne: true } })
+      .select('id').sort({ sentAt: 1 }).limit(20).lean();
+    for (const b of pending) {
+      try {
+        await _processOneNotifBatch(b.id);
+      } catch (e) {
+        logger.error(`[notif-batch] error procesando lote ${b.id}: ${e.message}`);
+      }
+    }
+  } catch (e) {
+    logger.error(`[notif-batch] queue error: ${e.message}`);
+  } finally {
+    _notifBatchQueueRunning = false;
+  }
+}
+setInterval(() => { _processNotifBatchQueue(); }, 45 * 1000);
+
+// Resuelve la audiencia de un lote. Devuelve {users, notFound, skipped} o {error}.
+async function _resolveNotifBatchAudience(body) {
+  const type = body.audienceType;
+  const SELECT = 'id username isBlocked fcmToken fcmTokenContext fcmTokens';
+  if (type === 'public') return { users: [], notFound: [], skipped: [] };
+  if (type === 'list') {
+    const raw = String(body.usernames || '');
+    const names = [...new Set(raw.split(/[\s,;]+/).map((s) => s.trim()).filter(Boolean))];
+    if (!names.length) return { error: 'Pegá al menos un usuario en la lista.' };
+    if (names.length > 20000) return { error: 'La lista supera el tope de 20.000 usuarios.' };
+    // Match case-insensitive por collation (usa el índice de username igual).
+    const docs = await User.find({ username: { $in: names }, role: 'user' })
+      .collation({ locale: 'en', strength: 2 })
+      .select(SELECT).lean();
+    const byId = new Map();
+    for (const d of docs) byId.set(d.id, d);
+    const found = [...byId.values()];
+    const foundLower = new Set(found.map((d) => String(d.username).toLowerCase()));
+    const notFound = names.filter((n) => !foundLower.has(n.toLowerCase()));
+    const skipped = found.filter((d) => d.isBlocked === true).map((d) => d.username);
+    const users = found.filter((d) => d.isBlocked !== true);
+    return { users, notFound, skipped };
+  }
+  if (type === 'inactive') {
+    const days = Math.round(Number(body.audienceDays));
+    if (!Number.isFinite(days) || days < 1 || days > 365) return { error: 'Días de inactividad: entre 1 y 365.' };
+    let limit = 20000;
+    if (body.audienceLimit !== undefined && body.audienceLimit !== null && body.audienceLimit !== '') {
+      limit = Math.round(Number(body.audienceLimit));
+      if (!Number.isFinite(limit) || limit < 1 || limit > 20000) return { error: 'El cupo de la audiencia: entre 1 y 20.000.' };
+    }
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    // Mismo criterio que el push masivo: sin login desde el corte O sin login
+    // registrado. Los más recientes primero (más probables de volver).
+    const users = await User.find({
+      role: 'user',
+      isBlocked: { $ne: true },
+      $or: [{ lastLogin: { $lt: cutoff } }, { lastLogin: null }, { lastLogin: { $exists: false } }]
+    }).select(SELECT).sort({ lastLogin: -1 }).limit(limit).lean();
+    return { users, notFound: [], skipped: [] };
+  }
+  if (type === 'all') {
+    const users = await User.find({ role: 'user', isBlocked: { $ne: true } })
+      .select(SELECT).limit(20000).lean();
+    return { users, notFound: [], skipped: [] };
+  }
+  return { error: 'Audiencia inválida.' };
+}
+
+// Canje de un código de LOTE. Se llama desde POST /api/community-code/claim
+// ANTES del flujo del código de bienvenida. Devuelve null si el código NO es de
+// un lote (→ sigue el welcome code) o {http, body} con la respuesta final.
+// SIN gate de app instalada a propósito: la exclusividad ES la membresía del
+// lote (y el público es abierto a propósito) — a diferencia del welcome code.
+async function _tryClaimNotifBatchCode(reqUser, attempt) {
+  const codeUp = String(attempt || '').trim().toUpperCase();
+  if (!codeUp) return null;
+  const now = new Date();
+  const batch = await NotifBatch.findOne({ mode: 'code', code: codeUp, expiresAt: { $gt: now } })
+    .select('-recipients').lean();
+  if (!batch) {
+    // ¿Existió y venció? Sólo revelarlo a quien estaba en el lote (o si era público).
+    const expired = await NotifBatch.findOne({ mode: 'code', code: codeUp, expiresAt: { $lte: now } })
+      .sort({ expiresAt: -1 }).select('id isPublic').lean();
+    if (!expired) return null; // no es un código de lote
+    if (expired.isPublic) {
+      return { http: 400, body: { error: '⏰ Ese código ya venció. Estate atento a la Comunidad para el próximo.' } };
+    }
+    const wasMember = await NotifBatch.findOne({ id: expired.id, 'recipients.userId': reqUser.userId }).select('id').lean();
+    if (wasMember) return { http: 400, body: { error: '⏰ Tu código ya venció.' } };
+    return null; // ni miembro ni público → como si no existiera (cae al "no válido" del welcome)
+  }
+
+  // Membresía (lotes con lista): si NO está en el lote, NO revelar que el código existe.
+  if (!batch.isPublic) {
+    const membership = await NotifBatch.findOne(
+      { id: batch.id, recipients: { $elemMatch: { userId: reqUser.userId } } },
+      { 'recipients.$': 1 }
+    ).lean();
+    if (!membership || !membership.recipients || !membership.recipients.length) {
+      logger.warn(`[notif-batch] ${reqUser.username} intentó canjear el código ${codeUp} sin estar en el lote`);
+      return { http: 400, body: { error: 'El código no es válido. Fijate bien cómo aparece en tu notificación.' } };
+    }
+    if (membership.recipients[0].claimedAt) {
+      return { http: 400, body: { error: 'Ya canjeaste este código. Es una sola vez.' } };
+    }
+  }
+
+  const uDoc = await User.findOne({ id: reqUser.userId }).select('id username role').lean();
+  if (!uDoc || uDoc.role !== 'user') {
+    return { http: 400, body: { error: 'Solo las cuentas de clientes pueden canjear códigos.' } };
+  }
+
+  // Reserva atómica del canje.
+  if (batch.isPublic) {
+    // Append atómico: una vez por cuenta + cupo. Los updates sobre un mismo doc
+    // se serializan en Mongo → dos claims concurrentes no se duplican ni pasan
+    // el cupo.
+    const filter = {
+      id: batch.id,
+      expiresAt: { $gt: new Date() },
+      recipients: { $not: { $elemMatch: { userId: uDoc.id } } }
+    };
+    if (batch.maxClaims) {
+      filter.$expr = { $lt: [{ $size: { $ifNull: ['$recipients', []] } }, batch.maxClaims] };
+    }
+    const upd = await NotifBatch.updateOne(filter, {
+      $push: { recipients: {
+        userId: uDoc.id, username: uDoc.username,
+        channel: 'none', delivery: 'none', deliveryAt: new Date(),
+        claimedAt: new Date(), promoBonusId: null,
+        creditedAt: null, creditTxId: null, creditError: null
+      } }
+    });
+    if (!upd.modifiedCount) {
+      const already = await NotifBatch.findOne({ id: batch.id, 'recipients.userId': uDoc.id }).select('id').lean();
+      if (already) return { http: 400, body: { error: 'Ya canjeaste este código. Es una sola vez por cuenta.' } };
+      return { http: 400, body: { error: 'Este código llegó a su límite de canjes (o venció). ¡Estate atento al próximo!' } };
+    }
+  } else {
+    const upd = await NotifBatch.updateOne(
+      { id: batch.id, expiresAt: { $gt: new Date() }, recipients: { $elemMatch: { userId: uDoc.id, claimedAt: null } } },
+      { $set: { 'recipients.$.claimedAt': new Date() } }
+    );
+    if (!upd.modifiedCount) {
+      return { http: 400, body: { error: 'Ya canjeaste este código. Es una sola vez.' } };
+    }
+  }
+
+  // Liberar la reserva si el regalo no se pudo entregar (el canje NO se consume).
+  const _releaseReservation = async (creditError) => {
+    if (batch.isPublic) {
+      await NotifBatch.updateOne({ id: batch.id }, { $pull: { recipients: { userId: uDoc.id } } }).catch(() => {});
+    } else {
+      await NotifBatch.updateOne(
+        { id: batch.id, recipients: { $elemMatch: { userId: uDoc.id } } },
+        { $set: { 'recipients.$.claimedAt': null, 'recipients.$.creditError': creditError || null } }
+      ).catch(() => {});
+    }
+  };
+
+  const montoFmt = Number(batch.amount).toLocaleString('es-AR');
+
+  if (batch.giftType === 'fixed') {
+    // FICHAS: acreditación automática al canjear.
+    const r = await _creditNotifBatchGift(uDoc, batch);
+    if (!r.ok) {
+      await _releaseReservation(r.reason);
+      if (r.blocked && r.reason === 'bono activo en el casino') {
+        return { http: 400, body: { error: 'Tenés un bono activo (o sin reclamar) en el casino. Terminalo y después canjeá tu código.' } };
+      }
+      if (r.blocked) {
+        return { http: 400, body: { error: 'No pudimos acreditar tu regalo. Hablá con soporte por el chat.' } };
+      }
+      return { http: 502, body: { error: 'No pudimos acreditar tu regalo en este momento. Probá de nuevo en unos minutos.' } };
+    }
+    await NotifBatch.updateOne(
+      { id: batch.id, recipients: { $elemMatch: { userId: uDoc.id } } },
+      { $set: { 'recipients.$.creditedAt': new Date(), 'recipients.$.creditTxId': r.txId, 'recipients.$.creditError': null } }
+    ).catch(() => {});
+    const rollNote = Number(batch.rolloverX) > 0
+      ? `\n\n🎯 Para poder retirarlo: apostá $${(batch.amount * batch.rolloverX).toLocaleString('es-AR')} (rollover x${batch.rolloverX}).`
+      : '';
+    await Message.create({
+      id: uuidv4(), senderId: 'system', senderUsername: 'Sistema', senderRole: 'admin',
+      receiverId: uDoc.id, receiverRole: 'user',
+      content: `💰 ¡Tu regalo de $${montoFmt} ya está ACREDITADO en tu cuenta! A jugarlo 🎰${rollNote}`,
+      type: 'system', timestamp: new Date(), read: false
+    }).catch(() => {});
+    await _emitAdminOnlyChatNote(
+      uDoc.id, uDoc.username,
+      `💰 REGALO DE LOTE ACREDITADO AUTOMÁTICAMENTE ($${montoFmt}${Number(batch.rolloverX) > 0 ? `, rollover x${batch.rolloverX}` : ''}) — canjeó el código ${codeUp}${batch.name ? ` del lote "${batch.name}"` : ''}. No hay que hacer nada: la plata ya está en su cuenta.`
+    ).catch(() => {});
+    logger.info(`[notif-batch] ${uDoc.username} canjeó ${codeUp} — $${batch.amount} acreditados`);
+    return { http: 200, body: {
+      success: true, status: 'credited', amount: batch.amount, type: 'cash',
+      message: `¡Código válido! Tu regalo de $${montoFmt} ya está acreditado en tu cuenta. 🎰`
+    } };
+  }
+
+  // PORCENTAJE: cartel verde para el agente (PromoBonus 'lote').
+  let promoId;
+  try {
+    promoId = await _activateBatchPromoBonus(uDoc, batch);
+  } catch (e) {
+    logger.warn(`[notif-batch] no se pudo activar el PromoBonus de ${uDoc.username}: ${e.message}`);
+    await _releaseReservation('promo-bonus-failed');
+    return { http: 502, body: { error: 'No pudimos activar tu regalo en este momento. Probá de nuevo en unos minutos.' } };
+  }
+  await NotifBatch.updateOne(
+    { id: batch.id, recipients: { $elemMatch: { userId: uDoc.id } } },
+    { $set: { 'recipients.$.promoBonusId': promoId } }
+  ).catch(() => {});
+  const fechaFmt = _nbFechaART(batch.expiresAt);
+  await Message.create({
+    id: uuidv4(), senderId: 'system', senderUsername: 'Sistema', senderRole: 'admin',
+    receiverId: uDoc.id, receiverRole: 'user',
+    content: `🎉 ¡Código canjeado! Tenés un +${batch.amount}% EXTRA para tu PRÓXIMA CARGA.\n\nCuando vayas a cargar, avisale al agente que tenés el regalo y te lo suma en el momento. 🥳\n\n⏰ Válido hasta ${fechaFmt}.`,
+    type: 'system', timestamp: new Date(), read: false
+  }).catch(() => {});
+  await _emitAdminOnlyChatNote(
+    uDoc.id, uDoc.username,
+    `🎁 REGALO DE LOTE PENDIENTE (+${batch.amount}% EXTRA) — canjeó el código ${codeUp}${batch.name ? ` del lote "${batch.name}"` : ''}.\n👉 En su PRÓXIMA CARGA aplicáselo y después marcalo usado desde el cartel verde del chat. Vence ${fechaFmt}.`
+  ).catch(() => {});
+  logger.info(`[notif-batch] ${uDoc.username} canjeó ${codeUp} — bono ${batch.amount}% pendiente`);
+  return { http: 200, body: {
+    success: true, status: 'pending', amount: batch.amount, type: 'next_charge',
+    message: `¡Código válido! Tenés un +${batch.amount}% EXTRA para tu próxima carga, válido hasta ${fechaFmt}.`
+  } };
+}
+
+// ---- Endpoints ----
+// Roles: enviar/preview admin+depositor; ver historial también withdrawer.
+
+// Preview: resuelve la audiencia SIN enviar (lo usa "Validar lista" y el
+// confirm del envío para mostrar el conteo REAL).
+app.post('/api/admin/notif-batches/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!['admin', 'depositor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'No tenés permiso para armar lotes.' });
+    }
+    const aud = await _resolveNotifBatchAudience(req.body || {});
+    if (aud.error) return res.status(400).json({ error: aud.error });
+    const list = aud.users.map((u) => ({ username: u.username, channel: _notifChannelOf(u) }));
+    const totals = { ok: list.length, app: 0, browser: 0, none: 0 };
+    for (const it of list) totals[it.channel]++;
+    res.json({
+      users: list.slice(0, 150),
+      truncated: Math.max(0, list.length - 150),
+      notFound: aud.notFound,
+      skipped: aud.skipped,
+      totals
+    });
+  } catch (err) {
+    logger.error(`/api/admin/notif-batches/preview: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Crear y disparar un lote. Responde YA con los totales; el envío sigue en el motor.
+app.post('/api/admin/notif-batches', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!['admin', 'depositor'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'No tenés permiso para enviar lotes.' });
+    }
+    const b = req.body || {};
+    const audienceType = ['list', 'inactive', 'all', 'public'].includes(b.audienceType) ? b.audienceType : null;
+    if (!audienceType) return res.status(400).json({ error: 'Elegí una audiencia válida.' });
+    const isPublic = audienceType === 'public';
+    // El código público SIEMPRE es por código (no hay a quién "enviarle por tiempo").
+    const mode = isPublic ? 'code' : b.mode;
+    if (!['code', 'window'].includes(mode)) return res.status(400).json({ error: 'Modo inválido (código o por tiempo).' });
+    const giftType = b.giftType;
+    if (!['percent', 'fixed'].includes(giftType)) return res.status(400).json({ error: 'Tipo de regalo inválido.' });
+    const amount = Math.round(Number(b.amount));
+    if (giftType === 'percent' && (!Number.isFinite(amount) || amount < 1 || amount > 200)) {
+      return res.status(400).json({ error: 'El % del regalo tiene que estar entre 1 y 200.' });
+    }
+    if (giftType === 'fixed' && (!Number.isFinite(amount) || amount < 1 || amount > 500000)) {
+      return res.status(400).json({ error: 'El monto en fichas tiene que estar entre $1 y $500.000.' });
+    }
+    const validHours = Math.round(Number(b.validHours));
+    if (!Number.isFinite(validHours) || validHours < 1 || validHours > 168) {
+      return res.status(400).json({ error: 'La vigencia tiene que ser de 1 a 168 horas.' });
+    }
+    const message = String(b.message || '').trim();
+    if (!isPublic && (message.length < 5 || message.length > 500)) {
+      return res.status(400).json({ error: 'El mensaje tiene que tener entre 5 y 500 caracteres.' });
+    }
+    if (isPublic && message.length > 500) {
+      return res.status(400).json({ error: 'El mensaje puede tener hasta 500 caracteres.' });
+    }
+    const title = String(b.title || '').trim().slice(0, 100) || '🎁 Tenés un regalo';
+    const name = String(b.name || '').trim().slice(0, 60);
+
+    // Rollover (solo fichas): rango 0..50 Y contra los multiplicadores de BONO
+    // de la plataforma (⚠️ bonus.multipliers — los de rollover son de DEPÓSITOS).
+    let rolloverX = 0;
+    if (giftType === 'fixed') {
+      rolloverX = Math.round(Number(b.rolloverX) || 0);
+      if (!Number.isFinite(rolloverX) || rolloverX < 0 || rolloverX > 50) {
+        return res.status(400).json({ error: 'El rollover tiene que estar entre 0 y 50 (0 = sin rollover).' });
+      }
+      try {
+        const cfg = await girox.getPlatformConfig();
+        const allowed = (cfg && cfg.success && cfg.config && cfg.config.bonus && Array.isArray(cfg.config.bonus.multipliers))
+          ? cfg.config.bonus.multipliers : null;
+        if (allowed && !allowed.includes(rolloverX)) {
+          return res.status(400).json({ error: `Rollover x${rolloverX} no permitido por la plataforma. Permitidos: ${allowed.join(', ')}.` });
+        }
+      } catch (_) { /* config caída: alcanza el rango 0..50 */ }
+    }
+
+    // Código (modo code): del body o autogenerado sin confundibles.
+    let code = null;
+    if (mode === 'code') {
+      code = String(b.code || '').trim().toUpperCase() || _genNotifBatchCode();
+      if (!/^[A-Z0-9-]{4,30}$/.test(code)) {
+        return res.status(400).json({ error: 'El código tiene que tener de 4 a 30 caracteres (letras, números o guiones).' });
+      }
+      const welcomeCode = String((await getConfig('communityWelcomeCode', '')) || '').trim();
+      if (welcomeCode && welcomeCode.toUpperCase() === code) {
+        return res.status(400).json({ error: 'Ese código es el del bono de bienvenida vigente — elegí otro.' });
+      }
+      const clash = await NotifBatch.findOne({ mode: 'code', code, expiresAt: { $gt: new Date() } }).select('id').lean();
+      if (clash) return res.status(400).json({ error: 'Ya hay un lote ACTIVO con ese código — elegí otro o esperá a que venza.' });
+    }
+
+    // Cupo total de canjes (solo código público).
+    let maxClaims = null;
+    if (isPublic && b.maxClaims !== undefined && b.maxClaims !== null && b.maxClaims !== '') {
+      maxClaims = Math.round(Number(b.maxClaims));
+      if (!Number.isFinite(maxClaims) || maxClaims < 1 || maxClaims > 100000) {
+        return res.status(400).json({ error: 'El cupo de canjes tiene que estar entre 1 y 100.000.' });
+      }
+    }
+
+    const aud = await _resolveNotifBatchAudience(b);
+    if (aud.error) return res.status(400).json({ error: aud.error });
+    if (!isPublic && !aud.users.length) {
+      return res.status(400).json({ error: 'La audiencia quedó vacía — no hay a quién enviarle.' });
+    }
+
+    const sentAt = new Date();
+    const expiresAt = new Date(sentAt.getTime() + validHours * 3600 * 1000);
+    const recipients = aud.users.map((u) => ({
+      userId: u.id,
+      username: u.username,
+      channel: _notifChannelOf(u),
+      delivery: null,
+      deliveryAt: null,
+      // Por tiempo: el regalo aplica a TODOS desde el envío.
+      claimedAt: mode === 'window' ? sentAt : null,
+      promoBonusId: null,
+      creditedAt: null,
+      creditTxId: null,
+      creditError: null
+    }));
+
+    const batch = await NotifBatch.create({
+      id: uuidv4(),
+      name, mode, giftType, amount, rolloverX,
+      code, isPublic, maxClaims, validHours,
+      sentAt, expiresAt, title, message,
+      sentBy: req.user.username || null,
+      sentByRole: req.user.role || null,
+      audienceType,
+      audienceDays: audienceType === 'inactive' ? Math.round(Number(b.audienceDays)) : null,
+      audienceLimit: (audienceType === 'inactive' && b.audienceLimit) ? Math.round(Number(b.audienceLimit)) : null,
+      // Público: no hay nada que enviar (el código se sube a mano a las redes).
+      sendDone: isPublic,
+      recipients
+    });
+
+    if (!isPublic) {
+      setImmediate(() => { _processNotifBatchQueue().catch((e) => logger.error(`[notif-batch] kickoff: ${e.message}`)); });
+    }
+
+    const totals = { ok: recipients.length, app: 0, browser: 0, none: 0 };
+    for (const r2 of recipients) totals[r2.channel]++;
+    logger.info(`[notif-batch] lote ${batch.id} creado por ${req.user.username}: ${mode}/${giftType} ${giftType === 'percent' ? amount + '%' : '$' + amount} → ${isPublic ? 'PÚBLICO' : recipients.length + ' destinatarios'}`);
+    res.json({
+      success: true,
+      id: batch.id,
+      code,
+      isPublic,
+      totals,
+      notFound: aud.notFound,
+      skipped: aud.skipped
+    });
+  } catch (err) {
+    logger.error(`/api/admin/notif-batches: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Historial de lotes (sin el array recipients: solo tamaños vía aggregation).
+app.get('/api/admin/notif-batches', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!['admin', 'depositor', 'withdrawer'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'No tenés permiso para ver los lotes.' });
+    }
+    const limit = Math.min(100, Math.max(1, parseInt(req.query.limit, 10) || 30));
+    const recips = { $ifNull: ['$recipients', []] };
+    const rows = await NotifBatch.aggregate([
+      { $sort: { sentAt: -1 } },
+      { $limit: limit },
+      { $project: {
+        _id: 0,
+        id: 1, name: 1, mode: 1, giftType: 1, amount: 1, rolloverX: 1,
+        code: 1, isPublic: 1, maxClaims: 1, validHours: 1,
+        sentAt: 1, expiresAt: 1, sentBy: 1, sentByRole: 1,
+        audienceType: 1, audienceDays: 1, audienceLimit: 1, sendDone: 1,
+        total: { $size: recips },
+        claimed: { $size: { $filter: { input: recips, as: 'r', cond: { $ne: ['$$r.claimedAt', null] } } } },
+        delivered: { $size: { $filter: { input: recips, as: 'r', cond: { $in: ['$$r.delivery', ['socket', 'push']] } } } },
+        pendientes: { $size: { $filter: { input: recips, as: 'r', cond: { $in: ['$$r.delivery', [null, 'sending']] } } } },
+        sinNotis: { $size: { $filter: { input: recips, as: 'r', cond: { $eq: ['$$r.channel', 'none'] } } } },
+        credited: { $size: { $filter: { input: recips, as: 'r', cond: { $ne: ['$$r.creditedAt', null] } } } }
+      } }
+    ]);
+    res.json({ batches: rows });
+  } catch (err) {
+    logger.error(`/api/admin/notif-batches (list): ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// Detalle de un lote: estado por destinatario (con join a PromoBonus para el
+// estado del cartel verde de los regalos %).
+app.get('/api/admin/notif-batches/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!['admin', 'depositor', 'withdrawer'].includes(req.user.role)) {
+      return res.status(403).json({ error: 'No tenés permiso para ver los lotes.' });
+    }
+    const batch = await NotifBatch.findOne({ id: String(req.params.id || '') }).lean();
+    if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
+    const pbIds = (batch.recipients || []).map((r) => r.promoBonusId).filter(Boolean);
+    const pbs = pbIds.length
+      ? await PromoBonus.find({ id: { $in: pbIds } }).select('id status usedBy usedAt').lean()
+      : [];
+    const pbById = new Map(pbs.map((p) => [p.id, p]));
+    const recipients = (batch.recipients || []).map((r) => {
+      const pb = r.promoBonusId ? pbById.get(r.promoBonusId) : null;
+      return {
+        username: r.username,
+        channel: r.channel,
+        delivery: r.delivery,
+        claimedAt: r.claimedAt,
+        creditedAt: r.creditedAt,
+        creditError: r.creditError,
+        bonusStatus: pb ? pb.status : null,
+        usedBy: pb ? pb.usedBy : null,
+        usedAt: pb ? pb.usedAt : null
+      };
+    });
+    res.json({ batch: {
+      id: batch.id, name: batch.name, mode: batch.mode, giftType: batch.giftType,
+      amount: batch.amount, rolloverX: batch.rolloverX, code: batch.code,
+      isPublic: batch.isPublic, maxClaims: batch.maxClaims, validHours: batch.validHours,
+      sentAt: batch.sentAt, expiresAt: batch.expiresAt, title: batch.title,
+      message: batch.message, sentBy: batch.sentBy, sentByRole: batch.sentByRole,
+      audienceType: batch.audienceType, audienceDays: batch.audienceDays,
+      audienceLimit: batch.audienceLimit, sendDone: batch.sendDone,
+      recipients
+    } });
+  } catch (err) {
+    logger.error(`/api/admin/notif-batches/:id: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });

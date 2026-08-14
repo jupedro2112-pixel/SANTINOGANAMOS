@@ -1459,6 +1459,95 @@ document.addEventListener('change', function (ev) {
                     </div>
                 </div>
 
+                <!-- 🎁 LOTE DE NOTIFICACIONES CON REGALO (2026-08-14) -->
+                <div style="background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
+                        <h3 style="margin:0;font-size:1rem;color:#d4af37">🎁 Lote con regalo</h3>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="toggleNbHelp()">❓ Cómo funciona</button>
+                    </div>
+                    <div id="nbHelp" style="display:none;background:rgba(255,255,255,0.04);border:1px solid rgba(212,175,55,0.25);border-radius:8px;padding:1rem;margin-bottom:1rem;font-size:.8rem;color:#ccc;line-height:1.55"></div>
+                    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:.75rem">
+                        <div style="flex:1;min-width:180px">
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Nombre del lote (opcional)</label>
+                            <input type="text" id="nbName" class="form-input" placeholder="Ej: Recuperación viernes" maxlength="60" style="width:100%" />
+                        </div>
+                        <div>
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Modo</label>
+                            <label style="margin-right:10px;font-size:.85rem"><input type="radio" name="nbMode" value="code" checked onchange="nbFormChanged()"> 🔑 Código</label>
+                            <label style="font-size:.85rem"><input type="radio" name="nbMode" value="window" onchange="nbFormChanged()"> ⏰ Por tiempo</label>
+                        </div>
+                        <div>
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Regalo</label>
+                            <label style="margin-right:10px;font-size:.85rem"><input type="radio" name="nbGift" value="percent" checked onchange="nbFormChanged()"> ％ en la carga (cartel al agente)</label>
+                            <label style="font-size:.85rem"><input type="radio" name="nbGift" value="fixed" onchange="nbFormChanged()"> 💵 Fichas (automático)</label>
+                        </div>
+                    </div>
+                    <div style="display:flex;gap:1rem;flex-wrap:wrap;align-items:flex-end;margin-bottom:.75rem">
+                        <div>
+                            <label class="form-label" style="display:block;margin-bottom:.3rem" id="nbAmountLabel">Monto (%)</label>
+                            <input type="number" id="nbAmount" class="form-input" min="1" style="width:120px" />
+                        </div>
+                        <div id="nbRolloverWrap" style="display:none">
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">🎯 Rollover (x)</label>
+                            <input type="number" id="nbRollover" class="form-input" min="0" max="50" value="0" style="width:90px" />
+                        </div>
+                        <div>
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Vigencia (horas)</label>
+                            <input type="number" id="nbValidHours" class="form-input" min="1" max="168" value="24" style="width:100px" />
+                        </div>
+                        <div id="nbCodeWrap">
+                            <label class="form-label" style="display:block;margin-bottom:.3rem">Código</label>
+                            <input type="text" id="nbCode" class="form-input" placeholder="vacío = se genera solo" maxlength="30" style="width:180px;text-transform:uppercase" />
+                            <button type="button" class="btn btn-secondary btn-sm" onclick="nbGenCode()" title="Generar código al azar">🎲</button>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label class="form-label">Título push</label>
+                        <input type="text" id="nbTitle" class="form-input" placeholder="🎁 Tenés un regalo" maxlength="100" />
+                    </div>
+                    <div class="form-group" style="margin-top:.75rem">
+                        <label class="form-label">Mensaje</label>
+                        <textarea id="nbMessage" class="form-input" rows="3" placeholder="Ej: ¡Te extrañamos! Volvé con este regalo." maxlength="500" style="resize:vertical;width:100%"></textarea>
+                        <div style="color:#888;font-size:.72rem;margin-top:3px">El regalo, el código y la vigencia se agregan solos al final del mensaje.</div>
+                    </div>
+                    <div style="margin-top:.9rem">
+                        <label class="form-label" style="display:block;margin-bottom:.4rem">Destinatarios</label>
+                        <label style="margin-right:12px;font-size:.85rem"><input type="radio" name="nbAudience" value="list" checked onchange="nbFormChanged()"> 📋 Lista pegada</label>
+                        <label style="margin-right:12px;font-size:.85rem"><input type="radio" name="nbAudience" value="inactive" onchange="nbFormChanged()"> 😴 Inactivos</label>
+                        <label style="margin-right:12px;font-size:.85rem"><input type="radio" name="nbAudience" value="all" onchange="nbFormChanged()"> 🌍 Lote completo</label>
+                        <label style="font-size:.85rem"><input type="radio" name="nbAudience" value="public" onchange="nbFormChanged()"> 📣 Código PÚBLICO</label>
+                        <div id="nbListWrap" style="margin-top:.6rem">
+                            <textarea id="nbUsernames" class="form-input" rows="3" placeholder="Usuarios separados por coma, espacio o enter" style="resize:vertical;width:100%"></textarea>
+                        </div>
+                        <div id="nbInactiveWrap" style="display:none;margin-top:.6rem">
+                            <label style="font-size:.85rem">Sin entrar hace <input type="number" id="nbAudienceDays" class="form-input" min="1" max="365" value="7" style="width:80px"> días</label>
+                            <label style="font-size:.85rem;margin-left:10px">Cupo (opcional) <input type="number" id="nbAudienceLimit" class="form-input" min="1" max="20000" placeholder="ej: 300" style="width:100px"></label>
+                            <div style="color:#888;font-size:.72rem;margin-top:3px">Se toman los MÁS RECIENTES primero (más probables de volver).</div>
+                        </div>
+                        <div id="nbAllWrap" style="display:none;margin-top:.6rem;color:#ffaa44;font-size:.78rem">⚠️ Va a TODOS los clientes activos (hasta 20.000). Pensalo bien, sobre todo con fichas por tiempo.</div>
+                        <div id="nbPublicWrap" style="display:none;margin-top:.6rem">
+                            <div style="color:#bbb;font-size:.78rem;line-height:1.5;margin-bottom:.4rem">📣 No se le envía nada a nadie: se crea el CÓDIGO y vos lo publicás en Telegram/redes. Cualquier cliente lo canjea UNA vez, hasta el cupo. Fuerza el modo 🔑 código.</div>
+                            <label style="font-size:.85rem">Cupo total de canjes (opcional) <input type="number" id="nbMaxClaims" class="form-input" min="1" max="100000" placeholder="vacío = sin cupo" style="width:130px"></label>
+                        </div>
+                    </div>
+                    <div style="margin-top:1rem;display:flex;gap:.5rem;flex-wrap:wrap;align-items:center">
+                        <button type="button" class="btn btn-secondary" onclick="nbValidateList()">🔍 Validar lista</button>
+                        <button id="nbSendBtn" type="button" class="btn btn-primary" onclick="nbSendBatch()">🚀 Enviar lote</button>
+                        <span id="nbStatus" style="font-size:.85rem;color:#a5b4fc"></span>
+                    </div>
+                    <div id="nbPreview" style="margin-top:.9rem"></div>
+                </div>
+
+                <!-- 📤 LOTES ENVIADOS (historial) -->
+                <div style="background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
+                    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;margin-bottom:1rem">
+                        <h3 style="margin:0;font-size:1rem;color:#d4af37">📤 Lotes enviados</h3>
+                        <button type="button" class="btn btn-secondary btn-sm" onclick="loadNotifBatches()">🔄</button>
+                    </div>
+                    <div id="nbListContainer" style="font-size:.85rem;color:#ccc">Cargando…</div>
+                    <div id="nbDetailContainer" style="margin-top:1rem"></div>
+                </div>
+
                 <!-- Resultado del último envío -->
                 <div id="notifResult" style="display:none;background:var(--bg-secondary,#1a1a2e);border-radius:12px;padding:1.5rem;margin-bottom:1.5rem">
                     <h3 style="margin-bottom:1rem;font-size:1rem;color:var(--text-secondary,#aaa)">📋 Resultado del envío</h3>

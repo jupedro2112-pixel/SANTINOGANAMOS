@@ -544,10 +544,10 @@
             <a id="canalInformativoBtn" href="/go/comunidad" target="_blank" rel="noopener noreferrer" class="menu-item telegram-menu-item" title="Unite a la Comunidad de Telegram" role="menuitem">
                 <span class="menu-item-icon">📣</span><span class="menu-item-label" style="color:#53bdeb;">Unite a la Comunidad de Telegram</span>
             </a>
-            <!-- Código de bienvenida de la Comunidad: canje del bono sorpresa. -->
-            <button class="menu-item" title="Código de Bienvenida de la Comunidad de Telegram" role="menuitem"
+            <!-- Canje de códigos: bienvenida de la Comunidad + códigos de lote (notificaciones). -->
+            <button class="menu-item" title="Reclamá bonos con códigos de la Comunidad o de tus notificaciones" role="menuitem"
                 onclick="if(window.openWelcomeCodeModal)openWelcomeCodeModal()">
-                <span class="menu-item-icon">🎁</span><span class="menu-item-label">Código de Bienvenida</span>
+                <span class="menu-item-icon">🎁</span><span class="menu-item-label">Reclamar Bono con Código</span>
             </button>
             <button class="menu-item settings-btn" id="settingsBtn" title="Configuración" role="menuitem">
                 <span class="menu-item-icon">⚙️</span><span class="menu-item-label">Configuración</span>
@@ -4077,8 +4077,8 @@
         <div class="modal-content" style="max-width:400px;position:relative;" onclick="event.stopPropagation()">
             <button onclick="hideModal('welcomeCodeModal')" style="position:absolute;top:15px;right:15px;background:none;border:none;color:#888;font-size:24px;cursor:pointer;z-index:10;">✕</button>
             <div class="modal-header">
-                <h2>🎁 Código de Bienvenida</h2>
-                <p>El regalo de la Comunidad de Telegram para usuarios nuevos</p>
+                <h2>🎁 Reclamar Bono con Código</h2>
+                <p>Canjeá el código de bienvenida de la Comunidad de Telegram o los códigos que te lleguen por notificación</p>
             </div>
             <div id="welcomeCodeBody">
                 <p style="color:#aaa;font-size:13px;">Cargando...</p>
@@ -4092,20 +4092,37 @@
         function _body() { return document.getElementById('welcomeCodeBody'); }
         function _money(n) { return '$' + (Number(n) || 0).toLocaleString('es-AR'); }
 
+        // Input + error + botón del canje. Compartido por el estado "sin
+        // canjear" y por el bloque extra de los estados pending/used/credited.
+        function _inputHtml(btnLabel) {
+            return '<input type="text" id="welcomeCodeUserInput" placeholder="Escribí el código acá" maxlength="40" autocomplete="off" ' +
+                    'style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(212,175,55,0.4);' +
+                    'background:rgba(0,0,0,0.4);color:#fff;font-size:16px;text-align:center;letter-spacing:2px;' +
+                    'text-transform:uppercase;margin-bottom:10px;box-sizing:border-box;">' +
+                '<div id="welcomeCodeError" style="color:#ff6b6b;font-size:12px;min-height:16px;margin-bottom:6px;text-align:center;"></div>' +
+                '<button type="button" id="welcomeCodeSubmitBtn" class="btn btn-primary" style="width:100%;" onclick="submitWelcomeCode()">' + (btnLabel || '🎁 Canjear mi código') + '</button>';
+        }
+
+        // CRÍTICO: quien YA canjeó la bienvenida también tiene que poder meter
+        // códigos de LOTE (los que llegan por notificación) — este bloque va
+        // DEBAJO de las tarjetas de estado en los 3 renders.
+        function _extraInputHtml() {
+            return '<div style="margin-top:12px;">' +
+                '<p style="color:#ccc;font-size:12px;margin:0 0 8px;">📩 ¿Te llegó OTRO código por notificación? Canjealo acá:</p>' +
+                _inputHtml('🎁 Canjear código') +
+                '</div>';
+        }
+
         function _renderInput(extraMsg) {
             _body().innerHTML =
                 '<p style="color:#ccc;font-size:12.5px;line-height:1.55;margin:0 0 12px;">' +
                     'Al unirte a la <strong style="color:#53bdeb;">Comunidad de Telegram</strong> vas a encontrar un ' +
                     '<strong>código de bienvenida</strong> para usuarios nuevos (de un solo uso por cuenta). ' +
-                    'Ingresalo acá y destrabá un <strong style="color:#d4af37;">BONO SORPRESA 🎁</strong> para tu próxima carga.' +
+                    'Ingresalo acá y destrabá un <strong style="color:#d4af37;">BONO SORPRESA 🎁</strong> para tu próxima carga. ' +
+                    'Acá también canjeás los códigos que te lleguen por notificación.' +
                 '</p>' +
                 (extraMsg ? '<p style="color:#ffaa44;font-size:12px;margin:0 0 10px;">' + extraMsg + '</p>' : '') +
-                '<input type="text" id="welcomeCodeUserInput" placeholder="Escribí el código acá" maxlength="40" autocomplete="off" ' +
-                    'style="width:100%;padding:12px 14px;border-radius:10px;border:1px solid rgba(212,175,55,0.4);' +
-                    'background:rgba(0,0,0,0.4);color:#fff;font-size:16px;text-align:center;letter-spacing:2px;' +
-                    'text-transform:uppercase;margin-bottom:10px;box-sizing:border-box;">' +
-                '<div id="welcomeCodeError" style="color:#ff6b6b;font-size:12px;min-height:16px;margin-bottom:6px;text-align:center;"></div>' +
-                '<button type="button" id="welcomeCodeSubmitBtn" class="btn btn-primary" style="width:100%;" onclick="submitWelcomeCode()">🎁 Canjear mi código</button>';
+                _inputHtml();
         }
 
         // Tipo next_charge: `amount` es un PORCENTAJE (ej. 50 → "+50% EXTRA");
@@ -4121,14 +4138,16 @@
                     '<div style="font-size:15px;font-weight:900;margin-bottom:6px;">¡Tenés ' + _fmtVal(amount, type) + '!</div>' +
                     '<div style="font-size:12.5px;line-height:1.5;opacity:.95;">Te espera en tu <strong>PRÓXIMA CARGA</strong>: ' +
                     'cuando vayas a cargar, avisale al agente que tenés el bono de bienvenida de la Comunidad y te lo suma en el momento.</div>' +
-                '</div>';
+                '</div>' +
+                _extraInputHtml();
         }
 
         function _renderUsed(amount, type) {
             _body().innerHTML =
                 '<div style="background:rgba(255,255,255,0.05);border-radius:12px;padding:14px;text-align:center;color:#999;font-size:12.5px;line-height:1.5;">' +
                     '✅ Ya usaste tu código de bienvenida' + (amount ? ' (' + (type === 'next_charge' ? '+' + amount + '% extra' : _money(amount)) + ')' : '') + '.<br>Es una sola vez por cuenta — ¡pero seguí atento a la Comunidad por más sorpresas! 🎉' +
-                '</div>';
+                '</div>' +
+                _extraInputHtml();
         }
 
         // Tipo cash: la plata ya se acreditó sola al canjear.
@@ -4138,7 +4157,8 @@
                     '<div style="font-size:34px;margin-bottom:6px;">💰</div>' +
                     '<div style="font-size:15px;font-weight:900;margin-bottom:6px;">¡' + _money(amount) + ' acreditados en tu cuenta!</div>' +
                     '<div style="font-size:12.5px;line-height:1.5;opacity:.95;">Tu bono sorpresa de bienvenida ya está en tu saldo. ¡A jugarlo! 🎰</div>' +
-                '</div>';
+                '</div>' +
+                _extraInputHtml();
         }
 
         window.openWelcomeCodeModal = async function () {
