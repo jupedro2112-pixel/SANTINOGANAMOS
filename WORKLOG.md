@@ -8,6 +8,31 @@
 
 ## Sesión 2026-08-14
 
+### 154. Fixes de push: sendPushIfOffline con resultado + forcePush, socket fantasma del chat, badge APP/NAVEGADOR en vivo
+- **Base para los lotes de notificaciones (#155+), y 2 bugs reales:**
+- **(a) `sendPushIfOffline(user, title, body, data, opts)` ahora DEVUELVE**
+  `{ delivery: 'socket'|'push'|'error'|'none', sent, failed, cleaned }`
+  ('none' = sin tokens; 'error' = tenía tokens pero TODOS los push fallaron).
+  Los ~7 callers viejos ignoran el retorno — sin cambios de comportamiento.
+  `opts.forcePush === true` saltea el atajo del socket (`connectedUsers.has`).
+- **(b) FIX socket fantasma del chat:** `_maybeSendPushFallback` se llama en
+  dos casos donde el socket YA falló (offline real, o socket que no acusó
+  recibo en 3s pero SIGUE en `connectedUsers`). En el segundo caso,
+  `sendPushIfOffline` veía al usuario "online" y re-emitía por el MISMO socket
+  muerto → el push real nunca salía. Ahora ese helper fuerza `forcePush:true`
+  (el tag 'chat-message' colapsa duplicados si el mensaje igual llegó por la
+  sala).
+- **(c) FIX badge en vivo del panel:** el handler socket `user_app_status`
+  clasificaba APP INSTALADA / NAVEGADOR con el contexto del ÚLTIMO token → un
+  cliente CON app que abría Chrome pasaba a "NOTIS EN NAVEGADOR" hasta
+  recargar. Ahora el handler solo hace `loadUserInfo(data.userId)` si es el
+  chat abierto (recalcula con la lógica multi-token completa, permisos
+  incluidos). admin-sw a **v27**.
+- **Validado:** `node --check` OK (server.js, admin.js, admin-sw.js). Back
+  necesita redeploy. PROBAR: mensaje de admin a cliente con pestaña suspendida
+  → le llega el push; cliente con app instalada abre Chrome → el badge del
+  chat sigue diciendo APP INSTALADA.
+
 ### 153. Mínimos para COBRAR el reembolso (semanal $1.500 / mensual $5.000, editables)
 - **Pedido del owner (lote de features portadas del proyecto hermano):** si el
   reembolso CALCULADO del período da > $0 pero menos que el mínimo, el reclamo

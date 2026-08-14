@@ -1157,7 +1157,11 @@ function _maybeSendPushFallback(receiverId, message) {
       const pushBody = message && message.type === 'image' ? '📸 Imagen'
                      : message && message.type === 'video' ? '🎥 Video'
                      : (message && message.content || '').substring(0, 100);
-      sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }).catch(function (e) {
+      // forcePush: cuando llegamos acá el socket YA falló (offline real, o socket
+      // que no acusó recibo en 3s pero SIGUE en connectedUsers — "socket
+      // fantasma"). Sin forzar, sendPushIfOffline veía al fantasma como online y
+      // re-emitía por el mismo socket muerto: el push real nunca salía.
+      sendPushIfOffline(targetUser, pushTitle, pushBody, { tag: 'chat-message' }, { forcePush: true }).catch(function (e) {
         logger.warn(`[FCM] sendPushIfOffline (chat) falló para ${targetUser.username}: ${e.message}`);
       });
     })
@@ -1170,11 +1174,23 @@ function _maybeSendPushFallback(receiverId, message) {
 // Evita duplicado: si el usuario ya recibió el mensaje por Socket.IO (online),
 // no enviamos además un push. Solo enviamos push a usuarios offline.
 //
+// Devuelve SIEMPRE `{ delivery, sent, failed, cleaned }`:
+//   delivery: 'socket' (online, se emitió in-app) | 'push' (al menos un FCM salió)
+//           | 'error' (tenía tokens pero TODOS los push fallaron) | 'none' (sin tokens).
+// Los callers viejos ignoran el retorno sin problema; los nuevos (lotes de
+// notificaciones) lo usan para registrar la entrega real por destinatario.
+//
+// opts.forcePush === true saltea el atajo del socket: manda push FCM aunque el
+// usuario figure conectado. Lo usa el fallback del chat cuando el socket NO
+// acusó recibo (socket fantasma): re-emitir por ese mismo socket muerto no
+// sirve — el push real sí (el tag 'chat-message' colapsa duplicados si el
+// mensaje igual llegó por la sala).
+//
 // NOTA DE INICIALIZACIÓN: connectedUsers (const Map) se declara en la sección
 // de Socket.IO más abajo (~línea 3205). Esta función nunca se invoca antes de
 // esa declaración (solo se llama desde route handlers y socket handlers), por lo
 // que la referencia es segura en runtime.
-async function sendPushIfOffline(user, title, body, data = {}) {
+async function sendPushIfOffline(user, title, body, data = {}, opts = {}) {
   // Recopilar todos los tokens activos del usuario (array multi-token + fallback al campo individual)
   const allTokens = new Set();
   if (user.fcmTokens && user.fcmTokens.length > 0) {
@@ -1184,13 +1200,13 @@ async function sendPushIfOffline(user, title, body, data = {}) {
   }
   if (user.fcmToken) allTokens.add(user.fcmToken);
 
-  if (allTokens.size === 0) return;
+  if (allTokens.size === 0) return { delivery: 'none', sent: 0, failed: 0, cleaned: 0 };
 
   // Si el usuario tiene un socket activo, ya recibió el mensaje en tiempo real;
   // no enviamos push para evitar notificación duplicada. En su lugar emitimos
   // un evento socket 'admin_notification' para que el frontend muestre un
   // cartel in-app cuando la PWA está abierta en foreground.
-  if (connectedUsers && connectedUsers.has(user.id)) {
+  if (opts.forcePush !== true && connectedUsers && connectedUsers.has(user.id)) {
     logger.debug(`[FCM] Usuario ${user.username} online (socket activo), omitiendo push duplicado`);
     try {
       const userSocket = connectedUsers.get(user.id);
@@ -1207,15 +1223,20 @@ async function sendPushIfOffline(user, title, body, data = {}) {
     } catch (emitErr) {
       logger.warn(`[NOTIF] Error emitiendo admin_notification por socket a ${user.username}: ${emitErr.message}`);
     }
-    return;
+    return { delivery: 'socket', sent: 0, failed: 0, cleaned: 0 };
   }
 
+  let sent = 0;
+  let failed = 0;
+  let cleaned = 0;
   for (const token of allTokens) {
     try {
       const result = await _sendPushToUser(token, title, body, data);
       if (result.success) {
+        sent++;
         logger.info(`[FCM] Push enviado a ${user.username} (offline) token ...${token.slice(-8)}`);
       } else if (result.invalidToken) {
+        failed++;
         // Limpiar solo ese token específico, no todos los del usuario
         try {
           await User.updateOne(
@@ -1226,17 +1247,21 @@ async function sendPushIfOffline(user, title, body, data = {}) {
             { _id: user._id },
             { $pull: { fcmTokens: { token: token } } }
           );
+          cleaned++;
           logger.warn(`[FCM] Token inválido eliminado para ${user.username} (${token.slice(-8)})`);
         } catch (cleanErr) {
           logger.warn(`[FCM] Error limpiando token inválido de ${user.username}: ${cleanErr.message}`);
         }
       } else {
+        failed++;
         logger.warn(`[FCM] Error enviando push a ${user.username}: ${result.error}`);
       }
     } catch (err) {
+      failed++;
       logger.warn(`[FCM] Excepción enviando push a ${user.username}: ${err.message}`);
     }
   }
+  return { delivery: sent > 0 ? 'push' : 'error', sent, failed, cleaned };
 }
 
 // ============================================

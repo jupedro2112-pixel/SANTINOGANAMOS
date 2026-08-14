@@ -1253,19 +1253,15 @@ function initSocket() {
         updateUserStatus(data.userId, false);
     });
     
-    // Actualizar estado de app de notificaciones en tiempo real
+    // Actualizar estado de app de notificaciones en tiempo real.
+    // FIX badge en vivo: antes este handler clasificaba APP INSTALADA / NAVEGADOR
+    // con el contexto del ÚLTIMO token (el del evento) → un cliente CON app que
+    // abría Chrome pasaba a "NOTIS EN NAVEGADOR" hasta recargar. Ahora solo
+    // recarga la info del chat abierto: loadUserInfo ya tiene la clasificación
+    // multi-token completa (standalone gana sobre browser, permisos incluidos).
     socket.on('user_app_status', (data) => {
-        if (data.userId === selectedUserId && elements.chatAppStatus) {
-            if (data.appInstalled && data.fcmTokenContext === 'standalone') {
-                elements.chatAppStatus.textContent = '📱 APP INSTALADA';
-                elements.chatAppStatus.style.color = '#00ff88';
-            } else if (data.appInstalled && data.fcmTokenContext !== 'standalone') {
-                elements.chatAppStatus.textContent = '🌐 NOTIS EN NAVEGADOR';
-                elements.chatAppStatus.style.color = '#4fc3f7';
-            } else {
-                elements.chatAppStatus.textContent = '📵 NOTIS INACTIVAS';
-                elements.chatAppStatus.style.color = '#aaa';
-            }
+        if (data && data.userId && data.userId === selectedUserId) {
+            loadUserInfo(data.userId);
         }
     });
     
