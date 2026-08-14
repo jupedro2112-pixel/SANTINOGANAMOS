@@ -5,7 +5,12 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-08-03** — niveles VIP por apostado acumulado (réplica de
+> Última actualización: **2026-08-14** — lote de features portadas del proyecto
+> hermano (#153-#158): §2 (NotifBatch + PromoBonus con exención 'lote'), §4.4
+> (reference vip-nbatch), §5 (mínimos de reembolso + flujo completo de lotes con
+> regalo), §6 (Cerrados 48hs paginados, cards de lotes, Datos 2.0, admin-sw v31),
+> §7 (motor _processNotifBatchQueue).
+> Antes: 2026-08-03 — niveles VIP por apostado acumulado (réplica de
 > Stake): §2 (VipWagerMonth + campos User), §4.4 (references vip-lvl/vip-rake), §4.6
 > reescrita (el scraping del panel se ELIMINÓ en la v1.9 — ahora stats por username con
 > la Partner API), §4.8 (envs VIP_*, se fueron las GIROX_ADMIN_*), §5 (flujo VIP +
@@ -149,8 +154,15 @@ modelos); sus migraciones corren únicamente si algo llamara a ese connectDB.
 - **NotificationRule** (+ Suggestion con approval-gate 48h, + NotificationHistory con
   tracking de ROI), **NotifTemplate** (tipos: invitacion|regalo|reembolso — bono_50/100
   ELIMINADOS), **ScheduledNotif** (once/daily/weekly, worker cada 60s), **PromoBonus**
-  (bono de carga vigente ≤30%, 1 sola carga, cap de LECTURA a 30% en
-  `_getActivePromoBonus`), **BonusStrategyConfig** + **StrategyEnrollment** (estrategia
+  (bono de carga vigente, 1 sola carga; cap de LECTURA a 30% en
+  `_getActivePromoBonus` SOLO para bonos automáticos — los de LOTE,
+  `sourceRuleCode:'lote'`, están EXENTOS porque los configura un agente a mano,
+  hasta 200%; con `opts.includeFixed` el endpoint admin también ve regalos de
+  $ fijo → cartel "REGALO PENDIENTE"), **NotifBatch** (lote de notificaciones
+  con regalo, 2026-08-14: recipients embebidos con channel/delivery/claimedAt/
+  promoBonusId/credited*, modos code/window, giftType percent/fixed, código
+  público con maxClaims, `sendDone` para el motor reanudable — ver §7),
+  **BonusStrategyConfig** + **StrategyEnrollment** (estrategia
   por voto de encuesta — APAGADA), **EncuestaVote/EncuestaFire** (motor encuesta —
   bonos apagados), **InactividadFire** (motor inactivos — APAGADO).
 - **DailyRouletteSpin** — 1 giro/día (índices únicos userId+dateKey y
@@ -285,6 +297,7 @@ Prefijos en uso hoy:
 | `vip-lvl-<userId>-<idx>` | Bono por alcanzar un nivel VIP | userId + índice del nivel (cada nivel se paga UNA vez en la vida; por eso NO se pueden reordenar los idx de vipLevels.js) |
 | `vip-rake-<fromDateStr>-<userId>` | Rakeback semanal VIP | lunes de la semana reclamada + userId (derivada del PERÍODO, igual que los reembolsos y por el mismo motivo) |
 | `vip-welcome-<userId>` | Bono sorpresa del código de bienvenida (tipo cash) | userId (uno por cuenta para siempre, como el de instalación) |
+| `vip-nbatch-<batchId>-<userId>` | Regalo de fichas de un lote de notificaciones | id del NotifBatch + userId (uno por lote por usuario — los reintentos del motor o del canje jamás pagan dos veces) |
 
 ⚠️ **Por qué la del reembolso sale del período y no del id del claim** (`_refundReference`,
 server.js ~L6086): si la acreditación falla, el handler BORRA el RefundClaim para que el
@@ -514,7 +527,32 @@ VIPCARGAS con su JWT, y el cliente nunca más necesita conocer su clave del casi
   falla se borra la reserva). El crédito va por `creditUserBalance` = **depósito
   libre** (no `/bonus`: quedaría a reclamar) con la reference derivada del período.
   Ver #96 y §4.4. ⚠️ En la UI los reembolsos muestran SOLO el % — los nombres
-  Bronce/Plata/Oro son del nivel VIP (abajo).
+  Bronce/Plata/Oro son del nivel VIP (abajo). **Mínimos para cobrar (2026-08-14):**
+  `Config['refundMinimums']` = `{weekly:1500, monthly:5000}` (0 = sin mínimo; el
+  diario no tiene), leída SIN cache por `getRefundMinimums()`. Si el reembolso
+  CALCULADO da > $0 pero menos que el mínimo, el claim rechaza ANTES de la
+  reserva atómica (no quema el una-vez-por-período) con el mínimo VIGENTE en el
+  mensaje + `belowMinimum/minAmount`; el status expone `minAmount`/`belowMinimum`
+  por período. Editables en la misma card del panel (POST acepta `minimums`
+  OPCIONAL: un panel viejo cacheado no los pisa).
+- **Lotes de notificaciones con regalo** (NotifBatch, 2026-08-14): envío masivo
+  (o código público) con regalo. `percent` → PromoBonus `sourceRuleCode:'lote'`
+  (cartel verde, LO APLICA EL AGENTE, exento del cap 30%); `fixed` → fichas
+  AUTOMÁTICAS por `_creditNotifBatchGift`: caps anti-abuso por usuario cruzando
+  todos los lotes (3 créditos/24h, $300.000/7d → bloqueo + alerta
+  `security_alert` con toast rojo en el panel + nota admin-only), guard
+  bono-sobre-bono, reference `vip-nbatch-*`, auto-claim v1.7, Transaction
+  `bonus` con `metadata.source:'notif_batch'` (no cuenta como carga). Envío por
+  motor reanudable (§7), NUNCA en la request. Canje de códigos: hook
+  `_tryClaimNotifBatchCode` al principio de `POST /api/community-code/claim`
+  (null = no es de lote → sigue el welcome code intacto); membresía sin revelar
+  códigos ajenos; público con append atómico + cupo (`$expr $size`); SIN gate
+  de app instalada a propósito. Rollover del fixed validado contra
+  `bonus.multipliers` (⚠️ no `rollover.multipliers`). Endpoints
+  `/api/admin/notif-batches` (+`/preview`, `/:id`): enviar/preview
+  admin+depositor, historial también withdrawer. La PWA canjea desde el modal
+  "🎁 Reclamar Bono con Código" (los estados pending/used/credited del welcome
+  code muestran un input extra para códigos de lote).
 - **Niveles VIP** (2026-08-03, réplica de Stake): se sube por APOSTADO acumulado de
   por vida (buckets `VipWagerMonth`, ver §2 y el motor en
   `src/services/vipLevelService.js`). Escalera en `src/utils/vipLevels.js`: umbrales
@@ -623,7 +661,26 @@ VIPCARGAS con su JWT, y el cliente nunca más necesita conocer su clave del casi
   prueba `giroxApiKey` (el panel valida que empiece con `pk_`). La respuesta del listado
   expone `hasJugayganaCreds` mapeado desde `hasGiroxKey`. El "probar login" ya no
   loguea: consulta un jugador inexistente — 404 = key válida, 401 = key rechazada.
-- `admin-sw.js` (v24, scope /adminprivado2026/): network-first no-store para el shell.
+- **Pestaña Cerrados con 48hs PAGINADAS (2026-08-14):** `GET /api/admin/conversations`
+  con `status=closed` filtra `lastMessageAt ≥ now-48h` y pagina de a 100
+  (`?page=N`, clamp a la última página real; responde `{page, hasMore,
+  totalPages}`). Abiertos/pagos/comunidad siguen top-100 por actividad (un
+  abierto viejo es trabajo pendiente). Panel: paginador `#closedPager` solo en
+  Cerrados (ventana de 6 números + input con Enter), página 1 al cambiar de
+  pestaña, y el cache de 30s por pestaña guarda SOLO la página 1 (helper único
+  `_setConversationsCache`).
+- **Sección Notificaciones** suma las cards "🎁 Lote con regalo" (formulario +
+  Validar lista + confirm con conteo real + guía "❓ Cómo funciona") y "📤 Lotes
+  enviados" (historial con progreso en vivo y detalle por usuario, cap 400
+  filas). Listener socket `security_alert` → toast rojo.
+- **Sección "📊 Datos 2.0"** (cohortes de retención): `GET /api/admin/datos2?days=N`
+  (7..90) — camadas por día ART de registro, retención D1/D3/D7/D14/D30 por
+  última carga con ELEGIBILIDAD por edad (celda "—" si la camada no cumplió esa
+  edad), desglose pauta/agente/orgánico, $/nuevo y c3Pct10d; tablas con
+  semáforo + "🎯 Rendimiento por campaña" (publisher de Campaign). Botones
+  "❓ Cómo leer esta hoja" en Datos y Datos 2.0 (guía compartida).
+- `admin-sw.js` (v31, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
+  network-first no-store para el shell.
 - Servido por handlers propios con cache en memoria (`readFileCached`) + ADMIN_HOST
   check opcional; el catch-all bloquea todo otro path bajo /adminprivado2026/.
 - Secciones "Automatización" y "Estrategia de bonos" están marcadas "No se usa" en el
@@ -643,6 +700,7 @@ VIPCARGAS con su JWT, y el cliente nunca más necesita conocer su clave del casi
 | `_runVipTick` (niveles VIP) | 30 min | activo (se apaga desde el panel: Config → "Niveles VIP", flag `vip_levels_disabled` en Config, SOLO admin general — sin cache a propósito para que aplique al instante en todas las instancias) | buckets con `$set` idempotente + bono con reference `vip-lvl-*` (la plataforma dedupe) |
 | `_runVipSweepCheck` (sweep VIP) | 1 h (corre a las 05 ART) | activo | claim atómico por día en Config (`vip_sweep_day`) → instancia única |
 | `_runFcmPrune` | 24 h | activo | flag anti-overlap en memoria |
+| `_processNotifBatchQueue` (lotes con regalo) | 45 s (+ setImmediate al crear un lote) | activo | claim atómico por recipient (`findOneAndUpdate` posicional a 'sending'; un 'sending' colgado >10 min se re-reclama solo) + reference `vip-nbatch-*` — reanudable tras deploy y multi-instancia safe |
 | `fbAdsWebhook.startWorker` | 5 min | activo | nextRetryAt |
 | Limpieza mensajes >3d | 6 h | activo (red de seguridad del TTL) | deleteMany |
 
