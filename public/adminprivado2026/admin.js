@@ -5502,9 +5502,10 @@ function _refundTierRowHtml(t) {
     </div>`;
 }
 
-function renderRefundTiersEditor(tiersByPeriod) {
+function renderRefundTiersEditor(tiersByPeriod, minimums) {
     const cont = document.getElementById('refundTiersEditors');
     if (!cont) return;
+    const mins = minimums || {};
     cont.innerHTML = REFUND_TIER_PERIODS.map((p) => {
         const tiers = (tiersByPeriod && tiersByPeriod[p.key]) || [];
         return `<div style="margin-bottom:14px;padding:10px;background:rgba(255,255,255,0.03);border-radius:8px;">
@@ -5513,7 +5514,30 @@ function renderRefundTiersEditor(tiersByPeriod) {
             <button type="button" class="btn-secondary" onclick="addRefundTierRow('${p.key}')" style="font-size:12px;">➕ Agregar rango</button>
             <div style="color:#777;font-size:10.5px;margin-top:5px;">El ÚLTIMO rango dejalo con "hasta $" vacío = "más de" el anterior. Máx ${_refundTiersMaxRows} rangos.</div>
         </div>`;
-    }).join('');
+    }).join('') +
+    // Mínimos para COBRAR (semanal/mensual): un reembolso calculado > $0 pero por
+    // debajo del mínimo se rechaza con mensaje al cliente. 0 = sin mínimo.
+    `<div style="margin-bottom:14px;padding:10px;background:rgba(255,215,0,0.05);border:1px solid rgba(255,215,0,0.15);border-radius:8px;">
+        <div style="font-weight:bold;font-size:13px;margin-bottom:8px;">💵 Mínimo para cobrar</div>
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:center;">
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#ccc;">📆 Semanal: $
+                <input type="number" id="refundMinWeekly" min="0" step="1" value="${mins.weekly != null ? mins.weekly : ''}" style="width:100px;">
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#ccc;">🗓️ Mensual: $
+                <input type="number" id="refundMinMonthly" min="0" step="1" value="${mins.monthly != null ? mins.monthly : ''}" style="width:100px;">
+            </label>
+        </div>
+        <div style="color:#777;font-size:10.5px;margin-top:5px;">Si el reembolso calculado del período da menos que este monto, el reclamo se rechaza y el cliente ve el mínimo vigente. 0 = sin mínimo. El diario no tiene mínimo.</div>
+    </div>`;
+}
+
+function _collectRefundMinimums() {
+    const w = document.getElementById('refundMinWeekly');
+    const m = document.getElementById('refundMinMonthly');
+    return {
+        weekly: w && w.value !== '' ? Number(w.value) : 0,
+        monthly: m && m.value !== '' ? Number(m.value) : 0
+    };
 }
 
 function addRefundTierRow(period) {
@@ -5561,7 +5585,7 @@ async function loadRefundTiers() {
         if (header) header.style.display = '';
         const j = await r.json();
         if (j.maxTiers) _refundTiersMaxRows = j.maxTiers;
-        renderRefundTiersEditor(j.tiersByPeriod || {});
+        renderRefundTiersEditor(j.tiersByPeriod || {}, j.minimums || {});
     } catch (e) {
         console.error('Error cargando rangos de reembolso:', e);
     }
@@ -5569,10 +5593,17 @@ async function loadRefundTiers() {
 
 async function saveRefundTiers() {
     const msg = document.getElementById('refundTiersMsg');
+    const minimums = _collectRefundMinimums();
+    if (!Number.isFinite(minimums.weekly) || minimums.weekly < 0 ||
+        !Number.isFinite(minimums.monthly) || minimums.monthly < 0) {
+        showToast('Los mínimos para cobrar tienen que ser 0 o más', 'error');
+        return;
+    }
     const body = {
         daily: _collectRefundTiers('daily'),
         weekly: _collectRefundTiers('weekly'),
-        monthly: _collectRefundTiers('monthly')
+        monthly: _collectRefundTiers('monthly'),
+        minimums
     };
     if (!confirm('¿Guardar los rangos de reembolso? Se aplican AL INSTANTE a los reclamos nuevos y a lo que el cliente ve en su perfil.')) return;
     try {
@@ -5586,7 +5617,7 @@ async function saveRefundTiers() {
             showToast(j.error || 'No se pudo guardar', 'error');
             return;
         }
-        renderRefundTiersEditor(j.tiersByPeriod || {});
+        renderRefundTiersEditor(j.tiersByPeriod || {}, j.minimums || {});
         const resumen = REFUND_TIER_PERIODS.map((p) => {
             const ts = (j.tiersByPeriod && j.tiersByPeriod[p.key]) || [];
             return `${p.label.split(' ')[1]}: ${ts.map((t) => `${t.pct}%`).join('/')}`;

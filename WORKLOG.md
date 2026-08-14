@@ -4,7 +4,37 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-08-06**
+> **Última actualización: 2026-08-14**
+
+## Sesión 2026-08-14
+
+### 153. Mínimos para COBRAR el reembolso (semanal $1.500 / mensual $5.000, editables)
+- **Pedido del owner (lote de features portadas del proyecto hermano):** si el
+  reembolso CALCULADO del período da > $0 pero menos que el mínimo, el reclamo
+  se rechaza con un mensaje que incluye el mínimo VIGENTE (nunca texto fijo).
+- **Backend:** `Config['refundMinimums']` = `{weekly, monthly}` (defaults
+  1500/5000, 0 = sin mínimo) + helper `getRefundMinimums()` SIN cache (mismo
+  patrón multi-instancia que `getRefundTiersByPeriod`; valor inválido cae al
+  default). En los claims weekly/monthly el chequeo va DESPUÉS de calcular con
+  la escalera y ANTES de la reserva atómica del RefundClaim → el rechazo NO
+  quema el una-vez-por-período. Respuesta: `success:false` + mensaje "🚫 No
+  llegaste al mínimo…" con montos `toLocaleString('es-AR')` + `canClaim:true,
+  belowMinimum:true, minAmount, amount, netAmount`. El caso netLoss===0
+  conserva su mensaje propio. El diario NO tiene mínimo.
+- **`GET /api/refunds/status`:** cada período suma `minAmount` y `belowMinimum`
+  (= potentialAmount > 0 && < min; daily siempre 0/false). La PWA no necesita
+  cambios (muestra el `message` del claim en su toast).
+- **`GET/POST /api/admin/refund-tiers`:** el GET suma `minimums`; el POST los
+  acepta OPCIONALES (un panel cacheado viejo que no los manda NO pisa los
+  vigentes), valida 0..10.000.000 por período y guarda con `Config.set`
+  (registra quién). Devuelve los vigentes.
+- **Panel:** bloque "💵 Mínimo para cobrar" (2 inputs semanal/mensual) dentro
+  del mismo `renderRefundTiersEditor`, guardado con el MISMO botón "Guardar
+  rangos" (validación client-side ≥ 0). admin-sw a **v26**.
+- **Validado:** `node --check` OK (server.js, admin.js, admin-sw.js). Back
+  necesita redeploy. PROBAR: panel muestra 1500/5000 y los guarda; cliente con
+  reembolso chico → error con el monto del panel; con reembolso ≥ mínimo →
+  cobra normal.
 
 ## Sesión 2026-08-06
 

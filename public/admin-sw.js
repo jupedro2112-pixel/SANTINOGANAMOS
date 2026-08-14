@@ -34,7 +34,7 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v25'; // v25: migración a 1girox (rótulos y flujo de API key por publicista)
+const CACHE_VERSION = 'v26'; // v26: mínimos para cobrar el reembolso (card Rangos de reembolso)
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).
