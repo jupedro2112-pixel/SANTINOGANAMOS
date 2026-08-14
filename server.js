@@ -8392,11 +8392,28 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
     //      instante; si el claim fallara, lo reclama él desde el casino.
     // Rollover del bono: GIROX_BONUS_MULTIPLIER (default 1 = apostarlo 1 vez;
     // tiene que ser un multiplicador permitido en la config de 1girox).
+    // Guard con PISO de $50 (owner 2026-08-14): centavos residuales de
+    // rollovers viejos hacían rebotar bonificaciones legítimas — un resto
+    // total ≤ $50 NO bloquea (la bonificación sale y pisa ese vuelto). El
+    // mensaje detalla CUÁNTO y de qué tipo: el bono NO es saldo (puede haber
+    // un resto en rollover o un "regalito" sin reclamar invisible en el
+    // panel), sin los montos era indiagnosticable. ⚠️ Los guards espejo del
+    // welcome code cash y de los lotes (notif-batch) quedan ESTRICTOS en
+    // > $0 a propósito: son flujos automáticos. Decisión explícita del owner:
+    // NO auto-reclamar el regalito del cliente — solo avisar.
+    const BONUS_GUARD_MIN_ARS = 50;
     const _playerInfo = await girox.getUserInfoByName(resolvedUsername);
-    if (_playerInfo && (Number(_playerInfo.bonusLocked) > 0 || Number(_playerInfo.claimableTotal) > 0)) {
-      return res.status(400).json({
-        error: 'El cliente ya tiene un bono ACTIVO (o pendiente de reclamar) en el casino. Otorgar otro lo pisaría y le debitaría lo que le queda. Esperá a que lo termine o hacé una carga con bonus.'
-      });
+    if (_playerInfo) {
+      const _locked = Math.max(0, Number(_playerInfo.bonusLocked) || 0);
+      const _claimable = Math.max(0, Number(_playerInfo.claimableTotal) || 0);
+      if (_locked + _claimable > BONUS_GUARD_MIN_ARS) {
+        const partes = [];
+        if (_locked > 0) partes.push(`$${_locked.toLocaleString('es-AR')} de bono con rollover en curso`);
+        if (_claimable > 0) partes.push(`$${_claimable.toLocaleString('es-AR')} de bono SIN RECLAMAR (el regalito del casino)`);
+        return res.status(400).json({
+          error: `El cliente ya tiene un bono en el casino: ${partes.join(' y ')}. Otorgar otro lo pisaría y le debitaría lo que le queda. Esperá a que lo termine/reclame o hacé una carga con bonus.`
+        });
+      }
     }
 
     // Id generado antes de llamar: sirve como `reference` (idempotencia de 1girox)

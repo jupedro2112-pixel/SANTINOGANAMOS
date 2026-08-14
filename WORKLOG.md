@@ -8,6 +8,26 @@
 
 ## Sesión 2026-08-14
 
+### 162. Guard bono-sobre-bono de la Bonificación: montos en el error + piso de $50
+- **Problema doble (owner):** (a) el guard de `POST /api/admin/bonus` (botón
+  Bonificación) rechazaba sin decir CUÁNTO ni de qué tipo era el bono que
+  bloqueaba — el bono NO es saldo: puede haber un resto en rollover o un
+  "regalito" sin reclamar invisible en el panel, así que "el cliente no tiene
+  saldo, ¿qué bono?" era indiagnosticable; (b) saltaba con CUALQUIER valor
+  > $0, hasta centavos residuales de rollovers viejos → rebotes constantes.
+- **Fix (SOLO este guard):** `BONUS_GUARD_MIN_ARS = 50` — el guard pasa de
+  `(locked>0 || claim>0)` a `locked + claim > 50`: un resto total ≤ $50 NO
+  bloquea (la bonificación sale y pisa ese vuelto — decisión del owner:
+  preferible a rebotarle la operación al agente). El error ahora detalla los
+  montos por partes presentes: "$X de bono con rollover en curso" y/o "$Y de
+  bono SIN RECLAMAR (el regalito del casino)", en formato es-AR.
+- **Sin tocar a propósito:** los guards espejo del welcome code cash y de los
+  lotes (notif-batch) quedan ESTRICTOS en > $0 (flujos automáticos). Decisión
+  explícita del owner: NO auto-reclamar el regalito del cliente — solo avisar.
+- **Validado:** `node --check` OK. Solo back — necesita redeploy. PROBAR:
+  Bonificación a un cliente con bono pendiente grande → error con los montos;
+  con resto ≤ $50 → sale normal.
+
 ### 161. Marca: textos visibles con VIPCARGAS → 1GIROX (6 lugares, uno más que la gemela)
 - Quedaban textos visibles al cliente con la marca de la era anterior. Grep de
   `VIPCARGAS` en public/ y corregidas las apariciones VISIBLES (no comentarios
