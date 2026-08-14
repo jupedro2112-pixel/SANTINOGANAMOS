@@ -8,6 +8,32 @@
 
 ## Sesión 2026-08-14
 
+### 158. Chats CERRADOS: 48 horas paginadas con números (los 101+ ya no son invisibles)
+- **Problema:** `GET /api/admin/conversations` cortaba en el top 100 por
+  actividad para TODAS las pestañas → en Cerrados, los chats 101+ eran
+  directamente inalcanzables. Un chat ABIERTO viejo es trabajo pendiente y
+  sigue apareciendo siempre (sin cambios); un cerrado viejo no.
+- **Backend (solo `status==='closed'`):** match `{status:'closed',
+  lastMessageAt: {$gte: now-48h}}` (los mensajes viven 3 días por TTL, así que
+  48h siempre tiene historial completo). Paginado `?page=N` (clamp 1..50 y a
+  la última página real si el total bajó): `$skip (page-1)*100` + `$limit 101`
+  (para saber `hasMore` sin count extra; slice a 100) ANTES de los lookups,
+  + `totalPages` con `countDocuments(match)` (usa el índice
+  `{status, lastMessageAt}` existente). La respuesta suma `{page, hasMore,
+  totalPages}`.
+- **Panel:** paginador arriba de la lista, visible SOLO en Cerrados:
+  `‹ [21][22][23][24][25][26] › [N°] Página X de Y · últimas 48hs` — ventana
+  de 6 números centrada en la actual (todas si ≤6), botón activo resaltado,
+  input para saltar con Enter (clamp 1..total), ‹ › de a 1. Al cambiar de
+  pestaña SIEMPRE arranca en página 1 (decisión del owner). El cache de 30s
+  por pestaña guarda SOLO la página 1 — helper único nuevo
+  `_setConversationsCache()` reemplaza los 5 sets duplicados (las páginas
+  viejas ni lo usan ni lo pisan). Si el total baja y quedaste más allá, el
+  server reacomoda a la última y el front lo toma. admin-sw a **v31**.
+- **Validado:** `node --check` OK. Back necesita redeploy. PROBAR: pestaña
+  Cerrados con >100 chats en 48hs → paginador con números; saltar con el
+  input; cambiar de pestaña y volver → página 1; Abiertos sin cambios.
+
 ### 157. DATOS 2.0 — cohortes de retención (camadas por día de registro)
 - **Concepto:** la sección Datos mira el PERÍODO; esta mira las CAMADAS: cada
   día ART es la cohorte de Users registrados ese día, seguida en el tiempo.

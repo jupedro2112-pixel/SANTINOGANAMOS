@@ -148,6 +148,9 @@ function setupEventListeners() {
             elements.tabBtns.forEach(b => b.classList.remove('active'));
             btn.classList.add('active');
             currentTab = btn.dataset.tab;
+            // Al cambiar de pestaña, Cerrados SIEMPRE arranca en página 1.
+            closedPage = 1;
+            renderClosedPager();
             if (currentTab === 'comunidad') clearComunidadAlert();
             // Limpiar selección de chat al cambiar de pestaña
             if (selectedUserId) {
@@ -1290,7 +1293,7 @@ function initSocket() {
         conversations.splice(convIndex, 1);
         conversations.unshift(conv);
         // Actualizar cache
-        conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+        _setConversationsCache();
         renderConversations();
     });
 
@@ -1299,7 +1302,7 @@ function initSocket() {
         const convIndex = conversations.findIndex(c => c.userId === data.userId);
         if (convIndex !== -1) {
             conversations[convIndex].unread = 0;
-            conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+            _setConversationsCache();
             renderConversations();
         }
         loadStatsThrottled();
@@ -1431,6 +1434,56 @@ function handleNewMessage(data) {
 let conversationsCacheByTab = new Map();
 const CONVERSATIONS_CACHE_TIME = 30000; // 30 segundos (actualizamos en tiempo real vía WebSocket)
 
+// Paginado de CERRADOS (ventana de 48hs en el server, 100 por página).
+// Al cambiar de pestaña SIEMPRE arranca en página 1 (decisión del owner).
+let closedPage = 1;
+let closedTotalPages = 1;
+
+// Helper ÚNICO para los sets del cache de conversaciones: en Cerrados solo se
+// cachea la PÁGINA 1 (las páginas viejas ni usan el cache ni lo pisan).
+function _setConversationsCache() {
+    if (currentTab === 'closed' && closedPage !== 1) return;
+    conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+}
+
+// Paginador de Cerrados: ‹ [21][22][23][24][25][26] › [N°] Página X de Y.
+// Ventana de 6 números centrada en la actual (todas si ≤6).
+function renderClosedPager() {
+    const el = document.getElementById('closedPager');
+    if (!el) return;
+    if (currentTab !== 'closed') { el.style.display = 'none'; return; }
+    el.style.display = 'flex';
+    const total = Math.max(1, closedTotalPages);
+    const cur = Math.min(closedPage, total);
+    let start = 1;
+    let end = total;
+    if (total > 6) {
+        start = Math.max(1, Math.min(cur - 2, total - 5));
+        end = start + 5;
+    }
+    let nums = '';
+    for (let i = start; i <= end; i++) {
+        nums += `<button class="btn btn-sm ${i === cur ? 'btn-primary' : 'btn-secondary'}" style="min-width:34px;padding:2px 6px" onclick="goClosedPage(${i})">${i}</button>`;
+    }
+    el.innerHTML =
+        `<button class="btn btn-secondary btn-sm" style="padding:2px 9px" onclick="goClosedPage(${cur - 1})" ${cur <= 1 ? 'disabled' : ''}>‹</button>` +
+        nums +
+        `<button class="btn btn-secondary btn-sm" style="padding:2px 9px" onclick="goClosedPage(${cur + 1})" ${cur >= total ? 'disabled' : ''}>›</button>` +
+        `<input type="number" id="closedPageInput" min="1" max="${total}" placeholder="N°" ` +
+            `style="width:52px;background:var(--darker,#1a1a2e);color:#fff;border:1px solid rgba(255,255,255,0.15);border-radius:6px;padding:2px 6px;font-size:12px" ` +
+            `onkeydown="if(event.key==='Enter'){goClosedPage(Number(this.value));}">` +
+        `<span style="color:#888;font-size:11px">Página ${cur} de ${total} · últimas 48hs</span>`;
+}
+
+function goClosedPage(n) {
+    if (currentTab !== 'closed') return;
+    const total = Math.max(1, closedTotalPages);
+    n = Math.max(1, Math.min(Number(n) || 1, total)); // clamp 1..total
+    if (n === closedPage) return;
+    closedPage = n;
+    loadConversations(true, { prefetch: false });
+}
+
 // ---- Anti-tormenta de requests (fix 429 "Demasiadas solicitudes") ----
 // El admin está en la sala `admins` y el backend hace notifyAdmins('new_message')
 // por CADA mensaje del sistema (todos los usuarios, incl. automáticos de
@@ -1524,7 +1577,7 @@ function updateConversationInList(message) {
     conversations.unshift(conv);
     
     // Actualizar cache de la pestaña actual
-    conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+    _setConversationsCache();
     
     // Re-renderizar la lista de forma instantánea
     renderConversations();
@@ -1537,19 +1590,24 @@ async function loadConversations(forceRefresh = false, opts = {}) {
     const { prefetch = true } = opts;
     const now = Date.now();
     const tabCache = conversationsCacheByTab.get(currentTab);
-    
-    // Usar cache si está disponible, no es forzado y no expiró
-    if (!forceRefresh && tabCache && (now - tabCache.timestamp) < CONVERSATIONS_CACHE_TIME) {
+    const usingClosedPaging = currentTab === 'closed';
+
+    // Usar cache si está disponible, no es forzado y no expiró.
+    // En Cerrados el cache guarda SOLO la página 1: otras páginas van a red.
+    if (!forceRefresh && (!usingClosedPaging || closedPage === 1) &&
+        tabCache && (now - tabCache.timestamp) < CONVERSATIONS_CACHE_TIME) {
         conversations = tabCache.data;
         renderConversations();
+        renderClosedPager();
         return;
     }
-    
+
     try {
-        const response = await fetch(`${API_URL}/api/admin/conversations?status=${currentTab}`, {
+        const pageParam = usingClosedPaging ? `&page=${closedPage}` : '';
+        const response = await fetch(`${API_URL}/api/admin/conversations?status=${currentTab}${pageParam}`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
-        
+
         if (!response.ok) {
             const errBody = await response.json().catch(() => ({}));
             console.error('[loadConversations] HTTP', response.status, errBody);
@@ -1557,14 +1615,21 @@ async function loadConversations(forceRefresh = false, opts = {}) {
             // NO guardar respuesta vacía en cache cuando hay error
             return;
         }
-        
+
         const data = await response.json();
         conversations = data.conversations || [];
-        
+        if (usingClosedPaging) {
+            closedTotalPages = data.totalPages || 1;
+            // El server reacomoda a la última página si el total bajó y la
+            // pedida ya no existe.
+            if (data.page && data.page !== closedPage) closedPage = data.page;
+        }
+
         // Guardar en cache por pestaña
-        conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
-        
+        _setConversationsCache();
+
         renderConversations();
+        renderClosedPager();
 
         // PREFETCH: Cargar mensajes de los primeros 3 chats en background
         // (solo en cargas manuales; se omite en refrescos de fondo por socket).
@@ -2537,7 +2602,7 @@ async function markMessagesAsRead(userId) {
         const convIndex = conversations.findIndex(c => c.userId === userId);
         if (convIndex !== -1) {
             conversations[convIndex].unread = 0;
-            conversationsCacheByTab.set(currentTab, { data: [...conversations], timestamp: Date.now() });
+            _setConversationsCache();
             renderConversations();
         }
 

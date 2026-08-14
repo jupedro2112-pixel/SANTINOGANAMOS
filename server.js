@@ -14414,11 +14414,35 @@ app.get('/api/admin/conversations', authMiddleware, adminMiddleware, async (req,
       return res.status(403).json({ error: 'Acceso denegado. Los withdrawers solo pueden ver chats de pagos.' });
     }
     
+    // CERRADOS: ventana de 48 HORAS con PAGINADO (2026-08-14). Un chat ABIERTO
+    // viejo es trabajo pendiente y aparece siempre (top 100 por actividad,
+    // como antes); un cerrado viejo no — y con el top 100 fijo los cerrados
+    // 101+ eran directamente invisibles. Los mensajes viven 3 días por TTL,
+    // así que 48h siempre tiene el historial completo. Usa el índice
+    // {status, lastMessageAt} existente.
+    const isClosedPage = status === 'closed';
+    const PAGE_SIZE = 100;
+    let page = 1;
+    let totalPages = 1;
+    let match = { status };
+    if (isClosedPage) {
+      match = { status: 'closed', lastMessageAt: { $gte: new Date(Date.now() - 48 * 60 * 60 * 1000) } };
+      const totalDocs = await ChatStatus.countDocuments(match);
+      totalPages = Math.max(1, Math.ceil(totalDocs / PAGE_SIZE));
+      page = parseInt(req.query.page, 10);
+      if (!Number.isFinite(page) || page < 1) page = 1;
+      // Tope de sanidad 50 páginas; si el total bajó y quedaste más allá, se
+      // reacomoda a la última.
+      page = Math.min(page, 50, totalPages);
+    }
+
     // AGREGACIÓN OPTIMIZADA: Todo en una sola query
     const pipeline = [
-      { $match: { status } },
+      { $match: match },
       { $sort: { lastMessageAt: -1 } },
-      { $limit: 100 },
+      // $skip/$limit ANTES de los lookups (que corren por doc). En cerrados se
+      // pide UNO de más para saber si hay página siguiente sin otro count.
+      ...(isClosedPage ? [{ $skip: (page - 1) * PAGE_SIZE }, { $limit: PAGE_SIZE + 1 }] : [{ $limit: PAGE_SIZE }]),
       {
         $lookup: {
           from: 'users',
@@ -14487,8 +14511,14 @@ app.get('/api/admin/conversations', authMiddleware, adminMiddleware, async (req,
       }
     ];
     
-    const conversations = await ChatStatus.aggregate(pipeline);
-    
+    let conversations = await ChatStatus.aggregate(pipeline);
+
+    if (isClosedPage) {
+      const hasMore = conversations.length > PAGE_SIZE;
+      if (hasMore) conversations = conversations.slice(0, PAGE_SIZE);
+      return res.json({ conversations, page, hasMore, totalPages });
+    }
+
     res.json({ conversations });
   } catch (error) {
     console.error('Error obteniendo conversaciones:', error);

@@ -34,7 +34,7 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v30'; // v30: sección Datos 2.0 (cohortes de retención) + guía en Datos
+const CACHE_VERSION = 'v31'; // v31: chats Cerrados con 48hs paginadas (paginador con números)
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).
