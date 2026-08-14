@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v97'; // v97: marca vieja VIPCARGAS → 1GIROX en los 6 textos visibles al cliente
+const CACHE_VERSION = 'v98'; // v98: marca — label del manifest y mensaje de WhatsApp de soporte a 1GIROX
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 // Logs por-fetch del SW (corren en CADA request). Apagados por default;

@@ -18698,7 +18698,7 @@ app.post('/api/admin/community', authMiddleware, adminMiddleware, async (req, re
 // porque lo usa el botón "Soporte VIP" de la pantalla de login.
 // ============================================================
 // Mensaje fijo con el que abre el chat de WhatsApp de soporte.
-const SOPORTE_WA_MENSAJE = 'Vengo de VIPCARGAS necesito ayuda';
+const SOPORTE_WA_MENSAJE = 'Vengo de 1GIROX necesito ayuda';
 
 app.get('/api/config/soporte-vip', async (req, res) => {
   try {

@@ -50,6 +50,20 @@
 - **Validado:** `node --check` OK (ui.js). SW PWA a **v97**. Solo front.
   PROBAR: menú → Información del Servicio → marca nueva; grep de VIPCARGAS en
   public/ sin resultados visibles al cliente.
+- **UPDATE (misma sesión, pregunta del owner "¿no quedó nada?"):** un grep
+  integral encontró 2 apariciones visibles MÁS que la gemela no listaba, ambas
+  corregidas: (a) `SOPORTE_WA_MENSAJE` (server.js) — el texto que el CLIENTE
+  manda al abrir el WhatsApp de soporte, "Vengo de VIPCARGAS…" → "Vengo de
+  1GIROX…" (+ el hint del panel que lo documenta); (b) el `label` del
+  screenshot en `manifest.json` ("VIPCARGAS - Chat" → "CARGAS 1GIROX - Chat",
+  se ve en el prompt de instalación de Android). SW PWA a **v98**. Inventario
+  de lo que QUEDA con la marca vieja, todo intencional: SMS de OTP
+  (`otpService.js` + su test — decisión de marca pendiente del owner, incluye
+  el dominio "vipcargas .com" en el texto); título/metas "ADMIN VIPCARGAS" del
+  panel (solo lo ve el staff); comentarios de código; los `vipcargas.com` de
+  dominio (los maneja PUBLIC_BASE_URL); y posibles COMANDOS guardados en la
+  base (el arranque loguea cuáles — revisar COMANDOS del panel tras el
+  deploy).
 
 ### 160. iPhone PWA: el overlay del casino respeta el safe-area (barra bajo el reloj + franja blanca)
 - **Síntoma (solo app instalada en iPhone; en navegador andaba bien):** la
