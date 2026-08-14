@@ -9723,6 +9723,36 @@ async function initializeData() {
       description: 'Mensaje automático cuando el cliente canjea el código de bienvenida y el bono es MONTO SORPRESA (se acredita solo). Variables: {username}, ${amount}. Si lo dejás vacío, no se envía.',
       type: 'message',
       response: '🎉 ¡Código de bienvenida canjeado, {username}!\n\n💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰\n\n⚠️ Es por única vez.',
+    },
+    {
+      name: '/sys_lote_aviso_codigo',
+      description: 'Bloque automático al final del mensaje de un LOTE con regalo por CÓDIGO (sección Notificaciones). Variables: {gift} (el regalo), {code} (el código), {fecha} (vencimiento). Si lo dejás vacío, se manda solo el mensaje del lote.',
+      type: 'message',
+      response: '🎁 Tu regalo: {gift}\n🔑 Canjealo con tu código: {code} (menú ☰ → "🎁 Reclamar Bono con Código")\n⏰ Válido hasta {fecha}.'
+    },
+    {
+      name: '/sys_lote_aviso_percent',
+      description: 'Bloque automático al final del mensaje de un LOTE con regalo % POR TIEMPO (lo aplica el agente en la carga). Variables: {gift}, {fecha}. Si lo dejás vacío, se manda solo el mensaje del lote.',
+      type: 'message',
+      response: '🎁 Tenés un {gift} — avisale al agente cuando vayas a cargar y te lo suma en el momento.\n⏰ Válido hasta {fecha}.'
+    },
+    {
+      name: '/sys_lote_aviso_cash',
+      description: 'Bloque automático al final del mensaje de un LOTE de FICHAS POR TIEMPO (ya acreditadas solas). Variables: {gift}. Si lo dejás vacío, se manda solo el mensaje del lote.',
+      type: 'message',
+      response: '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰'
+    },
+    {
+      name: '/sys_lote_canje_cash',
+      description: 'Mensaje automático cuando el cliente canjea un código de LOTE de fichas (se acreditan solas). Variables: ${amount}, {rollover} (nota de rollover, puede venir vacía). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '💰 ¡Tu regalo de ${amount} ya está ACREDITADO en tu cuenta! A jugarlo 🎰{rollover}'
+    },
+    {
+      name: '/sys_lote_canje_percent',
+      description: 'Mensaje automático cuando el cliente canjea un código de LOTE con % extra (lo aplica el agente en la carga). Variables: {amount} (el %), {fecha} (vencimiento). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '🎉 ¡Código canjeado! Tenés un +{amount}% EXTRA para tu PRÓXIMA CARGA.\n\nCuando vayas a cargar, avisale al agente que tenés el regalo y te lo suma en el momento. 🥳\n\n⏰ Válido hasta {fecha}.'
     }
   ];
   for (const cmd of systemCmds) {
@@ -10792,6 +10822,18 @@ app.post('/api/admin/community-code', authMiddleware, adminMiddleware, async (re
         return res.status(403).json({ error: 'Solo el admin general puede cambiar el código.' });
       }
       const code = String(b.code || '').trim().slice(0, 40);
+      // Guard BIDIRECCIONAL con los códigos de lote (fix post-review
+      // 2026-08-14): crear un lote ya rechaza el welcome code vigente; acá se
+      // rechaza al revés — si el welcome code matchea un lote ACTIVO, el hook
+      // _tryClaimNotifBatchCode interceptaría TODOS los canjes de bienvenida.
+      if (code) {
+        const loteClash = await NotifBatch.findOne({
+          mode: 'code', code: code.toUpperCase(), expiresAt: { $gt: new Date() }
+        }).select('id').lean();
+        if (loteClash) {
+          return res.status(400).json({ error: 'Ese código pertenece a un LOTE de notificaciones activo — elegí otro (o esperá a que el lote venza).' });
+        }
+      }
       await setConfig('communityWelcomeCode', code);
       logger.info(`[welcome-code] código ${code ? 'actualizado' : 'DESACTIVADO'} por ${req.user.username}`);
     }
@@ -14428,12 +14470,15 @@ app.get('/api/admin/conversations', authMiddleware, adminMiddleware, async (req,
     if (isClosedPage) {
       match = { status: 'closed', lastMessageAt: { $gte: new Date(Date.now() - 48 * 60 * 60 * 1000) } };
       const totalDocs = await ChatStatus.countDocuments(match);
-      totalPages = Math.max(1, Math.ceil(totalDocs / PAGE_SIZE));
+      // totalPages se capea al MISMO tope de sanidad que page (50): si no, el
+      // paginador ofrecería páginas que el clamp de abajo vuelve inalcanzables
+      // y el botón › quedaría girando en el lugar.
+      totalPages = Math.min(50, Math.max(1, Math.ceil(totalDocs / PAGE_SIZE)));
       page = parseInt(req.query.page, 10);
       if (!Number.isFinite(page) || page < 1) page = 1;
       // Tope de sanidad 50 páginas; si el total bajó y quedaste más allá, se
       // reacomoda a la última.
-      page = Math.min(page, 50, totalPages);
+      page = Math.min(page, totalPages);
     }
 
     // AGREGACIÓN OPTIMIZADA: Todo en una sola query
@@ -17538,46 +17583,102 @@ function _emitNotifBatchSecurityAlert(uDoc, detalle) {
 // Helper ÚNICO de acreditación de fichas de lote. Devuelve {ok, txId} o
 // {ok:false, reason, blocked?, retryable?}. blocked = NO reintentar (tope de
 // seguridad o bono activo); retryable = fallo transitorio (API caída).
+//
+// LEDGER DE INTENCIÓN (fix post-review 2026-08-14): la Transaction del regalo
+// se escribe ANTES de llamar a la plataforma (status 'pending') y se completa
+// después. Con eso:
+//   (a) idempotencia real ante crashes: si el proceso muere entre acreditar y
+//       persistir, el reintento encuentra la fila pending, SALTEA el guard
+//       bono-sobre-bono (el "bono activo" puede ser justamente el nuestro) y
+//       re-llama con la MISMA reference → duplicate:true, sin pagar dos veces
+//       ni marcar "bloqueado" a alguien que SÍ cobró;
+//   (b) los topes anti-abuso ya no son evadibles por concurrencia: la fila
+//       pending de una instancia la ve el aggregate de la otra (el cap-check
+//       cuenta pending + completed);
+//   (c) el registro que alimenta los topes ya no es fire-and-forget.
 async function _creditNotifBatchGift(uDoc, batch) {
   const username = uDoc.username;
   const amount = Number(batch.amount);
 
-  // 1. CAP-CHECK anti-abuso (por usuario, cruzando TODOS los lotes): máx 3
-  //    créditos en 24h y $300.000 acumulados en 7 días.
+  // 0. ¿Ya hay ledger de este regalo (lote+usuario)?
+  let intent = null;
   try {
-    const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-    const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
-    const rows = await Transaction.aggregate([
-      { $match: { type: 'bonus', 'metadata.source': 'notif_batch', userId: uDoc.id, timestamp: { $gte: since7d } } },
-      { $group: {
-        _id: null,
-        total7d: { $sum: '$amount' },
-        count24h: { $sum: { $cond: [{ $gte: ['$timestamp', since24h] }, 1, 0] } }
-      } }
-    ]);
-    const agg = (rows && rows[0]) || { total7d: 0, count24h: 0 };
-    if (agg.count24h >= NOTIF_BATCH_USER_MAX_CREDITS_24H) {
-      _emitNotifBatchSecurityAlert(uDoc, `ya recibió ${agg.count24h} regalos de lote en las últimas 24h (tope ${NOTIF_BATCH_USER_MAX_CREDITS_24H})`);
-      return { ok: false, blocked: true, reason: 'tope de seguridad (cantidad de regalos en 24h)' };
-    }
-    if (agg.total7d + amount > NOTIF_BATCH_USER_MAX_ARS_7D) {
-      _emitNotifBatchSecurityAlert(uDoc, `acumularía $${(agg.total7d + amount).toLocaleString('es-AR')} en regalos de lote en 7 días (tope $${NOTIF_BATCH_USER_MAX_ARS_7D.toLocaleString('es-AR')})`);
-      return { ok: false, blocked: true, reason: 'tope de seguridad (monto acumulado en 7 días)' };
-    }
+    intent = await Transaction.findOne({
+      userId: uDoc.id, type: 'bonus',
+      'metadata.source': 'notif_batch', 'metadata.batchId': batch.id
+    }).select('id status').lean();
   } catch (e) {
-    logger.warn(`[notif-batch] cap-check falló para ${username}: ${e.message}`);
-    return { ok: false, retryable: true, reason: 'no se pudo verificar el tope de seguridad' };
+    return { ok: false, retryable: true, reason: 'no se pudo leer el registro del regalo' };
+  }
+  if (intent && intent.status === 'completed') {
+    // Crash entre completar y persistir creditedAt en el recipient: la plata
+    // ya está — devolver éxito para que el caller cierre su estado.
+    return { ok: true, txId: intent.id };
   }
 
-  // 2. GUARD bono-sobre-bono (v1.7 de la plataforma: otorgar un bono a quien
-  //    ya tiene uno activo lo PISA y le debita el resto).
-  const pInfo = await girox.getUserInfoByName(username);
-  if (!pInfo) return { ok: false, retryable: true, reason: 'no se pudo leer el estado del jugador en la plataforma' };
-  if (Number(pInfo.bonusLocked) > 0 || Number(pInfo.claimableTotal) > 0) {
-    return { ok: false, blocked: true, reason: 'bono activo en el casino' };
+  let intentFresh = false;
+  if (!intent) {
+    // 1. CAP-CHECK anti-abuso (por usuario, cruzando TODOS los lotes): máx 3
+    //    créditos en 24h y $300.000 acumulados en 7 días. Cuenta pending +
+    //    completed (la reserva de la instancia de al lado también suma).
+    try {
+      const since7d = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const since24h = new Date(Date.now() - 24 * 60 * 60 * 1000);
+      const rows = await Transaction.aggregate([
+        { $match: { type: 'bonus', 'metadata.source': 'notif_batch', userId: uDoc.id, timestamp: { $gte: since7d } } },
+        { $group: {
+          _id: null,
+          total7d: { $sum: '$amount' },
+          count24h: { $sum: { $cond: [{ $gte: ['$timestamp', since24h] }, 1, 0] } }
+        } }
+      ]);
+      const agg = (rows && rows[0]) || { total7d: 0, count24h: 0 };
+      if (agg.count24h >= NOTIF_BATCH_USER_MAX_CREDITS_24H) {
+        _emitNotifBatchSecurityAlert(uDoc, `ya recibió ${agg.count24h} regalos de lote en las últimas 24h (tope ${NOTIF_BATCH_USER_MAX_CREDITS_24H})`);
+        return { ok: false, blocked: true, reason: 'tope de seguridad (cantidad de regalos en 24h)' };
+      }
+      if (agg.total7d + amount > NOTIF_BATCH_USER_MAX_ARS_7D) {
+        _emitNotifBatchSecurityAlert(uDoc, `acumularía $${(agg.total7d + amount).toLocaleString('es-AR')} en regalos de lote en 7 días (tope $${NOTIF_BATCH_USER_MAX_ARS_7D.toLocaleString('es-AR')})`);
+        return { ok: false, blocked: true, reason: 'tope de seguridad (monto acumulado en 7 días)' };
+      }
+    } catch (e) {
+      logger.warn(`[notif-batch] cap-check falló para ${username}: ${e.message}`);
+      return { ok: false, retryable: true, reason: 'no se pudo verificar el tope de seguridad' };
+    }
+
+    // 2. GUARD bono-sobre-bono (v1.7 de la plataforma: otorgar un bono a quien
+    //    ya tiene uno activo lo PISA y le debita el resto). Solo en el PRIMER
+    //    intento — con una fila pending, el bono activo puede ser el nuestro.
+    const pInfo = await girox.getUserInfoByName(username);
+    if (!pInfo) return { ok: false, retryable: true, reason: 'no se pudo leer el estado del jugador en la plataforma' };
+    if (Number(pInfo.bonusLocked) > 0 || Number(pInfo.claimableTotal) > 0) {
+      return { ok: false, blocked: true, reason: 'bono activo en el casino' };
+    }
+
+    // 3. Reservar el ledger (status 'pending') ANTES de acreditar.
+    const txId = uuidv4();
+    try {
+      await Transaction.create({
+        id: txId,
+        type: 'bonus',
+        userId: uDoc.id,
+        username,
+        amount,
+        description: `Regalo de fichas — lote de notificaciones${batch.name ? ` "${batch.name}"` : ''}`,
+        transactionId: null,
+        status: 'pending',
+        metadata: { source: 'notif_batch', batchId: batch.id },
+        timestamp: new Date()
+      });
+    } catch (e) {
+      logger.warn(`[notif-batch] no se pudo reservar el ledger para ${username}: ${e.message}`);
+      return { ok: false, retryable: true, reason: 'no se pudo registrar el regalo' };
+    }
+    intent = { id: txId, status: 'pending' };
+    intentFresh = true;
   }
 
-  // 3. CRÉDITO con reference ESTABLE por lote+usuario: los reintentos jamás
+  // 4. CRÉDITO con reference ESTABLE por lote+usuario: los reintentos jamás
   //    pagan dos veces (la plataforma responde duplicate:true).
   const ref = `vip-nbatch-${batch.id}-${uDoc.id}`.slice(0, 100);
   const credit = await girox.creditUserBalance(username, amount, ref, {
@@ -17585,10 +17686,14 @@ async function _creditNotifBatchGift(uDoc, batch) {
     description: `Regalo de fichas — lote de notificaciones${batch.name ? ` "${batch.name}"` : ''}`
   });
   if (!credit.success) {
+    // Si la reserva se creó recién y el crédito nunca salió, se libera para no
+    // inflar los topes con intentos fantasma. Una pending PREEXISTENTE se
+    // conserva (no sabemos si el intento anterior pagó — la reference decide).
+    if (intentFresh) await Transaction.deleteOne({ id: intent.id }).catch(() => {});
     return { ok: false, retryable: true, reason: credit.error || 'la plataforma rechazó el crédito' };
   }
 
-  // 4. Auto-claim v1.7 (claim_required=true: sin esto queda "a reclamar").
+  // 5. Auto-claim v1.7 (claim_required=true: sin esto queda "a reclamar").
   try {
     const cRes = await girox.claimPendingBonus(username);
     if (!cRes.success) logger.warn(`[notif-batch] auto-claim falló para ${username}: ${cRes.error} — el cliente puede reclamarlo desde el casino`);
@@ -17596,28 +17701,27 @@ async function _creditNotifBatchGift(uDoc, batch) {
     logger.warn(`[notif-batch] auto-claim excepción para ${username}: ${e.message}`);
   }
 
-  // 5. Transaction de REGALO (type bonus + source notif_batch): NO cuenta como
-  //    carga real en ningún reporte.
-  const txId = uuidv4();
-  await Transaction.create({
-    id: txId,
-    type: 'bonus',
-    userId: uDoc.id,
-    username,
-    amount,
-    description: `Regalo de fichas — lote de notificaciones${batch.name ? ` "${batch.name}"` : ''}`,
-    transactionId: (credit.data && (credit.data.transfer_id || credit.data.transferId)) || null,
-    metadata: { source: 'notif_batch', batchId: batch.id },
-    timestamp: new Date()
-  }).catch((e) => logger.warn(`[notif-batch] no se pudo guardar la Transaction: ${e.message}`));
+  // 6. Completar el ledger. Si este update falla, la fila queda pending y el
+  //    próximo reintento la resuelve vía duplicate:true — nunca se pierde el
+  //    conteo de los topes.
+  await Transaction.updateOne(
+    { id: intent.id },
+    { $set: {
+      status: 'completed',
+      transactionId: (credit.data && (credit.data.transfer_id || credit.data.transferId)) || null
+    } }
+  ).catch((e) => logger.error(`[notif-batch] crédito OK pero no se pudo completar el ledger ${intent.id} de ${username}: ${e.message}`));
 
-  logger.info(`[notif-batch] $${amount} acreditados a ${username} (lote ${batch.id}${batch.rolloverX > 0 ? `, rollover x${batch.rolloverX}` : ''})`);
-  return { ok: true, txId };
+  logger.info(`[notif-batch] $${amount} acreditados a ${username} (lote ${batch.id}${batch.rolloverX > 0 ? `, rollover x${batch.rolloverX}` : ''}${credit.duplicate ? ', duplicate: ya estaba pago' : ''})`);
+  return { ok: true, txId: intent.id };
 }
 
 // Texto del mensaje de chat (y cuerpo del push) por destinatario: el mensaje
 // del agente + el bloque del regalo/código/vigencia agregado SOLO al final.
-function _nbChatText(batch, opts = {}) {
+// El BLOQUE automático es editable desde COMANDOS (/sys_lote_*, regla de
+// CLAUDE.md); vaciarlo = queda solo el mensaje del agente (y si tampoco hay
+// mensaje, no se envía nada — regla #43). Devuelve null si no hay que enviar.
+async function _nbChatText(batch, opts = {}) {
   const base = String(batch.message || '').trim();
   const fecha = _nbFechaART(batch.expiresAt);
   let giftLine;
@@ -17629,19 +17733,24 @@ function _nbChatText(batch, opts = {}) {
       : '';
     giftLine = `$${Number(batch.amount).toLocaleString('es-AR')} en fichas${roll}`;
   }
+  const vars = { gift: giftLine, code: batch.code || '', fecha };
   let tail;
   if (batch.mode === 'code') {
-    tail = `🎁 Tu regalo: ${giftLine}\n` +
-      `🔑 Canjealo con tu código: ${batch.code} (menú ☰ → "🎁 Reclamar Bono con Código")\n` +
-      `⏰ Válido hasta ${fecha}.`;
+    tail = await renderSystemCommand('/sys_lote_aviso_codigo',
+      '🎁 Tu regalo: {gift}\n' +
+      '🔑 Canjealo con tu código: {code} (menú ☰ → "🎁 Reclamar Bono con Código")\n' +
+      '⏰ Válido hasta {fecha}.', vars);
   } else if (batch.giftType === 'percent') {
-    tail = `🎁 Tenés un ${giftLine} — avisale al agente cuando vayas a cargar y te lo suma en el momento.\n` +
-      `⏰ Válido hasta ${fecha}.`;
+    tail = await renderSystemCommand('/sys_lote_aviso_percent',
+      '🎁 Tenés un {gift} — avisale al agente cuando vayas a cargar y te lo suma en el momento.\n' +
+      '⏰ Válido hasta {fecha}.', vars);
   } else if (opts.credited) {
-    tail = `💰 ¡Te ACREDITAMOS ${giftLine}! Ya están en tu cuenta. 🎰`;
+    tail = await renderSystemCommand('/sys_lote_aviso_cash',
+      '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰', vars);
   } else {
     tail = `🎁 Tu regalo: ${giftLine}.`;
   }
+  if (!tail) return base || null;
   return base ? `${base}\n\n${tail}` : tail;
 }
 
@@ -17700,8 +17809,14 @@ async function _processNotifBatchRecipient(batch, rec) {
     }
   }
 
-  // Notificar: mensaje de chat persistente + push (o socket in-app si está online).
-  const text = _nbChatText(batch, { credited });
+  // Notificar: mensaje de chat persistente + push (o socket in-app si está
+  // online). null = el bloque /sys_lote_* está vaciado Y el lote no tiene
+  // mensaje propio → no se envía nada (regla #43).
+  const text = await _nbChatText(batch, { credited });
+  if (!text) {
+    await setRec({ delivery: 'none', deliveryAt: new Date() });
+    return;
+  }
   try {
     await Message.create({
       id: uuidv4(),
@@ -17735,6 +17850,26 @@ async function _processNotifBatchRecipient(batch, rec) {
 async function _processOneNotifBatch(batchId) {
   const batch = await NotifBatch.findOne({ id: batchId }).select('-recipients').lean();
   if (!batch) return;
+  // LOTE VENCIDO (fix post-review 2026-08-14): después de expiresAt no se
+  // acredita NI se notifica nada — se cierran los pendientes y sendDone. Sin
+  // este corte, un recipient con fallo permanente (p.ej. jugador inexistente
+  // en la plataforma) reintentaba PARA SIEMPRE, y como la cola procesa los 20
+  // lotes MÁS VIEJOS, 20 zombies frenaban todos los lotes nuevos. También
+  // evita acreditar fichas de un lote "válido por 24hs" tres días después si
+  // la API estuvo caída.
+  if (new Date(batch.expiresAt).getTime() <= Date.now()) {
+    await NotifBatch.updateOne(
+      { id: batchId },
+      { $set: {
+        'recipients.$[r].delivery': 'none',
+        'recipients.$[r].creditError': 'lote vencido antes de completar'
+      } },
+      { arrayFilters: [{ 'r.delivery': { $in: [null, 'sending'] } }] }
+    ).catch((e) => logger.warn(`[notif-batch] no se pudo cerrar los pendientes del lote vencido ${batchId}: ${e.message}`));
+    const done = await NotifBatch.updateOne({ id: batchId, sendDone: { $ne: true } }, { $set: { sendDone: true } });
+    if (done.modifiedCount > 0) logger.warn(`[notif-batch] lote ${batchId} VENCIÓ con pendientes — cerrado sin completar`);
+    return;
+  }
   for (;;) {
     const staleCutoff = new Date(Date.now() - NOTIF_BATCH_SENDING_STALE_MS);
     // La proyección posicional devuelve SOLO el elemento reclamado (pre-update),
@@ -17958,10 +18093,14 @@ async function _tryClaimNotifBatchCode(reqUser, attempt) {
     const rollNote = Number(batch.rolloverX) > 0
       ? `\n\n🎯 Para poder retirarlo: apostá $${(batch.amount * batch.rolloverX).toLocaleString('es-AR')} (rollover x${batch.rolloverX}).`
       : '';
-    await Message.create({
+    // Editable desde COMANDOS (/sys_lote_canje_cash); vacío = no se envía.
+    const contentCash = await renderSystemCommand('/sys_lote_canje_cash',
+      '💰 ¡Tu regalo de ${amount} ya está ACREDITADO en tu cuenta! A jugarlo 🎰{rollover}',
+      { amount: montoFmt, rollover: rollNote });
+    if (contentCash) await Message.create({
       id: uuidv4(), senderId: 'system', senderUsername: 'Sistema', senderRole: 'admin',
       receiverId: uDoc.id, receiverRole: 'user',
-      content: `💰 ¡Tu regalo de $${montoFmt} ya está ACREDITADO en tu cuenta! A jugarlo 🎰${rollNote}`,
+      content: contentCash,
       type: 'system', timestamp: new Date(), read: false
     }).catch(() => {});
     await _emitAdminOnlyChatNote(
@@ -17989,10 +18128,16 @@ async function _tryClaimNotifBatchCode(reqUser, attempt) {
     { $set: { 'recipients.$.promoBonusId': promoId } }
   ).catch(() => {});
   const fechaFmt = _nbFechaART(batch.expiresAt);
-  await Message.create({
+  // Editable desde COMANDOS (/sys_lote_canje_percent); vacío = no se envía.
+  const contentPct = await renderSystemCommand('/sys_lote_canje_percent',
+    '🎉 ¡Código canjeado! Tenés un +{amount}% EXTRA para tu PRÓXIMA CARGA.\n\n' +
+    'Cuando vayas a cargar, avisale al agente que tenés el regalo y te lo suma en el momento. 🥳\n\n' +
+    '⏰ Válido hasta {fecha}.',
+    { amount: String(batch.amount), fecha: fechaFmt });
+  if (contentPct) await Message.create({
     id: uuidv4(), senderId: 'system', senderUsername: 'Sistema', senderRole: 'admin',
     receiverId: uDoc.id, receiverRole: 'user',
-    content: `🎉 ¡Código canjeado! Tenés un +${batch.amount}% EXTRA para tu PRÓXIMA CARGA.\n\nCuando vayas a cargar, avisale al agente que tenés el regalo y te lo suma en el momento. 🥳\n\n⏰ Válido hasta ${fechaFmt}.`,
+    content: contentPct,
     type: 'system', timestamp: new Date(), read: false
   }).catch(() => {});
   await _emitAdminOnlyChatNote(

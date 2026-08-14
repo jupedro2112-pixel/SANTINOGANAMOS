@@ -1603,10 +1603,17 @@ async function loadConversations(forceRefresh = false, opts = {}) {
     }
 
     try {
+        // Guard anti-carrera (fix post-review): si el admin cambia de pestaña
+        // o de página mientras esta request viaja, la respuesta vieja se
+        // DESCARTA — sin esto, una respuesta de Cerrados aterrizaba en el
+        // cache/render de Abiertos (o una página vieja pisaba closedPage).
+        const requestTab = currentTab;
+        const requestPage = closedPage;
         const pageParam = usingClosedPaging ? `&page=${closedPage}` : '';
-        const response = await fetch(`${API_URL}/api/admin/conversations?status=${currentTab}${pageParam}`, {
+        const response = await fetch(`${API_URL}/api/admin/conversations?status=${requestTab}${pageParam}`, {
             headers: { 'Authorization': `Bearer ${currentToken}` }
         });
+        if (currentTab !== requestTab || (usingClosedPaging && closedPage !== requestPage)) return;
 
         if (!response.ok) {
             const errBody = await response.json().catch(() => ({}));
@@ -1617,6 +1624,7 @@ async function loadConversations(forceRefresh = false, opts = {}) {
         }
 
         const data = await response.json();
+        if (currentTab !== requestTab || (usingClosedPaging && closedPage !== requestPage)) return;
         conversations = data.conversations || [];
         if (usingClosedPaging) {
             closedTotalPages = data.totalPages || 1;

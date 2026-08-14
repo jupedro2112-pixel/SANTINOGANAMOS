@@ -8,6 +8,59 @@
 
 ## Sesión 2026-08-14
 
+### 159. REVISIÓN del lote #153-#158 — 6 fixes aplicados (4 en el flujo de plata de los lotes)
+- Se corrió una revisión de código de alto nivel sobre los 7 commits del lote.
+  El rastreador de contratos entre archivos vino LIMPIO (call sites, schemas y
+  shapes front-back verificados). 10 hallazgos; 6 corregidos, 2 son
+  comportamiento pedido por la spec (se documentan abajo) y 2 quedaron
+  cubiertos por los fixes.
+- **(1) Lote zombie mataba la cola:** un recipient con fallo PERMANENTE (p.ej.
+  jugador inexistente en 1girox) reintentaba para siempre y, como la cola
+  procesa los 20 lotes más VIEJOS, 20 zombies frenaban todos los lotes nuevos.
+  Fix: al detectar `expiresAt` vencido, `_processOneNotifBatch` cierra los
+  pendientes (`delivery:'none'`, creditError 'lote vencido antes de
+  completar', arrayFilters) y marca `sendDone` — después del vencimiento no se
+  acredita NI notifica nada (tampoco fichas atrasadas si la API estuvo caída).
+- **(2)+(3)+(4) LEDGER DE INTENCIÓN en `_creditNotifBatchGift`:** la
+  Transaction del regalo ahora se escribe ANTES de acreditar (status
+  'pending') y se completa después. Con eso: (a) crash entre acreditar y
+  persistir → el reintento encuentra la fila, SALTEA el guard bono-sobre-bono
+  (el "bono activo" puede ser el nuestro) y re-llama con la MISMA reference →
+  `duplicate:true`, sin pagar dos veces ni marcar "bloqueado" a quien SÍ
+  cobró; (b) los topes anti-abuso ya no se evaden por concurrencia entre
+  instancias/claims paralelos (el cap-check cuenta pending+completed — la
+  reserva de la otra instancia suma); (c) el registro que alimenta los topes
+  ya no es fire-and-forget (fallo al completar → queda pending y el próximo
+  reintento resuelve por duplicate). Crédito nunca salió → la reserva fresca
+  se borra (no infla topes con fantasmas).
+- **(5) Guard bidireccional de códigos:** crear un lote ya rechazaba el
+  welcome code vigente, pero el setter del welcome code NO miraba los lotes —
+  un welcome code igual a un código de lote ACTIVO hacía que el hook
+  interceptara TODOS los canjes de bienvenida. Ahora el setter también
+  rechaza.
+- **(6) totalPages de Cerrados capeado a 50** (mismo tope que el clamp de
+  page): el paginador ya no ofrece páginas inalcanzables con >5.000 cerrados
+  en 48hs.
+- **(7) Guard anti-carrera en `loadConversations`:** si el admin cambiaba de
+  pestaña/página con una request en vuelo, la respuesta vieja aterrizaba en el
+  cache/render de la pestaña nueva (o pisaba closedPage). Ahora se descarta.
+  admin-sw a **v32**.
+- **(8) Convención CLAUDE.md (mensajes editables):** los textos automáticos de
+  lote al cliente pasan por `renderSystemCommand` — comandos nuevos
+  `/sys_lote_aviso_codigo` / `_percent` / `_cash` (el bloque del regalo al
+  final del mensaje del lote; vacío = va solo el mensaje del agente) y
+  `/sys_lote_canje_cash` / `_percent` (mensajes del canje; vacío = no se
+  envía), sembrados en initializeData.
+- **NO cambiado (a propósito, es la spec):** (a) `_activateBatchPromoBonus`
+  VENCE todos los PromoBonus activos del username antes de crear el del lote —
+  "un cartel a la vez", igual que el motor de reglas (⚠️ operativo: un lote %
+  masivo pisa regalos pendientes anteriores; elegir la audiencia con eso en
+  mente); (b) `forcePush` en el fallback del chat puede duplicar
+  la notificación en clientes con front viejo cacheado sin ack — transitorio
+  hasta que el SW se actualiza, y el tag 'chat-message' colapsa las cards.
+- **Validado:** `node --check` OK (server.js, admin.js). Back necesita
+  redeploy (siembra los /sys_lote_* al arrancar).
+
 ### 158. Chats CERRADOS: 48 horas paginadas con números (los 101+ ya no son invisibles)
 - **Problema:** `GET /api/admin/conversations` cortaba en el top 100 por
   actividad para TODAS las pestañas → en Cerrados, los chats 101+ eran

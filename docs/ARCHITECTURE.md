@@ -538,12 +538,21 @@ VIPCARGAS con su JWT, y el cliente nunca más necesita conocer su clave del casi
 - **Lotes de notificaciones con regalo** (NotifBatch, 2026-08-14): envío masivo
   (o código público) con regalo. `percent` → PromoBonus `sourceRuleCode:'lote'`
   (cartel verde, LO APLICA EL AGENTE, exento del cap 30%); `fixed` → fichas
-  AUTOMÁTICAS por `_creditNotifBatchGift`: caps anti-abuso por usuario cruzando
-  todos los lotes (3 créditos/24h, $300.000/7d → bloqueo + alerta
-  `security_alert` con toast rojo en el panel + nota admin-only), guard
-  bono-sobre-bono, reference `vip-nbatch-*`, auto-claim v1.7, Transaction
-  `bonus` con `metadata.source:'notif_batch'` (no cuenta como carga). Envío por
-  motor reanudable (§7), NUNCA en la request. Canje de códigos: hook
+  AUTOMÁTICAS por `_creditNotifBatchGift` con **LEDGER DE INTENCIÓN**: la
+  Transaction `bonus` (`metadata.source:'notif_batch'`, no cuenta como carga)
+  se escribe ANTES de acreditar (status 'pending') y se completa después — da
+  idempotencia real ante crashes (el reintento saltea el guard bono-sobre-bono
+  y resuelve por `duplicate:true` con la reference estable `vip-nbatch-*`) y
+  hace que los caps anti-abuso (3 créditos/24h, $300.000/7d por usuario
+  cruzando todos los lotes; cuenta pending+completed → no se evaden por
+  concurrencia) no dependan de un write fire-and-forget. Tope pasado →
+  bloqueo + alerta `security_alert` (toast rojo en el panel + nota
+  admin-only). Guard bono-sobre-bono solo en el PRIMER intento; auto-claim
+  v1.7. Envío por motor reanudable (§7), NUNCA en la request; al VENCER el
+  lote (`expiresAt`) el motor cierra los pendientes sin acreditar ni
+  notificar (anti lote-zombie: la cola procesa los 20 más viejos). Los textos
+  automáticos al cliente son editables por COMANDOS (`/sys_lote_aviso_*` para
+  el bloque del regalo, `/sys_lote_canje_*` para el canje). Canje de códigos: hook
   `_tryClaimNotifBatchCode` al principio de `POST /api/community-code/claim`
   (null = no es de lote → sigue el welcome code intacto); membresía sin revelar
   códigos ajenos; público con append atómico + cupo (`$expr $size`); SIN gate

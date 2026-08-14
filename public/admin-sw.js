@@ -34,7 +34,7 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v31'; // v31: chats Cerrados con 48hs paginadas (paginador con números)
+const CACHE_VERSION = 'v32'; // v32: guard anti-carrera en loadConversations (respuesta vieja no pisa otra pestaña/página)
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).
