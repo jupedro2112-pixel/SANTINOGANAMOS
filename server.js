@@ -13255,6 +13255,175 @@ app.get('/api/admin/datos', authMiddleware, adminMiddleware, async (req, res) =>
 });
 
 // ============================================
+// DATOS 2.0 — COHORTES DE RETENCIÓN (2026-08-14)
+// ============================================
+// La sección Datos mira el PERÍODO; esta mira las CAMADAS: cada día ART es la
+// cohorte de Users registrados ese día, seguida en el tiempo. Retención Dx =
+// la ÚLTIMA carga del usuario es ≥ x días después de su registro (capta a los
+// que se van y VUELVEN). Una cohorte solo es ELEGIBLE para Dx cuando ya
+// cumplió esa edad — si no, la celda es null (el front muestra "—", jamás un
+// % falso bajo). Mismo gate que /api/admin/datos (cualquier rol staff).
+app.get('/api/admin/datos2', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const ART_OFFSET_MS = 3 * 60 * 60 * 1000; // Argentina es UTC-3 todo el año
+    const DAY_MS = 24 * 60 * 60 * 1000;
+    const RET_DAYS = [1, 3, 7, 14, 30];
+    let days = parseInt(req.query.days, 10);
+    if (!Number.isFinite(days)) days = 30;
+    days = Math.min(90, Math.max(7, days));
+
+    const now = Date.now();
+    const todayART = new Date(now - ART_OFFSET_MS);
+    todayART.setUTCHours(0, 0, 0, 0);
+    const todayStartUTC = new Date(todayART.getTime() + ART_OFFSET_MS); // ART 00:00 de hoy
+    const windowStartUTC = new Date(todayStartUTC.getTime() - (days - 1) * DAY_MS);
+
+    // Día ART (YYYY-MM-DD) de un instante.
+    const artDayKey = (d) => new Date(d.getTime() - ART_OFFSET_MS).toISOString().slice(0, 10);
+
+    // Cohortes: todos los registrados en la ventana.
+    const users = await User.find({ role: 'user', createdAt: { $gte: windowStartUTC } })
+      .select('id username createdAt acquisitionCampaign createdByEmployeeId').lean();
+
+    // Cargas de esos usuarios: UNA aggregation (regalos de payout_refund afuera,
+    // mismo criterio que Datos).
+    const usernames = users.map((u) => u.username);
+    const depRows = usernames.length ? await Transaction.aggregate([
+      { $match: {
+        type: 'deposit',
+        'metadata.source': { $ne: 'payout_refund' },
+        username: { $in: usernames }
+      } },
+      { $group: {
+        _id: '$username',
+        count: { $sum: 1 },
+        total: { $sum: '$amount' },
+        lastAt: { $max: '$timestamp' },
+        dias: { $addToSet: { $dateToString: { format: '%Y-%m-%d', date: '$timestamp', timezone: 'America/Argentina/Buenos_Aires' } } }
+      } }
+    ]) : [];
+    const depByUser = new Map(depRows.map((r) => [r._id, r]));
+
+    const mkAgg = () => ({
+      nuevos: 0, pauta: 0, agente: 0, organico: 0,
+      c1: 0, c2: 0, c3: 0,
+      cargasTotales: 0, diasConCarga: 0, depositado: 0,
+      ret: Object.fromEntries(RET_DAYS.map((d) => [d, { ok: 0, eligible: 0 }]))
+    });
+    const porDia = new Map();   // 'YYYY-MM-DD' → agg
+    const porCamp = new Map();  // 'camp:<code>' | 'AGENTE' | 'ORGANICO' → agg
+    const totalAgg = mkAgg();
+
+    for (const u of users) {
+      const createdMs = new Date(u.createdAt).getTime();
+      const dayKey = artDayKey(new Date(createdMs));
+      if (!porDia.has(dayKey)) porDia.set(dayKey, mkAgg());
+      // Desglose de origen: 📣 pauta (link de campaña) / 🧑‍💼 agente / 🌱 orgánico.
+      let campKey, bucket;
+      if (u.acquisitionCampaign) { campKey = 'camp:' + u.acquisitionCampaign; bucket = 'pauta'; }
+      else if (u.createdByEmployeeId) { campKey = 'AGENTE'; bucket = 'agente'; }
+      else { campKey = 'ORGANICO'; bucket = 'organico'; }
+      if (!porCamp.has(campKey)) porCamp.set(campKey, mkAgg());
+
+      const dep = depByUser.get(u.username) || null;
+      const ageDays = (now - createdMs) / DAY_MS;
+      for (const agg of [porDia.get(dayKey), porCamp.get(campKey), totalAgg]) {
+        agg.nuevos++;
+        agg[bucket]++;
+        if (dep) {
+          if (dep.count >= 1) agg.c1++;
+          if (dep.count >= 2) agg.c2++;
+          if (dep.count >= 3) agg.c3++;
+          agg.cargasTotales += dep.count;
+          agg.diasConCarga += (dep.dias || []).length;
+          agg.depositado += dep.total || 0;
+        }
+        // Retención por ventana: solo cuenta si la cohorte ya cumplió esa edad.
+        for (const rd of RET_DAYS) {
+          if (ageDays >= rd) {
+            agg.ret[rd].eligible++;
+            if (dep && dep.lastAt && new Date(dep.lastAt).getTime() >= createdMs + rd * DAY_MS) {
+              agg.ret[rd].ok++;
+            }
+          }
+        }
+      }
+    }
+
+    const pctOf = (a, b) => (b > 0 ? Math.round((a / b) * 1000) / 10 : null);
+    const aggOut = (agg) => ({
+      nuevos: agg.nuevos, pauta: agg.pauta, agente: agg.agente, organico: agg.organico,
+      c1: agg.c1, c2: agg.c2, c3: agg.c3,
+      c1Pct: pctOf(agg.c1, agg.nuevos), c2Pct: pctOf(agg.c2, agg.nuevos), c3Pct: pctOf(agg.c3, agg.nuevos),
+      cargasProm: agg.c1 > 0 ? Math.round((agg.cargasTotales / agg.c1) * 10) / 10 : null,
+      diasConCarga: agg.diasConCarga,
+      depositado: Math.round(agg.depositado),
+      // $ depositado / TODOS los nuevos: para comparar contra el costo por
+      // registro de la pauta.
+      porNuevo: agg.nuevos > 0 ? Math.round(agg.depositado / agg.nuevos) : null,
+      ret: Object.fromEntries(RET_DAYS.map((rd) => ['d' + rd, {
+        ok: agg.ret[rd].ok,
+        eligible: agg.ret[rd].eligible,
+        pct: agg.ret[rd].eligible > 0 ? pctOf(agg.ret[rd].ok, agg.ret[rd].eligible) : null
+      }]))
+    });
+
+    // Cohortes día a día (más reciente primero), incluyendo días SIN registros.
+    const cohortes = [];
+    for (let i = 0; i < days; i++) {
+      const key = artDayKey(new Date(todayStartUTC.getTime() - i * DAY_MS));
+      cohortes.push({ dia: key, ...aggOut(porDia.get(key) || mkAgg()) });
+    }
+
+    // Métrica pedida: % de 3+ cargas ponderado sobre las cohortes de los
+    // últimos 10 días.
+    let c3_10 = 0, nuevos_10 = 0;
+    for (let i = 0; i < Math.min(10, days); i++) {
+      const agg = porDia.get(artDayKey(new Date(todayStartUTC.getTime() - i * DAY_MS)));
+      if (agg) { c3_10 += agg.c3; nuevos_10 += agg.nuevos; }
+    }
+
+    // Por campaña, con el publicista resuelto de Campaign + los buckets
+    // 'CREADOS POR AGENTE' y 'ORGÁNICO / DIRECTO'.
+    const campCodes = [...porCamp.keys()].filter((k) => k.startsWith('camp:')).map((k) => k.slice(5));
+    const camps = campCodes.length
+      ? await Campaign.find({ code: { $in: campCodes } }).select('code publisher').lean()
+      : [];
+    const campByCode = new Map(camps.map((c) => [c.code, c]));
+    const campanias = [...porCamp.entries()].map(([key, agg]) => {
+      let label, publisher = null;
+      if (key === 'AGENTE') label = 'CREADOS POR AGENTE';
+      else if (key === 'ORGANICO') label = 'ORGÁNICO / DIRECTO';
+      else {
+        const code = key.slice(5);
+        label = code;
+        publisher = campByCode.has(code) ? campByCode.get(code).publisher : null;
+      }
+      return { campania: label, publisher, ...aggOut(agg) };
+    }).sort((a, b) => b.nuevos - a.nuevos);
+
+    res.json({
+      status: 'success',
+      data: {
+        days,
+        retDays: RET_DAYS,
+        resumen: {
+          ...aggOut(totalAgg),
+          c3Pct10d: pctOf(c3_10, nuevos_10),
+          c3Count10d: c3_10,
+          nuevos10d: nuevos_10
+        },
+        cohortes,
+        campanias
+      }
+    });
+  } catch (error) {
+    console.error('Error obteniendo datos 2.0:', error);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
 // CENTRAL — vistas de datos del admin
 // ============================================
 const ART_TZ = 'America/Argentina/Buenos_Aires';

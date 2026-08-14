@@ -124,6 +124,10 @@ document.addEventListener('change', function (ev) {
                     <span class="icon icon-chart"></span>
                     <span>Datos</span>
                 </a>
+                <a href="#" class="nav-item" data-section="datos2">
+                    <span>📊</span>
+                    <span>Datos 2.0</span>
+                </a>
                 <div class="nav-group-title" style="padding:13px 16px 5px;font-size:9.5px;font-weight:900;letter-spacing:1.2px;color:#d4af37;text-transform:uppercase;opacity:.7;">Central</div>
                 <a href="#" class="nav-item" data-section="centralIngresos">
                     <span>📈</span>
@@ -847,8 +851,12 @@ document.addEventListener('change', function (ev) {
             <section id="datosSection" class="section">
                 <div class="panel-header">
                     <h2><span class="icon icon-chart"></span> Datos</h2>
-                    <button class="btn btn-secondary btn-sm" onclick="loadDatos()" title="Actualizar">🔄</button>
+                    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+                        <button class="btn btn-secondary btn-sm" onclick="toggleDatosHelp()">❓ Cómo leer esta hoja</button>
+                        <button class="btn btn-secondary btn-sm" onclick="loadDatos()" title="Actualizar">🔄</button>
+                    </div>
                 </div>
+                <div id="datosHelp" style="display:none;background:rgba(255,255,255,0.04);border:1px solid rgba(212,175,55,0.25);border-radius:8px;padding:1rem;margin-bottom:1rem;font-size:.8rem;color:#ccc;line-height:1.55"></div>
 
                 <!-- Selector de período -->
                 <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:20px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.07);">
@@ -1051,6 +1059,70 @@ document.addEventListener('change', function (ev) {
                         </div>
                     </div>
                 </div>
+            </section>
+
+            <!-- ============================================================
+                 DATOS 2.0 — Cohortes de retención (camadas por día de registro)
+                 ============================================================ -->
+            <section id="datos2Section" class="section">
+                <div class="panel-header">
+                    <h2>📊 Datos 2.0</h2>
+                    <div style="display:flex;gap:.5rem;flex-wrap:wrap">
+                        <button class="btn btn-secondary btn-sm" onclick="toggleDatos2Help()">❓ Cómo leer esta hoja</button>
+                        <button class="btn btn-secondary btn-sm" onclick="loadDatos2()" title="Actualizar">🔄</button>
+                    </div>
+                </div>
+                <div id="datos2Help" style="display:none;background:rgba(255,255,255,0.04);border:1px solid rgba(212,175,55,0.25);border-radius:8px;padding:1rem;margin-bottom:1rem;font-size:.8rem;color:#ccc;line-height:1.55"></div>
+
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">Acá no se mira el período: se mira la <strong>CAMADA</strong>. Cada fila es "los que se registraron ese día", seguidos en el tiempo: cuántos cargaron 1/2/3 veces, cuánta plata dejaron y si <strong>seguían cargando</strong> a los 1/3/7/14/30 días. El "—" significa que la camada todavía no cumplió esa edad (nunca un % falso bajo). Todo en hora Argentina.</p>
+                </div>
+
+                <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px;padding-bottom:14px;border-bottom:1px solid rgba(255,255,255,0.07);">
+                    <label style="color:#aaa;font-size:12px;">Ventana:</label>
+                    <button class="btn btn-secondary btn-sm datos2-days-btn" data-days="10" onclick="setDatos2Days(10)">10 días</button>
+                    <button class="btn btn-secondary btn-sm datos2-days-btn" data-days="14" onclick="setDatos2Days(14)">14 días</button>
+                    <button class="btn btn-secondary btn-sm datos2-days-btn active" data-days="30" onclick="setDatos2Days(30)">30 días</button>
+                    <button class="btn btn-secondary btn-sm datos2-days-btn" data-days="60" onclick="setDatos2Days(60)">60 días</button>
+                    <button class="btn btn-secondary btn-sm datos2-days-btn" data-days="90" onclick="setDatos2Days(90)">90 días</button>
+                    <span id="datos2Label" style="font-size:0.82em;color:var(--text-secondary,#aaa);margin-left:4px;font-style:italic;"></span>
+                </div>
+
+                <div class="stats-grid" style="grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px;margin-bottom:22px;">
+                    <div class="stat-card" style="border-color:#4caf50">
+                        <span style="font-size:1.3rem">👥</span>
+                        <span id="datos2Nuevos" class="stat-number" style="color:#4caf50">—</span>
+                        <span class="stat-label">Nuevos en la ventana</span>
+                        <span id="datos2NuevosDetalle" style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">—</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#2196f3">
+                        <span style="font-size:1.3rem">💳</span>
+                        <span id="datos2C1Pct" class="stat-number" style="color:#2196f3">—</span>
+                        <span class="stat-label">Cargó al menos 1 vez</span>
+                        <span id="datos2C1Detalle" style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">—</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#e91e63">
+                        <span style="font-size:1.3rem">🔁</span>
+                        <span id="datos2C3Pct10d" class="stat-number" style="color:#e91e63">—</span>
+                        <span class="stat-label">3+ cargas (últimos 10 días)</span>
+                        <span id="datos2C3Detalle" style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">camadas de los últimos 10 días</span>
+                    </div>
+                    <div class="stat-card" style="border-color:#ffc107">
+                        <span style="font-size:1.3rem">💰</span>
+                        <span id="datos2Depositado" class="stat-number" style="color:#ffc107">—</span>
+                        <span class="stat-label">$ depositado por las camadas</span>
+                        <span id="datos2PorNuevo" style="display:block;font-size:0.7em;color:var(--text-secondary,#888);margin-top:4px;">—</span>
+                    </div>
+                </div>
+
+                <h4 style="margin:0 0 10px;font-size:0.8em;text-transform:uppercase;letter-spacing:.07em;color:#4caf50;">📅 Camada por camada</h4>
+                <div id="datos2CohortesTable" style="overflow-x:auto;margin-bottom:24px;">
+                    <p style="color:#888;font-size:.85rem">Cargando…</p>
+                </div>
+
+                <h4 style="margin:0 0 10px;font-size:0.8em;text-transform:uppercase;letter-spacing:.07em;color:#2196f3;">🎯 Rendimiento por campaña</h4>
+                <div id="datos2CampTable" style="overflow-x:auto;margin-bottom:12px;"></div>
+                <p style="color:#888;font-size:11px;line-height:1.6;margin:0;">💡 Tip de lectura: una campaña con muchos nuevos pero D7 en rojo trae volumen que NO se queda — compará el <strong>$/nuevo</strong> contra lo que pagás por registro antes de renovarla.</p>
             </section>
 
             <!-- ============================================================

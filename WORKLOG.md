@@ -8,6 +8,37 @@
 
 ## Sesión 2026-08-14
 
+### 157. DATOS 2.0 — cohortes de retención (camadas por día de registro)
+- **Concepto:** la sección Datos mira el PERÍODO; esta mira las CAMADAS: cada
+  día ART es la cohorte de Users registrados ese día, seguida en el tiempo.
+- **Endpoint `GET /api/admin/datos2?days=7..90`** (default 30, mismo gate que
+  /api/admin/datos — cualquier rol staff): cohortes por `createdAt` en hora
+  argentina (UTC-3 fijo, patrón del endpoint Datos); UNA aggregation sobre
+  Transaction (`deposit`, sin `payout_refund`) agrupada por username con
+  count/total/lastAt/días distintos ($dateToString con timezone ART).
+  Retención Dx = la ÚLTIMA carga ≥ createdAt + x días (capta a los que se van
+  y VUELVEN); una cohorte solo es ELEGIBLE para Dx si ya cumplió esa edad —
+  si no, la celda es null (el front muestra "—", jamás un % falso bajo).
+  RET_DAYS = [1,3,7,14,30]. Acumula por día ART Y por campaña: nuevos con
+  desglose 📣 pauta (acquisitionCampaign) / 🧑‍💼 agente (createdByEmployeeId) /
+  🌱 orgánico, c1/c2/c3 con %, cargas prom por depositante, días con carga,
+  $ depositado, **$/nuevo** (sobre TODOS los nuevos — comparable al costo por
+  registro de pauta), ret {ok, eligible, pct}. Respuesta: `resumen` (totales +
+  **c3Pct10d**: % de 3+ cargas ponderado sobre las cohortes de los últimos 10
+  días), `cohortes[]` (día a día, más reciente primero, incluye días sin
+  registros), `campanias[]` (publisher resuelto de Campaign + buckets
+  'CREADOS POR AGENTE' y 'ORGÁNICO / DIRECTO', orden nuevos desc).
+- **Panel:** nav "📊 Datos 2.0" (después de Datos) + sección con explicación
+  en criollo, selector 10/14/30/60/90 días, 4 stat-cards (nuevos con desglose
+  / % cargó ≥1 / % 3+ últimos 10 días / $ depositado y $/nuevo), tabla
+  "📅 Camada por camada" (D1..D30 con semáforo verde ≥30% / amarillo ≥10% /
+  rojo, tooltip "X de Y seguían cargando") y tabla "🎯 Rendimiento por
+  campaña" + tip de lectura. Botones **"❓ Cómo leer esta hoja"** en Datos Y
+  Datos 2.0 (guía compartida: foto del día vs película de la camada, columnas,
+  el "—", regla práctica y ejemplo concreto). Hook `loadDatos2` en el switch.
+  admin-sw a **v30**.
+- **Validado:** `node --check` OK. Back necesita redeploy.
+
 ### 156. LOTES DE NOTIFICACIONES CON REGALO (sistema completo)
 - **Feature grande portada del proyecto hermano.** Envío masivo con regalo:
   - **Regla de oro (quién pone la plata):** `percent` = lo aplica EL AGENTE en

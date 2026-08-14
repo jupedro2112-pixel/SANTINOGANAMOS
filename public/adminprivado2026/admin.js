@@ -3800,6 +3800,135 @@ async function loadDatos() {
 }
 
 // ============================================
+// DATOS 2.0 — COHORTES DE RETENCIÓN
+// ============================================
+// La sección Datos mira el PERÍODO; esta mira las CAMADAS (cada día ART = la
+// cohorte de registrados ese día, seguida en el tiempo). Backend:
+// GET /api/admin/datos2?days=N. El "—" = la camada no cumplió esa edad todavía.
+let datos2Days = 30;
+
+function setDatos2Days(n) {
+    datos2Days = n;
+    document.querySelectorAll('.datos2-days-btn').forEach((b) => {
+        b.classList.toggle('active', Number(b.dataset.days) === n);
+    });
+    loadDatos2();
+}
+
+// Guía compartida por los botones "❓ Cómo leer esta hoja" de Datos y Datos 2.0.
+function _datosHelpHtml() {
+    return '<strong style="color:#d4af37">❓ Cómo leer estas hojas</strong><br><br>' +
+        '<strong>📊 Datos = la FOTO del día.</strong> Elegís un período (hoy, ayer, un rango) y ves qué pasó ADENTRO de ese período: cuántos se registraron, cuántos cargaron, cuánta plata entró. Sirve para el pulso diario: "¿cómo venimos hoy?".<br><br>' +
+        '<strong>📊 Datos 2.0 = la PELÍCULA de cada camada.</strong> Acá el período no importa: cada fila es "los que se REGISTRARON ese día" y se los sigue en el tiempo, sin importar cuándo cargaron. Sirve para saber si los nuevos SE QUEDAN: "los que entraron el lunes, ¿siguen cargando una semana después?".<br><br>' +
+        '<strong>Las columnas de Datos 2.0:</strong><br>' +
+        '· <strong>Nuevos</strong>: registrados ese día, con el desglose 📣 pauta (llegaron por link de campaña) / 🧑‍💼 agente (los creó un agente) / 🌱 orgánico (llegaron solos).<br>' +
+        '· <strong>≥1 / ≥2 / ≥3</strong>: cuántos de esa camada cargaron al menos 1, 2 o 3 veces (en toda su vida, no solo ese día). El ≥3 es EL número: un cliente con 3+ cargas ya es cliente de verdad.<br>' +
+        '· <strong>Cargas prom</strong>: cargas promedio por depositante de la camada.<br>' +
+        '· <strong>$ y $/nuevo</strong>: plata total que dejó la camada, y dividida por TODOS los nuevos (carguen o no). El $/nuevo se compara directo contra lo que costó ese registro en pauta.<br>' +
+        '· <strong>D1 D3 D7 D14 D30</strong>: retención — ¿su ÚLTIMA carga fue 1/3/7/14/30 días DESPUÉS de registrarse? Si sí, a esa altura seguía vivo (capta también a los que se van y vuelven). Verde = bien, amarillo = regular, rojo = se van.<br>' +
+        '· <strong>El "—"</strong>: la camada todavía no cumplió esa edad — una camada de ayer no puede tener D7, y mostrar 0% sería mentir para abajo.<br><br>' +
+        '<strong>Regla práctica:</strong> mirá primero el <strong>% de 3+ cargas de los últimos 10 días</strong> (arriba). Si viene bajando, los nuevos no se están enganchando: revisá qué campaña los trae (tabla de campañas — la que tiene muchos nuevos pero D7 rojo trae volumen descartable) y qué pasa en sus primeros días (bonos, atención, demoras).<br><br>' +
+        '<strong>Ejemplo concreto:</strong> el 05/08 entraron 40 nuevos (30 de pauta). 18 cargaron (≥1 = 45%), 6 llegaron a 3+ (15%), dejaron $380.000 → $/nuevo $9.500. D1 60%, D7 25%: de cada 4 que cargaron el primer día, 1 seguía a la semana. Si la pauta te cobró $4.000 por registro, esa camada pagó la pauta 2,4 veces — renovala.';
+}
+
+function toggleDatosHelp() {
+    const el = document.getElementById('datosHelp');
+    if (!el) return;
+    if (el.style.display === 'none') { el.innerHTML = _datosHelpHtml(); el.style.display = ''; }
+    else el.style.display = 'none';
+}
+
+function toggleDatos2Help() {
+    const el = document.getElementById('datos2Help');
+    if (!el) return;
+    if (el.style.display === 'none') { el.innerHTML = _datosHelpHtml(); el.style.display = ''; }
+    else el.style.display = 'none';
+}
+
+function _d2Money(n) {
+    if (n == null) return '—';
+    return '$ ' + Number(n).toLocaleString('es-AR', { maximumFractionDigits: 0 });
+}
+function _d2Pct(p) { return p == null ? '—' : p + '%'; }
+function _d2RetCell(r) {
+    if (!r || r.pct == null) return '<td style="color:#666;text-align:center">—</td>';
+    const color = r.pct >= 30 ? '#00e676' : r.pct >= 10 ? '#ffd54f' : '#ff6b6b';
+    return '<td style="color:' + color + ';text-align:center" title="' + r.ok + ' de ' + r.eligible + ' seguían cargando">' + r.pct + '%</td>';
+}
+
+async function loadDatos2() {
+    const label = document.getElementById('datos2Label');
+    if (label) label.textContent = '— cargando…';
+    try {
+        const r = await authFetch('/api/admin/datos2?days=' + datos2Days);
+        const j = await r.json();
+        if (!r.ok || !j.data) {
+            if (label) label.textContent = '— error: ' + (j.error || r.status);
+            return;
+        }
+        const d = j.data;
+        if (label) label.textContent = '— últimas ' + d.days + ' camadas (hora Argentina)';
+        const res = d.resumen || {};
+        const setTxt = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+        setTxt('datos2Nuevos', res.nuevos != null ? res.nuevos : '—');
+        setTxt('datos2NuevosDetalle', '📣 ' + (res.pauta || 0) + ' pauta · 🧑‍💼 ' + (res.agente || 0) + ' agente · 🌱 ' + (res.organico || 0) + ' orgánico');
+        setTxt('datos2C1Pct', _d2Pct(res.c1Pct));
+        setTxt('datos2C1Detalle', (res.c1 || 0) + ' de ' + (res.nuevos || 0) + ' nuevos');
+        setTxt('datos2C3Pct10d', _d2Pct(res.c3Pct10d));
+        setTxt('datos2C3Detalle', (res.c3Count10d || 0) + ' de ' + (res.nuevos10d || 0) + ' nuevos de los últimos 10 días');
+        setTxt('datos2Depositado', _d2Money(res.depositado));
+        setTxt('datos2PorNuevo', '$/nuevo: ' + _d2Money(res.porNuevo));
+
+        // Tabla camada por camada.
+        const cont = document.getElementById('datos2CohortesTable');
+        if (cont) {
+            const rows = (d.cohortes || []).map((c) => {
+                const fecha = c.dia.slice(8, 10) + '/' + c.dia.slice(5, 7);
+                return '<tr>' +
+                    '<td style="white-space:nowrap">' + fecha + '</td>' +
+                    '<td style="white-space:nowrap"><strong>' + c.nuevos + '</strong> <span style="color:#888;font-size:.85em">📣' + c.pauta + ' 🧑‍💼' + c.agente + ' 🌱' + c.organico + '</span></td>' +
+                    '<td style="text-align:center">' + c.c1 + (c.c1Pct != null ? ' <span style="color:#888">(' + c.c1Pct + '%)</span>' : '') + '</td>' +
+                    '<td style="text-align:center">' + c.c2 + '</td>' +
+                    '<td style="text-align:center">' + c.c3 + (c.c3Pct != null ? ' <span style="color:#888">(' + c.c3Pct + '%)</span>' : '') + '</td>' +
+                    '<td style="text-align:center">' + (c.cargasProm != null ? c.cargasProm : '—') + '</td>' +
+                    '<td style="white-space:nowrap">' + _d2Money(c.depositado) + '</td>' +
+                    '<td style="white-space:nowrap">' + _d2Money(c.porNuevo) + '</td>' +
+                    _d2RetCell(c.ret && c.ret.d1) + _d2RetCell(c.ret && c.ret.d3) + _d2RetCell(c.ret && c.ret.d7) +
+                    _d2RetCell(c.ret && c.ret.d14) + _d2RetCell(c.ret && c.ret.d30) +
+                    '</tr>';
+            }).join('');
+            cont.innerHTML = '<table class="data-table" style="font-size:.8rem"><thead><tr>' +
+                '<th>Día</th><th>Nuevos</th><th>≥1</th><th>≥2</th><th>≥3</th><th>Cargas prom</th><th>$</th><th>$/nuevo</th>' +
+                '<th>D1</th><th>D3</th><th>D7</th><th>D14</th><th>D30</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+        }
+
+        // Tabla por campaña.
+        const campCont = document.getElementById('datos2CampTable');
+        if (campCont) {
+            const rows = (d.campanias || []).map((c) => {
+                const nombre = escapeHtml(c.campania) + (c.publisher ? ' <span style="color:#888;font-size:.85em">(' + escapeHtml(c.publisher) + ')</span>' : '');
+                return '<tr>' +
+                    '<td>' + nombre + '</td>' +
+                    '<td style="text-align:center">' + c.nuevos + '</td>' +
+                    '<td style="text-align:center">' + _d2Pct(c.c1Pct) + '</td>' +
+                    '<td style="text-align:center">' + c.c3 + (c.c3Pct != null ? ' <span style="color:#888">(' + c.c3Pct + '%)</span>' : '') + '</td>' +
+                    '<td style="white-space:nowrap">' + _d2Money(c.depositado) + '</td>' +
+                    '<td style="white-space:nowrap">' + _d2Money(c.porNuevo) + '</td>' +
+                    _d2RetCell(c.ret && c.ret.d7) +
+                    '</tr>';
+            }).join('');
+            campCont.innerHTML = '<table class="data-table" style="font-size:.8rem"><thead><tr>' +
+                '<th>Campaña</th><th>Nuevos</th><th>% cargó ≥1</th><th>3+ cargas</th><th>$</th><th>$/nuevo</th><th>Ret. D7</th>' +
+                '</tr></thead><tbody>' + rows + '</tbody></table>';
+        }
+    } catch (e) {
+        console.error('Error cargando Datos 2.0:', e);
+        if (label) label.textContent = '— error de conexión';
+    }
+}
+
+// ============================================
 // STATS
 // ============================================
 async function loadStats() {
@@ -4619,6 +4748,7 @@ function switchSection(section) {
     }
     if (section === 'commands') loadCommands();
     if (section === 'datos') loadDatos();
+    if (section === 'datos2') loadDatos2();
     if (section === 'notifications') loadNotificationsPanel();
     if (section === 'referrals') loadAdminReferralSummary();
     if (section === 'roulette') loadRouletteAdmin();
