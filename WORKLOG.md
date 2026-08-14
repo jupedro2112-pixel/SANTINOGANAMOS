@@ -8,6 +8,29 @@
 
 ## Sesión 2026-08-14
 
+### 161. Marca: textos visibles con VIPCARGAS → 1GIROX (6 lugares, uno más que la gemela)
+- Quedaban textos visibles al cliente con la marca de la era anterior. Grep de
+  `VIPCARGAS` en public/ y corregidas las apariciones VISIBLES (no comentarios
+  de código, no los clientes muertos jugaygana*):
+  1. index.html — subtítulo del modal "Información del Servicio".
+  2. index.html — banner de atribución de campañas "✨ Bienvenido a…".
+  3. index.html — modal "BIENVENIDO A…".
+  4. index.html — modal "BENEFICIOS DE JUGAR EN…".
+  5. ui.js — botón "Volver a…" del recuadro de error del casino.
+  6. **(divergencia respecto de la gemela)** index.html — aviso del modal del
+     casino "La contraseña del casino es la misma que usás para entrar a
+     VIPCargas" → "…para entrar acá, a Cargas 1Girox".
+- Los `vipcargas.com` de código (placeholders/fallbacks de dominio) NO son de
+  esta limpieza (los maneja PUBLIC_BASE_URL, #130).
+- **Pendiente conocido (decisión de marca del owner, NO tocado):** los SMS de
+  OTP (`src/services/otpService.js`) siguen diciendo "VIPCARGAS", y puede
+  haber COMANDOS guardados en la base que la mencionen (la migración de #151
+  ya loguea al arrancar cuáles responses siguen nombrando vipcargas — revisar
+  la sección COMANDOS del panel).
+- **Validado:** `node --check` OK (ui.js). SW PWA a **v97**. Solo front.
+  PROBAR: menú → Información del Servicio → marca nueva; grep de VIPCARGAS en
+  public/ sin resultados visibles al cliente.
+
 ### 160. iPhone PWA: el overlay del casino respeta el safe-area (barra bajo el reloj + franja blanca)
 - **Síntoma (solo app instalada en iPhone; en navegador andaba bien):** la
   barra "↗ Abrir aparte / ← Volver…" del casino embebido quedaba pegada DEBAJO

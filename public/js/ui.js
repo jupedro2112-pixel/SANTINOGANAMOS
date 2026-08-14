@@ -1126,7 +1126,7 @@ VIP.ui._casinoFrameError = function(msg) {
       '🔄 Reintentar</button>' +
     '<button type="button" onclick="VIP.ui.closeCasinoFrame()" ' +
       'style="background:none;color:#aaa;border:none;font-size:14px;cursor:pointer;">' +
-      'Volver a VIPCARGAS</button>';
+      'Volver a 1GIROX</button>';
 };
 
 // El botón "atrás" del celular cierra el recuadro en vez de salir de la app.

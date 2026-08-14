@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v96'; // v96: overlay del casino respeta safe-area en iPhone standalone (notch + home indicator)
+const CACHE_VERSION = 'v97'; // v97: marca vieja VIPCARGAS → 1GIROX en los 6 textos visibles al cliente
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 // Logs por-fetch del SW (corren en CADA request). Apagados por default;
