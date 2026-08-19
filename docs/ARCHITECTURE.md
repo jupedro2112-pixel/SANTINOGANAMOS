@@ -499,6 +499,25 @@ puente rotan) y se saltea el `cors()` estricto global — ver el middleware
 antes del `app.use(cors(...))` en server.js. Conversión: CompleteRegistration
 a Meta CAPI (`signup_landing`) + webhook fb-ads.
 
+### 4.11 Novedades del manual Partner API v1.11 (2026-08-13) — contexto, sin código
+
+(El PDF no está en este repo — si se consigue, guardarlo como
+`docs/PARTNER-APIv1.11.pdf`, igual que el repo original.)
+
+1. **v1.11 — `agent_id` en `POST /players` + `GET /agents`:** la key de la
+   cuenta raíz puede crear un jugador colgado de un sub-agente de su red, y
+   `GET /agents` lista el subárbol (sirve de diagnóstico: una key de
+   publicista devuelve lista vacía). ⚠️ Probado en vivo (en el repo original):
+   es "crear y ENTREGAR" — apenas el jugador nace bajo el sub-agente, la key
+   creadora recibe `404 player_not_found` en lectura Y en depósito. **NO
+   reemplaza el ruteo por keys de publicista** (el pool por publicista, §4.3,
+   sigue siendo la solución). Error nuevo: `422 agent_not_allowed`.
+2. **v1.10 — bono con `multiplier: 0` = regalo directo:** se acredita
+   disponible/retirable al instante, sin reclamo, y **ya no pisa el bono en
+   curso**. Implicación PENDIENTE de decisión del owner (NO implementar sin
+   que lo pida): los guards bono-sobre-bono podrían dejar pasar regalos con
+   multiplicador 0.
+
 ## 5. Flujos principales
 
 - **Registro**: `POST /api/auth/register` (user+pass; OTP solo si manda teléfono) o

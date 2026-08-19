@@ -6,6 +6,52 @@
 >
 > **Última actualización: 2026-08-19**
 
+## Sesión 2026-08-19 (2ª tanda) — Solo front: SSO con retry, línea blanca iOS, internos en verde
+
+### 169. Botón CASINO: reintento automático del link SSO + timeout (ui.js)
+- **Síntoma:** el jugador tocaba el botón del casino, "no ingresaba y quedaba
+  en el mismo lugar", y recién al segundo toque abría. Dos causas: el POST
+  /api/platform/session no reintentaba (el "reintento" era el jugador), y el
+  fetch sin timeout dejaba `_casinoOpening` en true por minutos → botón muerto.
+- **Fix:** helper `VIP.ui._fetchCasinoSession(timeoutMs)` (AbortController 20s,
+  json() tolerante, `retryable` solo con 5xx/timeout/red — un 4xx no cambia por
+  reintentar). `enterCasino`: hasta 3 intentos con "🔄 Reintentando… (n/3)" y
+  esperas 1.5s/3s; cortes si el jugador salió del casino (`_casinoOpen`) al
+  inicio de cada vuelta, tras cada espera Y antes de setear `frame.src` (sin
+  esto el casino arrancaba oculto y quedaba sonando). `openCasinoInTab`: mismo
+  helper con 1 reintento (el placeholder ya está abierto dentro del gesto).
+- **PROBAR:** con red mala → "Reintentando…" y entra solo; con back caído →
+  error con botón Reintentar; el botón nunca queda muerto.
+
+### 170. iPhone PWA instalada: la "línea blanca" de abajo era el fondo del `<html>`
+- En standalone (viewport-fit=cover) iOS pinta la franja del home indicator y
+  el rebote del scroll con el fondo del documento RAÍZ; el degradé oscuro vivía
+  solo en `body` → `<html>` blanco por defecto. Fix: `html { background:
+  #0a0015 }` en `public/css/base.css` (color base del degradé del body de ESTE
+  repo, verificado). **PROBAR** (iPhone, app instalada, cerrar/abrir 2 veces):
+  sin franja blanca abajo, en la app y en el casino.
+
+### 171. Panel: mensajes de sistema INTERNOS en VERDE con "🔒 INTERNO"
+- Todos los mensajes de sistema se veían naranjas iguales; la distinción ya
+  viajaba en los datos (`adminOnly:true` en historial y socket; el vivo usa el
+  mismo `createMessageElement` — verificado, sin render duplicado). Solo se
+  pintó: internos → `.message.system.internal` verde + badge "🔒 INTERNO — el
+  cliente NO lo ve" sin ícono; automáticos que el cliente SÍ recibió → naranja
+  con 🤖 (`.icon-robot` nueva; el 🔒 anterior era engañoso). Hora en ambos.
+  Sin backend. **PROBAR:** chat con historial → "Chat cerrado por…" y alertas
+  internas en verde; los "¡bono acreditado!" en naranja con 🤖.
+
+### CONTEXTO — Partner API v1.11 (documentado en ARCHITECTURE §4.11, sin código)
+- v1.11: `agent_id` en POST /players + GET /agents — es "crear y ENTREGAR"
+  (la key creadora pierde al jugador apenas nace bajo el sub-agente); NO
+  reemplaza el pool de keys por publicista. Error nuevo `422 agent_not_allowed`.
+- v1.10: bono con `multiplier:0` = regalo directo (retirable al instante, no
+  pisa el bono en curso). Implicación en los guards bono-sobre-bono PENDIENTE
+  de decisión del owner — no implementar sin que lo pida.
+- El PDF v1.11 no está en este repo (si se consigue: `docs/PARTNER-APIv1.11.pdf`).
+- **Validado:** `node --check` OK (ui.js, admin.js). SW PWA a **v100**,
+  admin-sw a **v34**. Todo front — deploy de estáticos, sin backend.
+
 ## Sesión 2026-08-19 — Réplica del lote anti-lag + landing + casino widget (bloques A–F)
 
 > Implementación completa del doc de réplica de la repo gemela. Un commit por

@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v99'; // v99: casino pantalla completa + widget flotante de soporte + poll 90s + ir=casino
+const CACHE_VERSION = 'v100'; // v100: retry+timeout del SSO del casino + fondo del <html> (línea blanca iOS)
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 // Logs por-fetch del SW (corren en CADA request). Apagados por default;
