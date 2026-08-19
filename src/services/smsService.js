@@ -75,7 +75,11 @@ async function sendSMS(phone, message) {
       }
     });
 
-    await client.send(command);
+    const resp = await client.send(command);
+    // MessageId a stdout (SIN el teléfono): separa "no se envió" de "no se
+    // entregó" — la entrega la puede comer el límite de gasto de SMS de SNS,
+    // que descarta en silencio al superarlo.
+    console.log('[smsService] OK → SNS MessageId=' + (resp && resp.MessageId ? resp.MessageId : 'desconocido'));
     return { success: true };
   } catch (error) {
     // Avoid logging user-controlled phone number in format strings

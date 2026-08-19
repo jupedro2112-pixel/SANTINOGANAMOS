@@ -6744,7 +6744,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
 
       // NETWIN REAL del período (apostado − ganado), misma fuente que referidos.
       // El reembolso es sobre la PÉRDIDA REAL de juego, NO sobre cargas − retiros.
-      const netRes = await girox.getPlayerStats(username, fromDate, toDate, 'refund-daily');
+      const netRes = await girox.getPlayerStats(username, fromDate, toDate, 'refund-daily', { fresh: true });
       if (!netRes.success) {
         logger.warn(`[REFUND] daily — no se pudo leer NETWIN de ${username}: ${netRes.error || 's/detalle'}`);
         return res.json({ success: false, message: 'No pudimos calcular tu pérdida en este momento (la plataforma está demorada). Probá en unos minutos.', canClaim: true });
@@ -6892,7 +6892,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
       const toDate = new Date(toEpoch * 1000);
 
       // NETWIN/GGR REAL del período (apostado − ganado), misma fuente que referidos.
-      const netRes = await girox.getPlayerStats(username, fromDate, toDate, 'refund-weekly');
+      const netRes = await girox.getPlayerStats(username, fromDate, toDate, 'refund-weekly', { fresh: true });
       if (!netRes.success) {
         logger.warn(`[REFUND] weekly — no se pudo leer NETWIN de ${username}: ${netRes.error || 's/detalle'}`);
         return res.json({ success: false, message: 'No pudimos calcular tu pérdida en este momento (la plataforma está demorada). Probá en unos minutos.', canClaim: true });
@@ -7054,7 +7054,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
       const toDate = new Date(toEpoch * 1000);
 
       // NETWIN/GGR REAL del período (apostado − ganado), misma fuente que referidos.
-      const netRes = await girox.getPlayerStats(username, fromDate, toDate, 'refund-monthly');
+      const netRes = await girox.getPlayerStats(username, fromDate, toDate, 'refund-monthly', { fresh: true });
       if (!netRes.success) {
         logger.warn(`[REFUND] monthly — no se pudo leer NETWIN de ${username}: ${netRes.error || 's/detalle'}`);
         return res.json({ success: false, message: 'No pudimos calcular tu pérdida en este momento (la plataforma está demorada). Probá en unos minutos.', canClaim: true });
@@ -8402,7 +8402,8 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
     // > $0 a propósito: son flujos automáticos. Decisión explícita del owner:
     // NO auto-reclamar el regalito del cliente — solo avisar.
     const BONUS_GUARD_MIN_ARS = 50;
-    const _playerInfo = await girox.getUserInfoByName(resolvedUsername);
+    // fresh:true — decisión de plata: no puede leer el cache corto de giroxService.
+    const _playerInfo = await girox.getUserInfoByName(resolvedUsername, { fresh: true });
     if (_playerInfo) {
       const _locked = Math.max(0, Number(_playerInfo.bonusLocked) || 0);
       const _claimable = Math.max(0, Number(_playerInfo.claimableTotal) || 0);
@@ -10522,7 +10523,7 @@ app.post('/api/community-code/claim', authMiddleware, authLimiter, async (req, r
       // GATE DE SALDO (solo tipo cash): el código es un salvavidas para el que
       // se quedó corto — solo canjeable con el saldo REAL por DEBAJO del monto.
       // También antes de la reserva. Si el saldo no se puede leer, se rechaza.
-      const balCheck = await girox.getUserBalanceWithRetry(req.user.username);
+      const balCheck = await girox.getUserBalanceWithRetry(req.user.username, { fresh: true });
       if (!balCheck.success) {
         return res.status(503).json({ error: 'No pudimos verificar tu saldo. Probá de nuevo en unos segundos.' });
       }
@@ -10534,7 +10535,7 @@ app.post('/api/community-code/claim', authMiddleware, authLimiter, async (req, r
       }
       // GUARD bono-sobre-bono (v1.7): otorgar un bono a quien ya tiene uno
       // activo lo PISA y le debita el resto → mejor rechazar sin quemar el canje.
-      const pInfo = await girox.getUserInfoByName(uDoc.username);
+      const pInfo = await girox.getUserInfoByName(uDoc.username, { fresh: true });
       if (pInfo && (Number(pInfo.bonusLocked) > 0 || Number(pInfo.claimableTotal) > 0)) {
         return res.status(400).json({
           error: 'Tenés un bono activo (o sin reclamar) en el casino. Terminalo y después canjeá tu código.'
@@ -15016,7 +15017,10 @@ async function _deductChipsAtConfirm(payout, agentUser) {
   // jugador puede tener saldo que todavía NO puede retirar (objetivo de apuestas
   // pendiente). Si validáramos contra el total, la plataforma rechazaría el retiro con
   // `rollover_locked` y el pago quedaría colgado. Sin rollover, `available` == `balance`.
-  const balRes = await girox.getUserBalance(payout.username);
+  // fresh:true — el "saldo antes" de la verificación anti-fantasma no puede salir
+  // del cache: un valor viejo marcaría un retiro real como fallido (o cancelaría
+  // uno válido por "saldo insuficiente").
+  const balRes = await girox.getUserBalance(payout.username, { fresh: true });
   const avail = (balRes && balRes.success)
     ? (Number(balRes.available != null ? balRes.available : balRes.balance) || 0)
     : null;
@@ -15052,7 +15056,7 @@ async function _deductChipsAtConfirm(payout, agentUser) {
   // → el cliente se queda sin fichas Y sin plata.
   let after = null, deducted = false;
   try {
-    const a = await girox.getUserBalanceWithRetry(payout.username);
+    const a = await girox.getUserBalanceWithRetry(payout.username, { fresh: true });
     if (a && a.success) {
       after = Number(a.available != null ? a.available : a.balance) || 0;
       deducted = (avail - after) >= (amt - 1);
@@ -17666,7 +17670,7 @@ async function _creditNotifBatchGift(uDoc, batch) {
     // 2. GUARD bono-sobre-bono (v1.7 de la plataforma: otorgar un bono a quien
     //    ya tiene uno activo lo PISA y le debita el resto). Solo en el PRIMER
     //    intento — con una fila pending, el bono activo puede ser el nuestro.
-    const pInfo = await girox.getUserInfoByName(username);
+    const pInfo = await girox.getUserInfoByName(username, { fresh: true });
     if (!pInfo) return { ok: false, retryable: true, reason: 'no se pudo leer el estado del jugador en la plataforma' };
     if (Number(pInfo.bonusLocked) > 0 || Number(pInfo.claimableTotal) > 0) {
       return { ok: false, blocked: true, reason: 'bono activo en el casino' };
@@ -19261,6 +19265,21 @@ if (process.env.VERCEL) {
     // usar 32+ caracteres (cambiarlo invalida las sesiones vigentes).
     if (JWT_SECRET.length < 32) {
       console.warn('⚠️  ADVERTENCIA: JWT_SECRET es corto (' + JWT_SECRET.length + ' caracteres). Se recomienda 32+ para mayor seguridad.');
+    }
+
+    // Radiografía de la config de 1girox (a stdout para que quede en los logs
+    // de EB): permite verificar tras cada deploy que las keys de consultas y
+    // los techos por carril quedaron como se esperaba.
+    try {
+      console.log(
+        `[girox] config: key master ${girox.isEnabled() ? 'OK' : 'FALTA'} · ` +
+        `keys consultas cargadas: ${girox.getReadsKeysSummary()} · ` +
+        `GIROX_MAX_RPM=${girox.getMasterMaxRpm()} · ` +
+        `publicistas=${girox.getPublisherMaxRpm()}/min (+${girox.getPublisherKeyOverridesCount()} overrides) · ` +
+        `cache jugador=${girox.getPlayerCacheTtlMs()}ms`
+      );
+    } catch (e) {
+      console.warn('[girox] radiografía de config falló:', e.message);
     }
 
     await initializeData();

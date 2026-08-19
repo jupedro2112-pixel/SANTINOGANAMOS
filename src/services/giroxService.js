@@ -38,7 +38,22 @@
 const axios = require('axios');
 const crypto = require('crypto');
 const { v4: uuidv4 } = require('uuid');
-const logger = require('../utils/logger');
+const _fileLogger = require('../utils/logger');
+
+// En producción el winston escribe SOLO a archivos locales que no entran en los
+// logs de EB → los warns del limitador y los 429 eran invisibles. Acá warn/error
+// se ESPEJAN a console (con timestamp) además del archivo.
+const logger = {
+  info: (...a) => { try { _fileLogger.info(...a); } catch (_) {} },
+  warn: (...a) => {
+    try { _fileLogger.warn(...a); } catch (_) {}
+    try { console.warn(`[${new Date().toISOString()}]`, ...a); } catch (_) {}
+  },
+  error: (...a) => {
+    try { _fileLogger.error(...a); } catch (_) {}
+    try { console.error(`[${new Date().toISOString()}]`, ...a); } catch (_) {}
+  }
+};
 
 // ============================================================
 // CONFIG (lazy)
@@ -67,35 +82,143 @@ const TIMEOUT_MS = Number(process.env.GIROX_TIMEOUT_MS || 20000);
 const RETRY_DELAYS_MS = [2000, 5000, 15000];
 
 // ============================================================
-// RATE LIMIT — 60 requests/minuto (límite de la API; 429 si se pasa)
+// RATE LIMIT — 60 requests/minuto POR API KEY (límite de la API; 429 si se pasa)
 // ============================================================
+// Confirmado por el soporte de 1girox: el límite es POR KEY (a pedido lo suben a
+// 180 en keys puntuales). Por eso el limitador local es POR KEY ("carril"): la
+// master, cada key de consultas y cada key de publicista tienen su propia ventana.
 // ⚠️ MULTI-INSTANCIA (AWS EB): este limitador es POR PROCESO. Con N instancias el
-// techo real es N×60/min, así que el 429 sigue siendo posible → por eso además se
-// reintenta respetando Retry-After. Si con varias instancias aparecen 429 seguidos,
-// bajar GIROX_MAX_RPM (ej. 30 con 2 instancias).
-const MAX_RPM = Number(process.env.GIROX_MAX_RPM || 55); // 55 y no 60: margen de seguridad
+// techo real por key es N×techo_local, así que el 429 sigue siendo posible → por
+// eso además se reintenta respetando Retry-After. Criterio de configuración:
+// techo local = límite de la key en la plataforma ÷ N instancias.
 const WINDOW_MS = 60000;
 const MAX_QUEUE_WAIT_MS = 30000; // si hay que esperar más que esto, falla rápido
 
-let _requestTimestamps = [];
+// laneKey (apiKey; '' = master/sin key) → timestamps de la ventana
+const _laneTimestamps = new Map();
 
 function _sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
-/** Espera a que haya lugar en la ventana de rate limit. Devuelve false si esperar sería excesivo. */
-async function _acquireSlot() {
+// Lazy (SSM carga post-require): techo de la key MASTER. 55 y no 60: margen.
+function _masterMaxRpm() { return Number(process.env.GIROX_MAX_RPM || 55); }
+// Techo default de las keys de PUBLICISTA. NO heredan GIROX_MAX_RPM (que acompaña
+// a la master, que puede tener el límite subido): en la plataforma siguen en
+// 60/min → 60 ÷ 2 instancias = 30.
+function _publisherMaxRpm() { return Number(process.env.GIROX_PUBLISHER_MAX_RPM || 30); }
+
+/**
+ * Parsea una env de keys coma-separadas con sufijo `:rpm` opcional por key.
+ * Ej: "pk_aaa:90,pk_bbb:30" → [{key:'pk_aaa', rpm:90}, {key:'pk_bbb', rpm:30}].
+ * El sufijo se corta por el ÚLTIMO ':' (una key no debería traer ':', pero por
+ * las dudas). Sufijo inválido → defaultRpm; sin sufijo → defaultRpm (o se
+ * descarta la entrada si defaultRpm === null, caso GIROX_PUBLISHER_KEY_RPM).
+ */
+function _parseKeyRpmList(raw, defaultRpm) {
+  const out = [];
+  for (const part of String(raw || '').split(',')) {
+    const item = part.trim();
+    if (!item) continue;
+    let key = item;
+    let rpm = defaultRpm;
+    const idx = item.lastIndexOf(':');
+    if (idx > 0) {
+      const maybeRpm = Number(item.slice(idx + 1));
+      if (Number.isFinite(maybeRpm) && maybeRpm > 0) {
+        key = item.slice(0, idx);
+        rpm = maybeRpm;
+      }
+    }
+    if (!key || rpm == null || !Number.isFinite(rpm) || rpm <= 0) continue;
+    out.push({ key, rpm });
+  }
+  return out;
+}
+
+/** Pool de keys SOLO-CONSULTAS (GIROX_API_KEY_CONSULTAS). Deben ser del MISMO
+ *  agente que la master (una key de otro agente NO VE a los jugadores). */
+function _readsKeyConfigs() {
+  return _parseKeyRpmList(process.env.GIROX_API_KEY_CONSULTAS, _masterMaxRpm());
+}
+
+/** Overrides de techo POR key de publicista puntual (GIROX_PUBLISHER_KEY_RPM).
+ *  Entrada sin sufijo `:rpm` se descarta (no dice nada). */
+function _publisherKeyConfigs() {
+  return _parseKeyRpmList(process.env.GIROX_PUBLISHER_KEY_RPM, null);
+}
+
+function _readsKeyConfigFor(laneKey) {
+  return _readsKeyConfigs().find((c) => c.key === laneKey) || null;
+}
+
+/** Techo local (req/min por instancia) del carril de esa key. */
+function _laneLimit(laneKey) {
+  if (!laneKey || laneKey === getApiKey()) return _masterMaxRpm();
+  const reads = _readsKeyConfigFor(laneKey);
+  if (reads) return reads.rpm;
+  const override = _publisherKeyConfigs().find((c) => c.key === laneKey);
+  if (override) return override.rpm;
+  return _publisherMaxRpm();
+}
+
+function _laneWindow(laneKey) {
+  const k = laneKey || '';
+  let arr = _laneTimestamps.get(k);
+  if (!arr) { arr = []; _laneTimestamps.set(k, arr); }
+  return arr;
+}
+
+/** Cuántas requests lleva la ventana de esa key (limpia las vencidas). */
+function _laneUsed(laneKey) {
+  const now = Date.now();
+  const k = laneKey || '';
+  const arr = (_laneTimestamps.get(k) || []).filter((t) => now - t < WINDOW_MS);
+  _laneTimestamps.set(k, arr);
+  return arr.length;
+}
+
+/** Espera lugar en la ventana DE ESA KEY. Devuelve false si esperar sería excesivo. */
+async function _acquireSlot(laneKey) {
+  const limit = _laneLimit(laneKey);
   const deadline = Date.now() + MAX_QUEUE_WAIT_MS;
   for (;;) {
     const now = Date.now();
-    _requestTimestamps = _requestTimestamps.filter((t) => now - t < WINDOW_MS);
-    if (_requestTimestamps.length < MAX_RPM) {
-      _requestTimestamps.push(now);
+    const arr = _laneWindow(laneKey).filter((t) => now - t < WINDOW_MS);
+    _laneTimestamps.set(laneKey || '', arr);
+    if (arr.length < limit) {
+      arr.push(now);
       return true;
     }
-    const oldest = _requestTimestamps[0];
+    const oldest = arr[0];
     const waitMs = Math.max(50, WINDOW_MS - (now - oldest) + 25);
     if (now + waitMs > deadline) return false;
     await _sleep(waitMs);
   }
+}
+
+/** Key de consultas con MÁS LUGAR LIBRE en su ventana (o null si no hay pool). */
+function _pickReadsKey() {
+  const configs = _readsKeyConfigs();
+  if (!configs.length) return null;
+  let best = null;
+  let bestFree = -Infinity;
+  for (const c of configs) {
+    const free = c.rpm - _laneUsed(c.key);
+    if (free > bestFree) { bestFree = free; best = c.key; }
+  }
+  return best;
+}
+
+/** Del POOL de keys de un mismo publicista, la que tiene más lugar libre. */
+function _pickPublisherKey(keys) {
+  const list = (Array.isArray(keys) ? keys : [keys]).filter(Boolean);
+  if (!list.length) return null;
+  let best = list[0];
+  let bestFree = -Infinity;
+  for (const k of list) {
+    const free = _laneLimit(k) - _laneUsed(k);
+    if (free > bestFree) { bestFree = free; best = k; }
+  }
+  return best;
 }
 
 // ============================================================
@@ -217,15 +340,34 @@ function _parseRetryAfter(headers) {
  * @param {boolean} [opts.retryable]    si false, no reintenta (operaciones sin idempotencia)
  * @param {string} [opts.username]      jugador objetivo → el resolver decide con qué key firmar
  * @param {string} [opts.apiKey]        key explícita (gana sobre el resolver; para el batch)
+ * @param {boolean} [opts.readOnly]     lectura pura → si iría por la master, puede firmarse
+ *                                      con una key del pool de CONSULTAS (mismo agente)
  */
-async function _request({ method, path, body, label, retryable = true, username = null, apiKey = null }) {
+async function _request({ method, path, body, label, retryable = true, username = null, apiKey = null, readOnly = false }) {
   if (!isEnabled()) {
     logger.error('[girox] GIROX_API_URL / GIROX_API_KEY no configurados');
     return { ok: false, error: 'La plataforma no está configurada. Avisale al soporte.', code: 'not_configured', httpStatus: null };
   }
 
   // Se resuelve UNA vez (no por reintento): la key del dueño no cambia en medio.
-  const keyOverride = apiKey || await _resolveKeyFor(username);
+  let keyOverride = apiKey || await _resolveKeyFor(username);
+
+  // POOL de keys del MISMO publicista: el resolver puede devolver un ARRAY.
+  // Se elige UNA vez por operación, ANTES del loop de reintentos: cambiar de key
+  // entre reintentos del mismo pago no rompería la idempotencia (la reference es
+  // la misma), pero elegir una vez es lo correcto y más simple de razonar.
+  if (Array.isArray(keyOverride)) {
+    keyOverride = _pickPublisherKey(keyOverride);
+  }
+
+  // Lecturas puras SIN key de publicista → firmar con la key de consultas con más
+  // lugar libre. NUNCA reemplaza la key de un publicista (es la única que ve a
+  // SUS jugadores). Sin GIROX_API_KEY_CONSULTAS → master, como siempre.
+  if (readOnly && !keyOverride) {
+    keyOverride = _pickReadsKey();
+  }
+
+  const laneKey = keyOverride || getApiKey();
 
   const url = `${getBaseUrl()}${path}`;
   let lastErr = null;
@@ -237,8 +379,9 @@ async function _request({ method, path, body, label, retryable = true, username 
       await _sleep(wait);
     }
 
-    if (!(await _acquireSlot())) {
-      logger.warn(`[girox] ${label} — rate limit local saturado (${MAX_RPM}/min), abortando`);
+    if (!(await _acquireSlot(laneKey))) {
+      const esConsultas = !!_readsKeyConfigFor(laneKey);
+      logger.warn(`[girox] ${label} — rate limit local saturado (${_laneLimit(laneKey)}/min${esConsultas ? ', key consultas' : ''}), abortando`);
       return { ok: false, error: 'La plataforma está saturada. Reintentá en un minuto.', code: 'rate_limited_local', httpStatus: null };
     }
 
@@ -338,6 +481,70 @@ function _playerBalances(player) {
 }
 
 // ============================================================
+// CACHE CORTO + COALESCING DE LECTURAS (fix del lag nocturno)
+// ============================================================
+// La lectura de jugador (getUserInfoByName / getUserBalance) es el punto más
+// consultado del cliente: poll de saldo de la PWA, guards de bono, status de
+// reembolso… Con muchos usuarios online del mismo publicista, su única key se
+// saturaba y TODO lo de esos usuarios quedaba en cola. Cache de pocos segundos +
+// coalescing (N pedidos simultáneos comparten UNA request) bajan el consumo del
+// cupo sin cambiar lo que ve el usuario.
+//
+// REGLAS DE PLATA (salieron de una revisión adversarial — no aflojarlas):
+//   - Solo se cachean lecturas EXITOSAS (nunca null/errores).
+//   - Tras CADA operación de plata se invalida el cache del usuario
+//     (_invalidatePlayer) Y se registra el ts de invalidación: una lectura que
+//     estaba EN VUELO cuando se acreditó/retiró no puede escribir el saldo
+//     pre-operación después de la invalidación (_maybeCachePlayer compara ts).
+//   - Las decisiones de plata en server.js pasan {fresh:true}: saltean cache y
+//     coalescing (lectura garantizada fresca), pero igual refrescan el cache.
+
+function _playerCacheTtlMs() { return Number(process.env.GIROX_PLAYER_CACHE_MS || 8000); }
+function _statsCacheTtlMs() { return Number(process.env.GIROX_STATS_CACHE_MS || 90000); }
+
+const _playerCache = new Map();        // usernameLower → { data, ts }
+const _playerInflight = new Map();     // usernameLower → Promise (coalescing)
+const _playerInvalidatedAt = new Map(); // usernameLower → ts de la última invalidación
+const _statsCache = new Map();         // usernameLower|from|to → { data, ts }
+
+// Los ts de invalidación se conservan más que la peor lectura en vuelo
+// (timeout 20s + reintentos 2/5/15s ≈ 80s) para que el guard de _maybeCachePlayer
+// nunca pierda contra una request vieja.
+const INVALIDATION_KEEP_MS = 300000;
+
+function _playerKey(username) { return String(username || '').toLowerCase(); }
+
+/** Invalida la lectura cacheada del usuario. Llamar tras CADA operación de plata OK. */
+function _invalidatePlayer(username) {
+  const key = _playerKey(username);
+  _playerCache.delete(key);
+  _playerInvalidatedAt.set(key, Date.now());
+}
+
+/** Cachea SOLO si no hubo una invalidación posterior al inicio de la lectura. */
+function _maybeCachePlayer(key, data, startTs) {
+  const invalidatedAt = _playerInvalidatedAt.get(key) || 0;
+  if (invalidatedAt >= startTs) return;
+  _playerCache.set(key, { data, ts: Date.now() });
+}
+
+// Prune periódico: borra entradas vencidas para que los Maps no crezcan sin tope.
+setInterval(() => {
+  const now = Date.now();
+  const playerTtl = _playerCacheTtlMs();
+  for (const [k, v] of _playerCache) {
+    if (now - v.ts >= playerTtl) _playerCache.delete(k);
+  }
+  const statsTtl = _statsCacheTtlMs();
+  for (const [k, v] of _statsCache) {
+    if (now - v.ts >= statsTtl) _statsCache.delete(k);
+  }
+  for (const [k, ts] of _playerInvalidatedAt) {
+    if (now - ts >= INVALIDATION_KEEP_MS) _playerInvalidatedAt.delete(k);
+  }
+}, 60000).unref();
+
+// ============================================================
 // JUGADORES — alta, consulta, credenciales
 // ============================================================
 
@@ -374,9 +581,44 @@ async function createPlatformUser({ username, password }) {
 
 /**
  * Consulta un jugador (datos + saldo + desglose de rollover). GET /players/{username}
+ *
+ * Cacheada (TTL corto, GIROX_PLAYER_CACHE_MS) y con coalescing: N pedidos
+ * simultáneos del mismo usuario comparten UNA request. Solo se cachea el éxito.
+ *
+ * @param {string} username
+ * @param {{fresh?: boolean}} [opts]  fresh:true = saltea cache Y coalescing
+ *        (lectura garantizada fresca contra girox; igual refresca el cache).
+ *        OBLIGATORIO en decisiones de plata (guards de bono, anti-fantasma).
  * @returns { username, balance, available, wagering, email, active, id } | null si no existe
  */
-async function getUserInfoByName(username) {
+async function getUserInfoByName(username, opts = {}) {
+  const fresh = !!(opts && opts.fresh);
+  const key = _playerKey(username);
+
+  if (!fresh) {
+    const hit = _playerCache.get(key);
+    if (hit && (Date.now() - hit.ts) < _playerCacheTtlMs()) return hit.data;
+    const inflight = _playerInflight.get(key);
+    if (inflight) return inflight;
+  }
+
+  const startTs = Date.now();
+  const fetchPromise = _fetchPlayer(username).then((data) => {
+    if (data) _maybeCachePlayer(key, data, startTs);
+    return data;
+  });
+
+  if (!fresh) {
+    _playerInflight.set(key, fetchPromise);
+    fetchPromise.finally(() => {
+      if (_playerInflight.get(key) === fetchPromise) _playerInflight.delete(key);
+    }).catch(() => {});
+  }
+  return fetchPromise;
+}
+
+/** La lectura real contra la Partner API (sin cache). */
+async function _fetchPlayer(username) {
   const r = await _request({
     method: 'get',
     path: `/players/${encodeURIComponent(String(username))}`,
@@ -405,6 +647,35 @@ async function getUserInfoByName(username) {
     claimable: bal.claimable,
     wagering: bal.wagering,
     createdAt: player.created_at || null
+  };
+}
+
+/**
+ * Lee un jugador con una key EXPLÍCITA: sin cache, sin resolver, sin reintentos.
+ * La usa el panel para validar que una key extra del pool de un publicista VE a
+ * sus jugadores antes de guardarla (una key de otro agente no los ve).
+ * @returns {{ found:boolean, username?:string, balance?:number, error?:string, code?:string }}
+ */
+async function readPlayerWithKey(apiKey, username) {
+  const r = await _request({
+    method: 'get',
+    path: `/players/${encodeURIComponent(String(username))}`,
+    label: `readPlayerWithKey(${username})`,
+    apiKey,
+    retryable: false
+  });
+  if (!r.ok) {
+    if (r.code === 'player_not_found' || r.httpStatus === 404) {
+      return { found: false, code: 'player_not_found' };
+    }
+    return { found: false, error: r.error, code: r.code };
+  }
+  const player = (r.data && r.data.player) || null;
+  if (!player) return { found: false, code: 'no_player' };
+  return {
+    found: true,
+    username: player.username || String(username),
+    balance: player.balance != null ? Number(player.balance) : null
   };
 }
 
@@ -638,6 +909,9 @@ async function depositToUser(username, amount, description = '', reference = nul
 
   if (!r.ok) return { success: false, error: r.error, code: r.code, httpStatus: r.httpStatus };
 
+  // El saldo cambió: la próxima lectura tiene que ir a la plataforma.
+  _invalidatePlayer(username);
+
   const out = _moneyResult(r.data);
   // Caso excepcional documentado: la carga se acreditó pero el bono no.
   const bonusStatus = r.data && r.data.wagering && r.data.wagering.bonus && r.data.wagering.bonus.status;
@@ -679,6 +953,8 @@ async function withdrawFromUser(username, amount, description = '', reference = 
       wagering: (r.body && r.body.wagering) || null
     };
   }
+  // El saldo cambió: la próxima lectura tiene que ir a la plataforma.
+  _invalidatePlayer(username);
   return _moneyResult(r.data);
 }
 
@@ -728,6 +1004,8 @@ async function creditUserBalance(username, amount, reference = null, opts = {}) 
       username
     });
     if (!r.ok) return { success: false, error: r.error, code: r.code, httpStatus: r.httpStatus };
+    // El estado del jugador cambió (bono nuevo): invalidar la lectura cacheada.
+    _invalidatePlayer(username);
     return _moneyResult(r.data);
   }
 
@@ -740,10 +1018,11 @@ async function creditUserBalance(username, amount, reference = null, opts = {}) 
 // ============================================================
 
 /**
+ * @param {{fresh?: boolean}} [opts]  fresh:true = lectura garantizada fresca (decisiones de plata)
  * @returns { success, balance, available, username, wagering } | { success:false, error, code }
  */
-async function getUserBalance(username) {
-  const info = await getUserInfoByName(username);
+async function getUserBalance(username, opts = {}) {
+  const info = await getUserInfoByName(username, opts);
   if (!info) {
     return { success: false, error: 'No se pudo leer el saldo en la plataforma.', code: 'player_not_found' };
   }
@@ -768,10 +1047,10 @@ async function getUserBalance(username) {
  * los 8 call sites que lo usan; el backoff real ya vive en _request, así que acá los
  * intentos extra sólo cubren el caso "player_not_found transitorio".
  */
-async function getUserBalanceWithRetry(username, { maxAttempts = 3, baseDelayMs = 500 } = {}) {
+async function getUserBalanceWithRetry(username, { maxAttempts = 3, baseDelayMs = 500, fresh = false } = {}) {
   let last = null;
   for (let i = 1; i <= maxAttempts; i++) {
-    last = await getUserBalance(username);
+    last = await getUserBalance(username, { fresh });
     if (last.success) return last;
     if (i < maxAttempts) await _sleep(baseDelayMs * Math.pow(2, i - 1));
   }
@@ -841,14 +1120,19 @@ function _statsTotals(t) {
 /**
  * Netwin de UN jugador en un rango. GET /players/{username}/stats
  *
+ * Cacheado (GIROX_STATS_CACHE_MS, default 90s; clave username|from|to). Es seguro:
+ * los rangos que se consultan son períodos CERRADOS → el netwin es estable. Solo se
+ * cachea el éxito. La RECLAMACIÓN de reembolso (paga plata) pasa {fresh:true}.
+ *
  * @param {string} username
  * @param {Date} fromDate
  * @param {Date} toDate
  * @param {string} [label] etiqueta para logs
+ * @param {{fresh?: boolean}} [opts] fresh:true = saltea el cache
  * @returns {{success, netwin, casinoNetwin, sportsNetwin, wagered, payout, betsCount,
  *            playerId, from, to}} | {success:false, error, code}
  */
-async function getPlayerStats(username, fromDate, toDate, label = 'stats') {
+async function getPlayerStats(username, fromDate, toDate, label = 'stats', opts = {}) {
   const from = formatStatsDate(fromDate);
   const to = formatStatsDate(toDate);
   if (!from || !to) {
@@ -861,11 +1145,18 @@ async function getPlayerStats(username, fromDate, toDate, label = 'stats') {
     return { success: false, error: `El rango no puede superar los ${STATS_MAX_DAYS} días.`, code: 'invalid_range' };
   }
 
+  const cacheKey = `${_playerKey(username)}|${from}|${to}`;
+  if (!(opts && opts.fresh)) {
+    const hit = _statsCache.get(cacheKey);
+    if (hit && (Date.now() - hit.ts) < _statsCacheTtlMs()) return hit.data;
+  }
+
   const r = await _request({
     method: 'get',
     path: `/players/${encodeURIComponent(String(username))}/stats?from=${encodeURIComponent(from)}&to=${encodeURIComponent(to)}`,
     label: `${label}(${username}, ${from} → ${to})`,
-    username
+    username,
+    readOnly: true
   });
 
   if (!r.ok) return { success: false, error: r.error, code: r.code, httpStatus: r.httpStatus };
@@ -876,7 +1167,7 @@ async function getPlayerStats(username, fromDate, toDate, label = 'stats') {
   const casino = _statsTotals(cats.casino);
   const sports = _statsTotals(cats.sports);
 
-  return {
+  const out = {
     success: true,
     playerId: d.player && d.player.id != null ? Number(d.player.id) : null,
     username: (d.player && d.player.username) || String(username),
@@ -890,6 +1181,8 @@ async function getPlayerStats(username, fromDate, toDate, label = 'stats') {
     betsCount: totals.betsCount,
     categories: { casino, sports }
   };
+  _statsCache.set(cacheKey, { data: out, ts: Date.now() });
+  return out;
 }
 
 /**
@@ -919,7 +1212,11 @@ async function getPlayersStatsBatch(usernames, fromDate, toDate, label = 'stats-
   // hace UN request por grupo; sin resolver, un solo grupo con la master.
   const groups = new Map(); // keyOverride (null = master) → usernames
   for (const u of list) {
-    const k = await _resolveKeyFor(u);
+    let k = await _resolveKeyFor(u);
+    // POOL de keys del mismo publicista: el resolver puede devolver un ARRAY.
+    // Para agrupar se elige acá la key con más lugar libre (dos usuarios del
+    // mismo pool convergen a la misma key y comparten el request del batch).
+    if (Array.isArray(k)) k = _pickPublisherKey(k);
     const gk = k || '';
     if (!groups.has(gk)) groups.set(gk, []);
     groups.get(gk).push(u);
@@ -933,7 +1230,9 @@ async function getPlayersStatsBatch(usernames, fromDate, toDate, label = 'stats-
       path: '/players/stats/batch',
       body: { usernames: groupList, from, to },
       label: `${label}(${groupList.length} jugadores${gk ? ', key publicista' : ''}, ${from} → ${to})`,
-      apiKey: gk || null
+      apiKey: gk || null,
+      // Lectura pura: el grupo de la master puede ir por una key de consultas.
+      readOnly: !gk
     });
 
     // Si UN grupo falla, falla todo el batch (mismo contrato de antes: el caller
@@ -1020,6 +1319,9 @@ async function claimPendingBonus(username, requirementId = null) {
 
   if (!r.ok) return { success: false, error: r.error, code: r.code, httpStatus: r.httpStatus };
 
+  // El desglose de bonos del jugador cambió: invalidar la lectura cacheada.
+  _invalidatePlayer(username);
+
   const d = r.data || {};
   return {
     success: true,
@@ -1027,6 +1329,42 @@ async function claimPendingBonus(username, requirementId = null) {
     claimed: Array.isArray(d.claimed) ? d.claimed : [],
     wagering: d.wagering || null
   };
+}
+
+// ============================================================
+// DIAGNÓSTICO (radiografía de boot en server.js)
+// ============================================================
+
+/** Cantidad de keys del pool de consultas configuradas. */
+function getReadsKeysCount() {
+  return _readsKeyConfigs().length;
+}
+
+/** Resumen legible del pool de consultas, ej. "2 (techos 90, 30/min)". */
+function getReadsKeysSummary() {
+  const configs = _readsKeyConfigs();
+  if (!configs.length) return '0';
+  return `${configs.length} (techos ${configs.map((c) => c.rpm).join(', ')}/min)`;
+}
+
+/** Cantidad de overrides de rpm por key de publicista (GIROX_PUBLISHER_KEY_RPM). */
+function getPublisherKeyOverridesCount() {
+  return _publisherKeyConfigs().length;
+}
+
+/** Techo local default de las keys de publicista (para la radiografía de boot). */
+function getPublisherMaxRpm() {
+  return _publisherMaxRpm();
+}
+
+/** Techo local de la key master (para la radiografía de boot). */
+function getMasterMaxRpm() {
+  return _masterMaxRpm();
+}
+
+/** TTL vigente del cache de lectura de jugador (para la radiografía de boot). */
+function getPlayerCacheTtlMs() {
+  return _playerCacheTtlMs();
 }
 
 module.exports = {
@@ -1040,6 +1378,7 @@ module.exports = {
   // jugadores
   createPlatformUser,
   getUserInfoByName,
+  readPlayerWithKey,
   checkUserExists,
   ping,
   syncUserToPlatform,
@@ -1063,5 +1402,12 @@ module.exports = {
   // bonos pendientes de reclamar
   claimPendingBonus,
   // no soportado
-  getUserMovements
+  getUserMovements,
+  // diagnóstico (radiografía de boot)
+  getReadsKeysCount,
+  getReadsKeysSummary,
+  getPublisherKeyOverridesCount,
+  getPublisherMaxRpm,
+  getMasterMaxRpm,
+  getPlayerCacheTtlMs
 };
