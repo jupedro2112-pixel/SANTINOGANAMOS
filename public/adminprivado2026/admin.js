@@ -6716,15 +6716,25 @@ async function sendPushNotification(userId, message) {
 
 // Crear elemento de mensaje optimizado
 function createMessageElement(message) {
-    // Fix #3: Mensajes de sistema (ej. cierre de chat) con estilo propio
+    // Fix #3: Mensajes de sistema (ej. cierre de chat) con estilo propio.
+    // Dos variantes (2026-08-19): los INTERNOS (adminOnly:true — el cliente
+    // NUNCA los recibe: cierre de chat, alertas de bonus, sync de clave
+    // fallido, comprobante repetido…) van en VERDE con etiqueta "🔒 INTERNO";
+    // los automáticos que el cliente SÍ recibió quedan naranjas con 🤖 (el 🔒
+    // que llevaban antes era engañoso: parecían internos y el cliente los
+    // había visto). El flag ya viene en el historial y en el socket.
     if (message.type === 'system') {
         const div = document.createElement('div');
-        div.className = 'message system';
+        const isInternal = message.adminOnly === true;
+        div.className = 'message system' + (isInternal ? ' internal' : '');
         div.dataset.messageid = message.id || '';
-        // Mostrar la hora de envío también en los mensajes automáticos (naranja),
-        // para poder corroborar a qué horario se enviaron y controlar demoras.
+        // La hora de envío se muestra en ambos, para controlar demoras.
         const time = formatChatTime(message.timestamp || new Date());
-        div.innerHTML = `<div class="message-content"><span class="icon icon-lock"></span> <span>${escapeHtml(message.content)}</span></div><div class="message-time system-time">${time}</div>`;
+        if (isInternal) {
+            div.innerHTML = `<div class="internal-badge">🔒 INTERNO — el cliente NO lo ve</div><div class="message-content"><span>${escapeHtml(message.content)}</span></div><div class="message-time system-time">${time}</div>`;
+        } else {
+            div.innerHTML = `<div class="message-content"><span class="icon icon-robot"></span> <span>${escapeHtml(message.content)}</span></div><div class="message-time system-time">${time}</div>`;
+        }
         return div;
     }
     
