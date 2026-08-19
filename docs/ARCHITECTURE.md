@@ -133,7 +133,9 @@ modelos); sus migraciones corren únicamente si algo llamara a ese connectDB.
   una key sola reemplaza al par usuario+contraseña de sub-agente que había en JUGAYGANA
   (la jerarquía la define la key). **`hasGiroxKey`** es el espejo booleano SIN
   select:false para que el listado del panel muestre el badge sin traer el secreto —
-  mantenerlo en sincronía en TODOS los caminos que escriben o limpian la key. Los campos
+  mantenerlo en sincronía en TODOS los caminos que escriben o limpian la key.
+  **`giroxApiKeysExtra`** (2026-08-19, `[String]` select:false) = POOL de keys
+  adicionales del MISMO publicista (ver §4.3: N keys = N×60/min). Los campos
   `jugayganaUsername/jugayganaPassword` quedan para revertir. También `influencers[]`
   (lista fija para sub-atribución analítica).
   **⚠️ RUTEO POR DUEÑO (2026-08-05):** la key MASTER NO ve por Partner API a los
@@ -241,20 +243,49 @@ Quedan sólo para poder revertir; se borran más adelante. **No los uses para na
 - ❌ **`jugayganaUserId` como llave de las operaciones de plata.** Todo va por
   `username`. El ID numérico ahora sólo existe para los REPORTES (ver §4.6).
 
-### 4.3 Rate limit — 60 req/min ⚠️ POR INSTANCIA
+### 4.3 Rate limit — 60 req/min **POR API KEY** (2026-08-19) ⚠️ y POR INSTANCIA
 
-La Partner API permite **60 requests por minuto** y devuelve 429 al pasarse.
-`giroxService` tiene un limitador local de ventana deslizante: `GIROX_MAX_RPM`
-(default **55**, margen de seguridad). Si hay que esperar más de 30s por un lugar en
-la ventana, falla rápido con `rate_limited_local` en vez de colgar la request.
+La Partner API permite **60 requests por minuto POR API KEY** (confirmado por su
+soporte; a pedido suben keys puntuales a 180) y devuelve 429 al pasarse. Desde
+2026-08-19 el limitador local de `giroxService` es **por key ("carril")**, no una
+ventana única: la master, cada key de consultas y cada key de publicista esperan
+su propio cupo. Techos locales:
 
-⚠️ **Ese limitador es POR PROCESO.** En AWS EB con N instancias el techo real es
-**N×55/min**, así que el 429 sigue siendo posible. Por eso además se reintenta
-respetando el header `Retry-After`. Si con varias instancias aparecen 429 seguidos,
-**bajar `GIROX_MAX_RPM`** (ej. 30 con 2 instancias), no subirlo.
+- **Master** (o sin key): `GIROX_MAX_RPM` (default 55).
+- **Keys de publicista**: `GIROX_PUBLISHER_MAX_RPM` (default **30** — NO heredan
+  el de la master, que puede tener el límite subido) + overrides por key con
+  `GIROX_PUBLISHER_KEY_RPM=pk_x:90,...`.
+- **Keys de consultas** (`GIROX_API_KEY_CONSULTAS=pk_a:90,pk_b:30`): sufijo
+  `:rpm` propio; sin sufijo → `GIROX_MAX_RPM`. Son keys del MISMO agente que la
+  master; las lecturas puras (`getPlayerStats`, batch del grupo master —
+  `readOnly:true` en `_request`) firman con la que tenga más lugar libre. Nunca
+  reemplazan la key de un publicista (es la única que ve a SUS jugadores).
 
-La misma cuota la comparte el script de migración: mientras corre, producción sigue
-pidiendo saldos, cargas y retiros contra los mismos 60/min.
+Además hay **POOL de keys del MISMO publicista** (`Campaign.giroxApiKeysExtra`):
+el resolver devuelve `[principal, ...extras]` y `_pickPublisherKey` elige la de
+más lugar libre — **UNA vez por operación, antes del loop de reintentos** (la
+reference no cambia entre reintentos). N keys = N×60/min de cupo. Se gestiona
+desde el panel (campo multi-key coma-separado que SUMA al pool + endpoints
+`pool-status`/`pool-remove`, solo admin).
+
+Y hay **cache + coalescing de lecturas** (la causa raíz del lag nocturno era el
+poll de saldo cada 30s × usuarios online del mismo publicista): jugador
+`GIROX_PLAYER_CACHE_MS` (8s), netwin `GIROX_STATS_CACHE_MS` (90s), solo éxitos.
+⚠️ REGLAS DE PLATA: tras cada operación de plata se invalida el cache del
+usuario (con guard anti-race por timestamp contra lecturas en vuelo), y toda
+DECISIÓN de plata pasa `{fresh:true}` (guards bono-sobre-bono, anti-fantasma
+del retiro, claims de reembolso). Las lecturas de display van cacheadas. El
+poll del front bajó a 90s (el socket `balance_updated` sigue instantáneo).
+
+⚠️ **El limitador sigue siendo POR PROCESO.** En AWS EB con N instancias el
+techo real por key es N×techo_local → criterio: **techo local = límite de la
+key en la plataforma ÷ N instancias**. El 429 igual se reintenta respetando
+`Retry-After`. El boot loguea la radiografía `[girox] config:` (a stdout, que
+sí entra en los logs de EB — los warns del limitador también se espejan a
+console desde 2026-08-19).
+
+La misma cuota la comparte el script de migración: mientras corre, producción
+sigue pidiendo saldos, cargas y retiros contra el mismo cupo de la master.
 
 ### 4.4 Idempotencia por `reference` — LA REGLA DE ORO
 
@@ -413,6 +444,15 @@ tenían los 4 clientes viejos.
 | `VIP_WAGER_SCOPE` | `casino` | Qué apostado suma para el nivel (`casino` \| `total`) |
 | `VIP_WAGER_EPOCH` | `2026-07` | Primer mes que se acumula (cuando arrancó 1girox) |
 | `VIP_ACTIVE_DAYS` | `3` | Días de `lastLogin` que definen "activo" para el tick de 30 min |
+| `GIROX_API_KEY_CONSULTAS` | — | Pool de keys SOLO-LECTURA coma-separadas, sufijo `:rpm` opcional (§4.3) |
+| `GIROX_PUBLISHER_MAX_RPM` | `30` | Techo local por instancia de las keys de publicista |
+| `GIROX_PUBLISHER_KEY_RPM` | — | Overrides `pk_x:rpm` por key de publicista puntual |
+| `GIROX_PLAYER_CACHE_MS` | `8000` | TTL del cache de lectura de jugador/saldo |
+| `GIROX_STATS_CACHE_MS` | `90000` | TTL del cache de netwin (status de reembolso) |
+| `LANDING_SIGNUP_MAX_PER_IP_HOUR` | `8` | Límite de altas por landing por IP/hora (§4.10) |
+| `LANDING_SIGNUP_DISABLED` | — | `true` = apaga el alta por landing (410) |
+| `SSM_SKIP_KEYS` | — | Claves que SSM NO pisa (solo entornos clon; `loadSecrets.js`) |
+| `META_PIXEL_ID_2` / `META_CAPI_ACCESS_TOKEN_2` / `META_TEST_EVENT_CODE_2` | — | 2º pixel CAPI del partner de tracking (mismo `event_id`, envío en paralelo) |
 
 Opcionales/afinado: `GIROX_TIMEOUT_MS` (20000) y las `GIROX_MIGRATION_*` del script.
 🪦 `GIROX_ADMIN_*` y `GIROX_AGENT_USER_ID` se fueron con el scraping del panel (#101).
@@ -439,6 +479,25 @@ VIPCARGAS con su JWT, y el cliente nunca más necesita conocer su clave del casi
 - **Auto-reparación**: si 1girox responde `player_not_found` (usuario que el script de
   migración no alcanzó, o creado mientras la migración corría), el backend lo crea al
   vuelo con una contraseña random, actualiza `giroxSyncStatus` y reintenta UNA vez.
+
+### 4.10 Alta por LANDING externa (2026-08-19)
+
+`POST /api/landing/signup` (público, sin auth): una landing en un dominio puente
+(`landing/index.html`, archivo suelto — NO en `public/`) pide SOLO un nombre →
+username único derivado (base saneada + sufijo aleatorio, reglas de 1girox +
+colisión local CI) + PIN de 6 dígitos → se crea en **1girox PRIMERO** (key del
+publicista si la campaña la tiene → `giroxOwnerCampaign`; si no la master; si
+falla, no queda cuenta local huérfana) → `User` con
+`acquisitionSource:'landing'` (valor del enum) y `phoneVerificationPending`
+(el SMS se exige recién al RETIRAR) → responde `{ accessUrl, username,
+password }`. El `accessUrl` es el access-link de un solo uso + `&ir=casino`
+(la PWA abre el casino directo al loguear) y su canje **NO fuerza
+`mustChangePassword`** para cuentas de landing (ya vieron su clave en
+pantalla). Anti-abuso: `landingIpLimiter` por IP/hora + kill-switch
+`LANDING_SIGNUP_DISABLED`. CORS: ese path tiene CORS REFLEJADO (los dominios
+puente rotan) y se saltea el `cors()` estricto global — ver el middleware
+antes del `app.use(cors(...))` en server.js. Conversión: CompleteRegistration
+a Meta CAPI (`signup_landing`) + webhook fb-ads.
 
 ## 5. Flujos principales
 
@@ -642,6 +701,20 @@ VIPCARGAS con su JWT, y el cliente nunca más necesita conocer su clave del casi
 - **Botón CASINO** (`#plataformaBtn` → `VIP.ui.enterCasino()`): login único contra
   1girox. Ver la trampa del pop-up blocker en §4.9. El modal de acceso manual sigue
   existiendo, pero **sólo como camino de respaldo** cuando el SSO falla.
+- **Casino embebido a PANTALLA COMPLETA + widget de soporte** (2026-08-19,
+  `VIP.ui._showCasinoFrame` y asociadas, todo estilos inline en ui.js): el overlay
+  no tiene barra propia (respeta safe-area arriba/abajo en iPhone standalone); una
+  burbuja 🎧 abajo a la derecha (con badge de no leídos por MutationObserver sobre
+  `#chatMessages`) abre un widget flotante anclado a la esquina con acciones
+  rápidas (Depositar → chips de monto, Retirar, Pedir CBU, Ya transferí, Hablar;
+  todo termina como mensaje en el chat del cajero vía
+  `VIP.ui.casinoQuickAction` — no es un bot) y escapes "Casino aparte"/"Salir".
+  ⚠️ El chat real se **MUDA** al widget (placeholders + appendChild de los nodos
+  reales `.chat-container`/`.chat-input-container`; mismos ids/listeners/socket) —
+  `closeCasinoFrame` SIEMPRE desmonta primero o la pantalla principal queda sin
+  chat. El watchdog del iframe se cancela en su `load`. El access-link con
+  `ir=casino` (alta por landing, §4.10) abre el casino directo tras loguear.
+  Poll de saldo: 90s (era 30s; parte del fix del lag, §4.3).
 - Duplicados front/back a mantener sincronizados: mínimo retiro $4.999, bono $5.000,
   `VIP.config.PLATFORM_URL` = `https://1girox.com` (respaldo del SSO; también aparece
   hardcodeada en los mensajes `/sys_deposit*`, `/sys_bonus` y `/sys_welcome` sembrados
