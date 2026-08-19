@@ -4,7 +4,147 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-08-14**
+> **Última actualización: 2026-08-19**
+
+## Sesión 2026-08-19 — Réplica del lote anti-lag + landing + casino widget (bloques A–F)
+
+> Implementación completa del doc de réplica de la repo gemela. Un commit por
+> bloque. Env vars nuevas y acciones del owner al final de la entrada #168.
+
+### 163. (A) giroxService: rate limit POR KEY, pools de keys y caches de lectura
+- **Contexto:** el límite de la Partner API es 60 req/min POR API KEY (confirmado
+  por soporte de 1girox; a pedido lo suben a 180 en keys puntuales). El lag
+  nocturno tenía 2 causas: ventana única de rate limit local para TODAS las keys,
+  y el poll de saldo de la PWA cada 30s saturando la única key del publicista.
+- **Limitador POR KEY** (`_laneTimestamps`): techos master `GIROX_MAX_RPM`,
+  publicistas `GIROX_PUBLISHER_MAX_RPM` (default 30, NO heredan el de la master)
+  + overrides por key `GIROX_PUBLISHER_KEY_RPM` (`pk_x:90`), keys de consultas
+  con sufijo `:rpm`. El warn de saturación dice el techo real del carril.
+- **Pool SOLO-CONSULTAS** (`GIROX_API_KEY_CONSULTAS`, coma-separadas, mismo
+  agente que la master): `getPlayerStats` y el batch (grupo master) marcan
+  `readOnly:true` y firman con la key con más lugar libre. Nunca reemplaza la
+  key de un publicista. Sin la env → todo por la master (deploy seguro).
+- **Pool del MISMO publicista:** el resolver puede devolver un ARRAY de keys →
+  `_pickPublisherKey` elige la de más lugar libre, UNA vez por operación (antes
+  del loop de reintentos; la reference no cambia). Nueva
+  `readPlayerWithKey(apiKey, username)` (sin cache/resolver/reintentos) para
+  que el panel valide keys.
+- **Cache corto + coalescing de `getUserInfoByName`** (`GIROX_PLAYER_CACHE_MS`
+  8s): solo éxitos; invalidación tras CADA operación de plata (deposit/withdraw/
+  bonus/claim) + guard anti-race (`_maybeCachePlayer` compara ts de invalidación
+  vs inicio de lectura — una lectura en vuelo no puede escribir el saldo
+  pre-operación). Prune cada 60s con unref; ts de invalidación viven 300s.
+- **`{fresh:true}` en TODAS las decisiones de plata** (saltea cache y
+  coalescing): guard bono-sobre-bono de `/api/admin/bonus`, gate+guard del
+  welcome code cash, guard del regalo de lote (notif-batch), y el
+  antes/después de la verificación anti-fantasma del retiro
+  (`_deductChipsAtConfirm`). Las lecturas de display NO pasan fresh.
+- **Cache del netwin** (`GIROX_STATS_CACHE_MS` 90s, clave user|from|to): los
+  3 CLAIMS de reembolso (daily/weekly/monthly) pasan `{fresh:true}`; el status
+  va cacheado (períodos cerrados → netwin estable).
+- **Visibilidad:** warns/errors de giroxService espejados a `console` (el
+  winston solo escribe archivos que EB no ve), radiografía `[girox] config:` en
+  el boot, `[smsService] OK → SNS MessageId=…` (separa "no se envió" de "no se
+  entregó" — el límite de gasto de SMS de SNS descarta en silencio).
+
+### 164. (B) Pool de keys por publicista: modelo + resolver + panel
+- `Campaign.giroxApiKeysExtra` (`[String]`, select:false). El resolver de
+  server.js selecciona `+giroxApiKey +giroxApiKeysExtra` y devuelve el array
+  `[principal, ...extras]` si hay pool; `_giroxKeyCache.clear()` al cambiar
+  keys desde el panel (el pool nuevo pega al instante).
+- `_parsePublisherKeys(rawKey, code)`: coma-separadas; valida `pk_` y que cada
+  key VEA a un jugador muestra de la campaña (`readPlayerWithKey`). TOLERANTE:
+  las malas van a `skipped` (enmascaradas) sin rechazar a las demás.
+- POST campaigns: `valid[0]` principal + resto extras. PUT: las keys pegadas se
+  **SUMAN** al pool existente (dedup) — la guardada puede ser la única copia.
+  `clearJugayganaCreds` limpia key + extras + hasGiroxKey.
+- Endpoints solo-admin: `GET :code/pool-status` (prueba cada key contra un
+  jugador real, `sees:null` si no hay jugadores) y `POST :code/pool-remove`
+  `{index}` 1-based (quitar la última → vuelve a la master).
+- Panel: campo multi-key (maxlength 600), texto de ayuda del pool, botón
+  "🔍 Estado del pool" con 🗑 por fila (confirm), aviso de keys salteadas.
+- ⚠️ **ORDEN de deploy:** primero el código, DESPUÉS pegar keys coma-separadas
+  (el back viejo guardaría todo el string como UNA key inválida).
+
+### 165. (C) Alta por LANDING externa (solo-nombre, sin SMS)
+- `POST /api/landing/signup` (público): nombre 2-60 + campaña activa →
+  username único (`_sanitizeUsernameBase` NFD/minúsculas/[a-z0-9]/máx 12 +
+  sufijo `crypto.randomInt`, 12 intentos, reglas de 1girox + colisión local CI),
+  PIN de 6 dígitos. **1girox PRIMERO** (key del publicista si la campaña la
+  tiene → `giroxOwnerCampaign`; si no master) — si falla, no queda cuenta local
+  huérfana. User con `acquisitionSource:'landing'` (**agregado al enum** — sin
+  eso, 500 por ValidationError), `phoneVerificationPending:true` (el SMS se
+  exige recién al retirar), UTM/fbc/fbp/landingUrl/IP/UA. CompleteRegistration
+  a Meta CAPI + webhook fb-ads. Respuesta: `{ accessUrl (+&ir=casino),
+  username, password }`. Errores con stack a stdout.
+- Anti-abuso: `landingIpLimiter` (`LANDING_SIGNUP_MAX_PER_IP_HOUR` default 8,
+  Redis compartido entre instancias) + kill-switch `LANDING_SIGNUP_DISABLED`.
+- CORS reflejado SOLO para ese endpoint (dominios puente rotan); preflight 204;
+  el `cors()` global estricto se saltea para ese path (si no, corsOriginFn lo
+  rechazaría). Sin Allow-Credentials.
+- El canje del access-link ya NO fuerza `mustChangePassword` si
+  `acquisitionSource === 'landing'` (ya vieron su clave en pantalla); las
+  cuentas creadas por agente siguen forzando el cambio. Single-use atómico.
+- `landing/index.html` (suelto, NO en public/): banner de bono (⚠️ poner la
+  oferta REAL — cloaking = baneo), form de nombre, pantalla de credenciales,
+  popup de enganche (salida o 12s, una vez), `?api=` para pruebas,
+  `?p=`/`?campaign=`/path como código de campaña, fbc de cookie o fbclid.
+
+### 166. (D) Front PWA: casino pantalla completa + widget flotante + poll 90s
+- Overlay del casino SIN barra superior (se ve tal cual el sitio del casino);
+  safe-area arriba y abajo (iPhone standalone). Al `load` del iframe se cancela
+  el watchdog (el aviso "¿no termina de cargar?" tapaba el casino funcionando).
+- Burbuja 🎧 (abajo derecha) con badge de no leídos (MutationObserver sobre
+  `#chatMessages`, cuenta solo con casino abierto y widget cerrado).
+- Widget flotante anclado a la esquina (el juego sigue visible): header verde
+  "Soporte Cargas 1Girox · EN LÍNEA", botones "💰 Quiero Depositar" (despliega
+  chips $2.000/$5.000/$10.000/$20.000) y "💸 Solicitar Retiro", fila "📋 Pedir
+  CBU · ✅ Ya transferí · 💬 Hablar", escapes "↗ Casino aparte · 🚪 Salir".
+- El chat real se **MUDA** al widget (placeholders + appendChild de los nodos
+  reales — mismos ids/listeners/socket; el agente no ve cambios; cero backend).
+  Unmount restaura topbar/min-height y devuelve los nodos; `closeCasinoFrame`
+  SIEMPRE desmonta primero.
+- Acciones rápidas `VIP.ui.casinoQuickAction` → mensajes al chat del cajero
+  (no es un bot; el SMS del retiro se exige recién al procesarlo).
+- auth.js: `ir=casino` del access-link (leído ANTES de limpiar la URL) → tras
+  loguear abre el casino directo.
+- Poll de saldo 30s → 90s (mitad-front del fix del lag; el socket
+  `balance_updated` sigue instantáneo).
+
+### 167. (E) `SSM_SKIP_KEYS`: entorno CLON con su propia DB/URL
+- `loadSecretsFromSSM` respeta `SSM_SKIP_KEYS` (nombres coma-separados que NO
+  se sobreescriben desde SSM) → un clon que comparte el SSM_PATH de producción
+  setea su `MONGODB_URI`/`PUBLIC_BASE_URL` propias. El log dice cuántas cargó y
+  cuáles salteó. Producción sin la env → idéntico. ⚠️ Las keys de la
+  plataforma siguen compartidas: la plata del clon pega a la plataforma REAL.
+
+### 168. (F) Meta CAPI: 2º pixel opcional (partner de tracking)
+- `_capiDestinations()` en cada envío: propio + partner si están
+  `META_PIXEL_ID_2`/`META_CAPI_ACCESS_TOKEN_2` (+`META_TEST_EVENT_CODE_2`).
+  `sendEvent` manda el MISMO evento (mismo `event_id`) a todos los destinos en
+  paralelo; un fallo no afecta al otro. Sin env `_2` → idéntico a antes.
+  Boot: `[MetaCAPI] pixels: propio=OK · partner(2º)=OK 123456…`.
+- **ENV VARS NUEVAS (todas opcionales):** `GIROX_API_KEY_CONSULTAS`,
+  `GIROX_PUBLISHER_MAX_RPM` (30), `GIROX_PUBLISHER_KEY_RPM`,
+  `GIROX_PLAYER_CACHE_MS` (8000), `GIROX_STATS_CACHE_MS` (90000),
+  `LANDING_SIGNUP_MAX_PER_IP_HOUR` (8), `LANDING_SIGNUP_DISABLED`,
+  `SSM_SKIP_KEYS`, `META_PIXEL_ID_2`/`META_CAPI_ACCESS_TOKEN_2`/
+  `META_TEST_EVENT_CODE_2`. Criterio de techos: límite de la key en la
+  plataforma ÷ N instancias (valores propios de ESTE entorno, no los del
+  original).
+- **ACCIONES DEL OWNER post-deploy:** (1) crear 1-2 keys de consultas (MISMO
+  agente que la master) y cargarlas en SSM; (2) para publicistas gigantes,
+  generar keys extra desde su panel y pegarlas coma-separadas DESPUÉS de
+  deployar; (3) subir `landing/index.html` al dominio puente con su `API_BASE`
+  y la oferta real en `BONUS_BIG/SUB`; (4) si los SMS "no llegan" pero el log
+  dice `MessageId=…`, revisar el límite de gasto de SMS en SNS; (5) cuando el
+  partner mande pixel+token, cargar las env `_2` y verificar el boot.
+- **Validado:** `node --check` en todos los JS tocados. SW PWA a **v99**,
+  admin-sw a **v33**. PROBAR post-deploy: boot con `[girox] config:` y
+  `[MetaCAPI] pixels:`; carga → saldo instantáneo; retiro descuenta y
+  confirma; campaña con 2 keys (una mala) → guarda y avisa; landing con
+  `?p=CODIGO` → usuario+PIN → cae logueado directo al casino sin cambio de
+  clave; widget 🎧 → "$5.000" llega a la bandeja; iPhone: nada bajo el notch.
 
 ## Sesión 2026-08-14
 
