@@ -901,6 +901,47 @@ VIP.ui._casinoOpening = false;
  */
 VIP.ui._casinoOpen = false;
 
+/**
+ * Pide el link SSO al backend con TIMEOUT (AbortController, default 20s).
+ *
+ * Sin timeout, un fetch colgado en 4G dejaba `_casinoOpening` en true por
+ * minutos → en ese lapso el botón CASINO no hacía NADA (el "toco y no entra,
+ * recién al segundo toque abre" reportado por los jugadores).
+ *
+ * @returns {ok:true, url} | {ok:false, error, retryable}
+ *   `retryable` solo con 5xx / timeout / red caída — un 4xx (bloqueado, límite
+ *   de intentos) no cambia por reintentar.
+ */
+VIP.ui._fetchCasinoSession = async function(timeoutMs) {
+  const ms = Number(timeoutMs) || 20000;
+  let controller = null;
+  let timer = null;
+  if (typeof AbortController !== 'undefined') {
+    controller = new AbortController();
+    timer = setTimeout(function () { controller.abort(); }, ms);
+  }
+  try {
+    const response = await fetch(`${VIP.config.API_URL}/api/platform/session`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${VIP.state.currentToken}`
+      },
+      signal: controller ? controller.signal : undefined
+    });
+    const data = await response.json().catch(function () { return {}; });
+    if (response.ok && data.success && data.redirectUrl) {
+      return { ok: true, url: data.redirectUrl };
+    }
+    return { ok: false, error: data.error || null, retryable: response.status >= 500 };
+  } catch (e) {
+    // Timeout (abort) o red caída: reintentable.
+    return { ok: false, error: null, retryable: true };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
+
 VIP.ui.enterCasino = async function() {
   if (VIP.ui._casinoOpening) return; // anti doble-click
   VIP.ui._casinoOpening = true;
@@ -909,18 +950,29 @@ VIP.ui.enterCasino = async function() {
   VIP.ui._showCasinoFrame();   // recuadro visible YA, con "cargando"
 
   try {
-    const response = await fetch(`${VIP.config.API_URL}/api/platform/session`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${VIP.state.currentToken}`
+    // Hasta 3 intentos ante fallas transitorias (saturación momentánea del
+    // carril de la plataforma, parpadeo de red móvil): antes el "reintento"
+    // era el propio jugador tocando de nuevo.
+    const waits = [0, 1500, 3000];
+    let last = null;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (!VIP.ui._casinoOpen) return; // salió del casino mientras cargaba
+      if (attempt > 0) {
+        const status = document.getElementById('casinoFrameStatus');
+        if (status) status.textContent = '🔄 Reintentando… (' + (attempt + 1) + '/3)';
+        await new Promise(function (r) { setTimeout(r, waits[attempt]); });
+        if (!VIP.ui._casinoOpen) return; // salió durante la espera
       }
-    });
-    const data = await response.json();
+      last = await VIP.ui._fetchCasinoSession(20000);
+      if (last.ok || !last.retryable) break;
+    }
 
-    if (response.ok && data.success && data.redirectUrl) {
+    if (last && last.ok) {
+      // Si cerró el overlay durante el fetch, NO arrancar el casino oculto
+      // (quedaría sonando y consumiendo datos de fondo).
+      if (!VIP.ui._casinoOpen) return;
       const frame = document.getElementById('casinoFrame');
-      if (frame) frame.src = data.redirectUrl;
+      if (frame) frame.src = last.url;
 
       // VIGILANTE: el `load` del iframe dispara aunque la app de adentro se quede
       // colgada. El caso típico es el BLOQUEO DE COOKIES DE TERCEROS: el casino
@@ -936,9 +988,8 @@ VIP.ui.enterCasino = async function() {
       return;
     }
 
-    VIP.ui._casinoFrameError(data.error || 'No pudimos abrirte el casino en este momento.');
-  } catch (error) {
-    VIP.ui._casinoFrameError('Sin conexión. Revisá tu internet e intentá de nuevo.');
+    VIP.ui._casinoFrameError((last && last.error) ||
+      'No pudimos abrirte el casino. Revisá tu internet y tocá Reintentar.');
   } finally {
     VIP.ui._casinoOpening = false;
   }
@@ -970,33 +1021,33 @@ VIP.ui.openCasinoInTab = async function() {
     }
   } catch (e) { win = null; }
 
-  try {
-    const response = await fetch(`${VIP.config.API_URL}/api/platform/session`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${VIP.state.currentToken}`
+  // Mismo helper con timeout que el flujo embebido, con 1 reintento si la
+  // falla es transitoria: la pestaña placeholder ya está abierta DENTRO del
+  // gesto del usuario, así que reintentar el fetch no molesta al pop-up blocker.
+  let res = await VIP.ui._fetchCasinoSession(20000);
+  if (!res.ok && res.retryable) {
+    try {
+      if (win && !win.closed && win.document && win.document.body) {
+        win.document.body.textContent = '🔄 Reintentando…';
       }
-    });
-    const data = await response.json();
+    } catch (e) { /* la pestaña puede ser de otro origen ya: ignorar */ }
+    await new Promise(function (r) { setTimeout(r, 1500); });
+    res = await VIP.ui._fetchCasinoSession(20000);
+  }
 
-    if (response.ok && data.success && data.redirectUrl) {
-      if (win && !win.closed) {
-        win.location.href = data.redirectUrl;
-      } else {
-        // Pop-up bloqueado → se navega en la pestaña actual.
-        window.location.href = data.redirectUrl;
-        return;
-      }
-      VIP.ui.closeCasinoFrame();
+  if (res.ok) {
+    if (win && !win.closed) {
+      win.location.href = res.url;
+    } else {
+      // Pop-up bloqueado → se navega en la pestaña actual.
+      window.location.href = res.url;
       return;
     }
-    if (win && !win.closed) win.close();
-    VIP.ui.showToast(data.error || 'No pudimos abrirte el casino.', 'error');
-  } catch (e) {
-    if (win && !win.closed) win.close();
-    VIP.ui.showToast('Sin conexión. Intentá de nuevo.', 'error');
+    VIP.ui.closeCasinoFrame();
+    return;
   }
+  if (win && !win.closed) win.close();
+  VIP.ui.showToast(res.error || 'No pudimos abrirte el casino. Revisá tu internet e intentá de nuevo.', 'error');
 };
 
 /** El casino no terminó de cargar dentro del recuadro: se ofrece abrirlo aparte. */
