@@ -6,6 +6,28 @@
 >
 > **Última actualización: 2026-08-19**
 
+## Sesión 2026-08-19 (3ª tanda) — CAUSA RAÍZ del botón CASINO que "carga y falla"
+
+### 172. iframe del casino: `src=''` navegaba a la PROPIA PWA (load espurio)
+- **Síntoma:** tocar el casino, empieza a cargar, recuadro vacío / vuelta al
+  chat, y a la 2ª quizás entra — AUN con el reintento automático de #169.
+- **Causa (verificada en vivo en el original, réplica de su #200):** el reset
+  al abrir y el cierre "limpiaban" el iframe con `frame.src = ''` — un src
+  VACÍO navega el iframe a la URL BASE (la propia PWA). Con
+  `X-Frame-Options: DENY` el contenido se bloquea PERO el `load` dispara
+  igual, y el guard `if (!frame.src)` no lo filtraba (la PROPIEDAD `.src` con
+  atributo '' devuelve la URL resuelta, truthy) → escondía el "🎰 Entrando al
+  casino…" ANTES de que llegara el link SSO. Carrera: el link tarda 2-4s, la
+  carga espuria <1s; si el link pierde → pantalla rota; a la 2ª gana y entra.
+- **Fix (3 lugares en ui.js):** reset al abrir y `closeCasinoFrame` usan
+  `frame.src = 'about:blank'` (NUNCA ''); el guard del listener de `load` lee
+  el ATRIBUTO: `const src = frame.getAttribute('src'); if (!src || src ===
+  'about:blank') return;` — solo cuenta el load del casino real. El reintento
+  automático de #169 queda como red de seguridad para fallas reales.
+- **Validado:** `node --check` OK. SW PWA a **v101**. Solo front. PROBAR:
+  botón CASINO repetidas veces con red lenta → el "Entrando…" queda visible
+  hasta que el casino REAL carga; nunca más recuadro vacío.
+
 ## Sesión 2026-08-19 (2ª tanda) — Solo front: SSO con retry, línea blanca iOS, internos en verde
 
 ### 169. Botón CASINO: reintento automático del link SSO + timeout (ui.js)
