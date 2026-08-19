@@ -307,7 +307,12 @@ VIP.ui = (function () {
         if (VIP.state.balanceCheckInterval) {
             clearInterval(VIP.state.balanceCheckInterval);
         }
-        VIP.state.balanceCheckInterval = setInterval(syncBalance, 30000);
+        // 90s (era 30s): el saldo igual se refresca al instante por socket
+        // (balance_updated) en cargas/retiros/bonos y al cerrar el casino; el
+        // poll solo cubre cambios por juego mientras el cliente mira la PWA sin
+        // jugar. Es la mitad-front del fix del lag (cada poll gasta una request
+        // del cupo de la key de 1girox del publicista).
+        VIP.state.balanceCheckInterval = setInterval(syncBalance, 90000);
     }
 
     function stopBalancePolling() {
@@ -1022,61 +1027,152 @@ VIP.ui._casinoFrameStuck = function() {
   if (frame) frame.style.display = 'block';
 };
 
-/** Crea (una sola vez) y muestra el recuadro del casino. */
+/**
+ * Crea (una sola vez) y muestra el recuadro del casino.
+ *
+ * PANTALLA COMPLETA (owner 2026-08-19): el casino embebido se ve TAL CUAL el
+ * sitio del casino — sin barra propia arriba. El chrome vive en una burbuja de
+ * soporte 🎧 (abajo a la derecha) que abre un WIDGET flotante estilo "chat de
+ * soporte" anclado a la esquina: acciones rápidas (depositar/retirar/CBU/
+ * comprobante) + el chat REAL de la app mudado adentro (mismos nodos, mismos
+ * listeners, mismo socket — el agente lo ve por su bandeja de siempre).
+ */
 VIP.ui._showCasinoFrame = function() {
   let overlay = document.getElementById('casinoOverlay');
 
   if (!overlay) {
+    const MARCA = 'Cargas 1Girox';
     overlay = document.createElement('div');
     overlay.id = 'casinoOverlay';
     // iPhone standalone (viewport-fit=cover + status bar translúcida): el
     // viewport ocupa también el notch y la zona del home indicator. El resto
     // del front compensa con env(safe-area-inset-*) en los CSS; este overlay
-    // se arma inline, así que compensa acá: padding-bottom para que el iframe
-    // termine antes del home indicator (esa franja queda del color del
-    // overlay, no blanca) y padding-top en la barra para arrancar debajo del
-    // reloj. En navegador normal env() vale 0 → cero cambio.
+    // se arma inline, así que compensa acá (el iframe termina antes del home
+    // indicator y arranca debajo del reloj; esas franjas quedan del color del
+    // overlay, no blancas). En navegador normal env() vale 0 → cero cambio.
     overlay.style.cssText =
       'position:fixed;inset:0;z-index:99999;background:#0d0d1a;display:flex;flex-direction:column;' +
-      'padding-bottom:env(safe-area-inset-bottom,0px);';
+      'padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px);';
     overlay.innerHTML =
-      '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;' +
-      'padding:8px 12px;padding-top:calc(8px + env(safe-area-inset-top,0px));' +
-      'background:#12101a;border-bottom:1px solid rgba(212,175,55,0.25);' +
-      'flex:0 0 auto;">' +
-        '<span style="color:#d4af37;font-weight:800;font-size:15px;">🎰 CASINO</span>' +
-        '<div style="display:flex;gap:8px;align-items:center;">' +
-          // Escape SIEMPRE visible: si el casino no carga embebido (cookies de
-          // terceros bloqueadas), el jugador no queda atrapado mirando un spinner.
-          '<button type="button" onclick="VIP.ui.openCasinoInTab()" ' +
-            'style="background:rgba(212,175,55,0.15);color:#d4af37;border:1px solid rgba(212,175,55,0.4);' +
-            'border-radius:20px;padding:6px 14px;font-size:13px;font-weight:700;cursor:pointer;">' +
-            '↗ Abrir aparte</button>' +
-          '<button type="button" onclick="VIP.ui.closeCasinoFrame()" ' +
-            'style="background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.2);' +
-            'border-radius:20px;padding:6px 14px;font-size:13px;font-weight:700;cursor:pointer;">' +
-            '← Volver a Chat de cargas</button>' +
-        '</div>' +
-      '</div>' +
       '<div id="casinoFrameStatus" style="flex:1;display:flex;flex-direction:column;gap:14px;' +
         'align-items:center;justify-content:center;color:#d4af37;font-size:16px;font-weight:700;' +
         'text-align:center;padding:20px;">🎰 Entrando al casino…</div>' +
       // `allow` habilita pantalla completa y sonido dentro de los juegos.
       '<iframe id="casinoFrame" title="Casino" style="flex:1;width:100%;border:0;display:none;" ' +
-        'allow="autoplay; fullscreen; payment"></iframe>';
+        'allow="autoplay; fullscreen; payment"></iframe>' +
+
+      // ── Burbuja de soporte (abre/cierra el widget) ──
+      '<button type="button" id="casinoSupportBubble" onclick="VIP.ui.toggleCasinoChat()" ' +
+        'style="position:absolute;right:16px;bottom:calc(18px + env(safe-area-inset-bottom,0px));' +
+        'width:60px;height:60px;border-radius:50%;border:none;cursor:pointer;z-index:6;' +
+        'background:linear-gradient(135deg,#00a844,#00e676);color:#fff;font-size:26px;' +
+        'box-shadow:0 6px 22px rgba(0,200,83,0.55);">🎧' +
+        '<span id="casinoChatBadge" style="display:none;position:absolute;top:-3px;right:-3px;' +
+          'background:#ff3b30;color:#fff;font-size:11px;font-weight:800;min-width:19px;height:19px;' +
+          'border-radius:10px;line-height:19px;padding:0 4px;box-shadow:0 2px 6px rgba(0,0,0,0.4);"></span>' +
+      '</button>' +
+
+      // ── Widget flotante (panel anclado a la esquina; el juego sigue visible) ──
+      '<div id="casinoChatDrawer" style="display:none;position:absolute;right:16px;' +
+        'bottom:calc(88px + env(safe-area-inset-bottom,0px));width:min(380px,calc(100vw - 24px));' +
+        'height:min(600px,72vh);flex-direction:column;background:#0d0d1a;' +
+        'border:1px solid rgba(212,175,55,0.45);border-radius:16px;overflow:hidden;' +
+        'box-shadow:0 18px 60px rgba(0,0,0,0.7);z-index:7;">' +
+
+        // 1. Header verde
+        '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;flex:0 0 auto;' +
+          'background:linear-gradient(135deg,#00933c,#00c853);">' +
+          '<span style="width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.2);' +
+            'display:flex;align-items:center;justify-content:center;font-size:19px;flex:0 0 auto;">🎧</span>' +
+          '<div style="flex:1;min-width:0;">' +
+            '<div style="color:#fff;font-weight:800;font-size:14px;">Soporte ' + MARCA + '</div>' +
+            '<div style="color:#d8ffe9;font-size:11px;font-weight:700;">' +
+              '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#5cff9d;' +
+              'box-shadow:0 0 6px #5cff9d;margin-right:4px;"></span>EN LÍNEA</div>' +
+          '</div>' +
+          '<button type="button" onclick="VIP.ui.toggleCasinoChat()" ' +
+            'style="background:rgba(255,255,255,0.18);color:#fff;border:none;width:30px;height:30px;' +
+            'border-radius:50%;font-size:15px;cursor:pointer;flex:0 0 auto;">✕</button>' +
+        '</div>' +
+
+        // 2. Acciones principales
+        '<div style="display:flex;gap:8px;padding:10px 10px 0;flex:0 0 auto;">' +
+          '<button type="button" onclick="VIP.ui.casinoQuickAction(\'cargar-toggle\')" ' +
+            'style="flex:1;background:linear-gradient(135deg,#00a844,#00e676);color:#04240f;border:none;' +
+            'padding:11px 6px;border-radius:11px;font-weight:900;font-size:13px;cursor:pointer;">💰 Quiero Depositar</button>' +
+          '<button type="button" onclick="VIP.ui.casinoQuickAction(\'retirar\')" ' +
+            'style="flex:1;background:linear-gradient(135deg,#d4af37,#ffd700);color:#241c00;border:none;' +
+            'padding:11px 6px;border-radius:11px;font-weight:900;font-size:13px;cursor:pointer;">💸 Solicitar Retiro</button>' +
+        '</div>' +
+
+        // 3. Sub-fila de montos (oculta hasta tocar Depositar)
+        '<div id="casinoAmountRow" style="display:none;gap:6px;padding:8px 10px 0;flex:0 0 auto;flex-wrap:wrap;">' +
+          [2000, 5000, 10000, 20000].map(function (m) {
+            return '<button type="button" onclick="VIP.ui.casinoQuickAction(\'cargar\',' + m + ')" ' +
+              'style="flex:1;min-width:70px;background:rgba(0,230,118,0.12);color:#5cff9d;' +
+              'border:1px solid rgba(0,230,118,0.45);padding:9px 4px;border-radius:9px;' +
+              'font-weight:800;font-size:13px;cursor:pointer;">$' + m.toLocaleString('es-AR') + '</button>';
+          }).join('') +
+        '</div>' +
+
+        // 4. Fila chica de chips (scroll horizontal)
+        '<div style="display:flex;gap:6px;padding:8px 10px;overflow-x:auto;flex:0 0 auto;' +
+          '-webkit-overflow-scrolling:touch;">' +
+          '<button type="button" onclick="VIP.ui.casinoQuickAction(\'cbu\')" ' +
+            'style="background:rgba(255,255,255,0.07);color:#ddd;border:1px solid rgba(255,255,255,0.18);' +
+            'padding:7px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">📋 Pedir CBU</button>' +
+          '<button type="button" onclick="VIP.ui.casinoQuickAction(\'comprobante\')" ' +
+            'style="background:rgba(255,255,255,0.07);color:#ddd;border:1px solid rgba(255,255,255,0.18);' +
+            'padding:7px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">✅ Ya transferí</button>' +
+          '<button type="button" onclick="VIP.ui.casinoQuickAction(\'escribir\')" ' +
+            'style="background:rgba(255,255,255,0.07);color:#ddd;border:1px solid rgba(255,255,255,0.18);' +
+            'padding:7px 12px;border-radius:16px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">💬 Hablar</button>' +
+        '</div>' +
+
+        // 5. Escapes discretos
+        '<div style="display:flex;gap:16px;padding:0 12px 8px;flex:0 0 auto;">' +
+          '<a href="javascript:void(0)" onclick="VIP.ui.openCasinoInTab()" ' +
+            'style="color:#8a8aa0;font-size:11px;text-decoration:underline;">↗ Casino aparte</a>' +
+          '<a href="javascript:void(0)" onclick="VIP.ui.closeCasinoFrame()" ' +
+            'style="color:#8a8aa0;font-size:11px;text-decoration:underline;">🚪 Salir del casino</a>' +
+        '</div>' +
+
+        // 6. Acá se MUDA el chat real (VIP.ui._casinoChatMount)
+        '<div id="casinoChatDrawerBody" style="flex:1;min-height:0;display:flex;flex-direction:column;"></div>' +
+      '</div>';
     document.body.appendChild(overlay);
 
-    // Cuando el casino termina de cargar, se esconde el "cargando" y se muestra el juego.
+    // Cuando el casino termina de cargar, se esconde el "cargando", se muestra
+    // el juego y SE CANCELA el vigilante: sin esto, el aviso "¿el casino no
+    // termina de cargar?" aparecía ENCIMA del casino ya funcionando.
     const frame = overlay.querySelector('#casinoFrame');
     frame.addEventListener('load', function() {
       if (!frame.src) return; // el load inicial del iframe vacío no cuenta
       const status = document.getElementById('casinoFrameStatus');
       if (status) status.style.display = 'none';
       frame.style.display = 'block';
-      // Ojo: este `load` sólo dice que el HTML llegó, NO que la app de adentro
-      // haya podido iniciar sesión. Por eso el vigilante NO se cancela acá — si
-      // la app se cuelga por cookies bloqueadas, igual va a avisar a los 15s.
+      clearTimeout(VIP.ui._casinoWatchdog);
     });
+
+    // Badge de NO LEÍDOS: cuenta los mensajes que llegan al chat mientras el
+    // casino está abierto Y el widget cerrado. Se crea una sola vez.
+    VIP.ui._casinoUnread = 0;
+    const chatMessages = document.getElementById('chatMessages');
+    if (chatMessages && !VIP.ui._casinoChatObserver) {
+      VIP.ui._casinoChatObserver = new MutationObserver(function (mutations) {
+        if (!VIP.ui._casinoOpen || VIP.ui._casinoChatOpen) return;
+        let added = 0;
+        for (const m of mutations) added += (m.addedNodes ? m.addedNodes.length : 0);
+        if (!added) return;
+        VIP.ui._casinoUnread += added;
+        const badge = document.getElementById('casinoChatBadge');
+        if (badge) {
+          badge.textContent = VIP.ui._casinoUnread > 9 ? '9+' : String(VIP.ui._casinoUnread);
+          badge.style.display = 'block';
+        }
+      });
+      VIP.ui._casinoChatObserver.observe(chatMessages, { childList: true });
+    }
   }
 
   // Reset al abrir (por si venía de un intento anterior que falló).
@@ -1084,6 +1180,9 @@ VIP.ui._showCasinoFrame = function() {
   const status = overlay.querySelector('#casinoFrameStatus');
   if (frame) { frame.src = ''; frame.style.display = 'none'; }
   if (status) { status.style.display = 'flex'; status.textContent = '🎰 Entrando al casino…'; }
+  VIP.ui._casinoUnread = 0;
+  const badge = overlay.querySelector('#casinoChatBadge');
+  if (badge) { badge.style.display = 'none'; badge.textContent = ''; }
 
   overlay.style.display = 'flex';
   // Bloquea el scroll del fondo mientras el casino está abierto.
@@ -1091,11 +1190,141 @@ VIP.ui._showCasinoFrame = function() {
   VIP.ui._casinoOpen = true;
 };
 
-/** Cierra el recuadro y vuelve a VIPCARGAS. */
+// ── Widget de soporte: abrir/cerrar y mudanza del chat real ──
+
+VIP.ui._casinoChatOpen = false;
+
+VIP.ui.toggleCasinoChat = function() {
+  if (VIP.ui._casinoChatOpen) VIP.ui._casinoChatUnmount();
+  else VIP.ui._casinoChatMount();
+};
+
+/**
+ * MUDA (no copia) el chat real al widget: inserta placeholders invisibles donde
+ * están .chat-container y .chat-input-container y mueve los nodos REALES adentro
+ * del drawer. Conservan ids, listeners y socket → es EL MISMO chat; el agente lo
+ * ve por su bandeja de siempre, cero cambios de backend/panel.
+ */
+VIP.ui._casinoChatMount = function() {
+  const drawer = document.getElementById('casinoChatDrawer');
+  const body = document.getElementById('casinoChatDrawerBody');
+  const chatCont = document.querySelector('.chat-container');
+  const inputCont = document.querySelector('.chat-input-container');
+  if (!drawer || !body || !chatCont || !inputCont) return;
+
+  // Placeholders exactos para devolver los nodos a su lugar al desmontar.
+  const ph = function () {
+    const s = document.createElement('span');
+    s.style.display = 'none';
+    return s;
+  };
+  VIP.ui._casinoChatPh1 = ph();
+  VIP.ui._casinoChatPh2 = ph();
+  chatCont.parentNode.insertBefore(VIP.ui._casinoChatPh1, chatCont);
+  inputCont.parentNode.insertBefore(VIP.ui._casinoChatPh2, inputCont);
+  body.appendChild(chatCont);
+  body.appendChild(inputCont);
+
+  // Compactación: el widget ya tiene título propio → se oculta la cabecera del
+  // chat, y se pisa el min-height del contenedor (guardando el valor previo).
+  const topbar = chatCont.querySelector('.chat-topbar');
+  if (topbar) { VIP.ui._casinoChatTopbarDisplay = topbar.style.display; topbar.style.display = 'none'; }
+  VIP.ui._casinoChatMinHeight = chatCont.style.minHeight;
+  chatCont.style.minHeight = '0';
+
+  drawer.style.display = 'flex';
+  VIP.ui._casinoChatOpen = true;
+
+  // Badge a cero y scroll al fondo (tras el reflow del appendChild).
+  VIP.ui._casinoUnread = 0;
+  const badge = document.getElementById('casinoChatBadge');
+  if (badge) { badge.style.display = 'none'; badge.textContent = ''; }
+  requestAnimationFrame(function () {
+    const msgs = document.getElementById('chatMessages');
+    if (msgs) msgs.scrollTop = msgs.scrollHeight;
+  });
+};
+
+/** Devuelve el chat a su lugar exacto y oculta el widget. */
+VIP.ui._casinoChatUnmount = function() {
+  const drawer = document.getElementById('casinoChatDrawer');
+  const chatCont = document.querySelector('.chat-container');
+  const inputCont = document.querySelector('.chat-input-container');
+
+  if (chatCont) {
+    const topbar = chatCont.querySelector('.chat-topbar');
+    if (topbar) topbar.style.display = VIP.ui._casinoChatTopbarDisplay || '';
+    chatCont.style.minHeight = VIP.ui._casinoChatMinHeight || '';
+    if (VIP.ui._casinoChatPh1 && VIP.ui._casinoChatPh1.parentNode) {
+      VIP.ui._casinoChatPh1.replaceWith(chatCont);
+    }
+  }
+  if (inputCont && VIP.ui._casinoChatPh2 && VIP.ui._casinoChatPh2.parentNode) {
+    VIP.ui._casinoChatPh2.replaceWith(inputCont);
+  }
+  VIP.ui._casinoChatPh1 = null;
+  VIP.ui._casinoChatPh2 = null;
+
+  if (drawer) drawer.style.display = 'none';
+  VIP.ui._casinoChatOpen = false;
+};
+
+// ── Acciones rápidas del widget ──
+// Todo termina en el chat del cajero (los botones solo ahorran tipeo; el cajero
+// sigue confirmando todo — no es un bot).
+
+VIP.ui._casinoSendQuick = function(text) {
+  const input = document.getElementById('messageInput');
+  if (input) input.value = text;
+  try { VIP.chat.sendMessage(); } catch (e) {}
+};
+
+VIP.ui.casinoQuickAction = function(action, arg) {
+  const amountRow = document.getElementById('casinoAmountRow');
+  switch (action) {
+    case 'cargar-toggle':
+      if (amountRow) amountRow.style.display = amountRow.style.display === 'flex' ? 'none' : 'flex';
+      break;
+    case 'cargar':
+      if (amountRow) amountRow.style.display = 'none';
+      VIP.ui._casinoSendQuick('🎰 Quiero cargar $' + (Number(arg) || 0).toLocaleString('es-AR'));
+      break;
+    case 'cargar-otro': {
+      const input = document.getElementById('messageInput');
+      if (input) { input.value = '🎰 Quiero cargar $'; input.focus(); }
+      break;
+    }
+    case 'cbu':
+      VIP.ui.loadAndShowCBU();
+      break;
+    case 'comprobante': {
+      const attach = document.getElementById('attachBtn');
+      if (attach) attach.click();
+      break;
+    }
+    case 'retirar':
+      // El SMS se exige recién al procesar el retiro real — sin cambios acá.
+      VIP.ui._casinoSendQuick('💸 Quiero retirar mi premio');
+      break;
+    case 'escribir': {
+      const input = document.getElementById('messageInput');
+      if (input) input.focus();
+      break;
+    }
+    case 'saldo':
+      try { VIP.ui.syncBalance(); } catch (e) {}
+      VIP.ui._casinoSendQuick('👛 ¿Me confirmás mi saldo?');
+      break;
+  }
+};
+
+/** Cierra el recuadro y vuelve a la app. */
 VIP.ui.closeCasinoFrame = function() {
   clearTimeout(VIP.ui._casinoWatchdog);
   const overlay = document.getElementById('casinoOverlay');
   if (!overlay) return;
+  // SIEMPRE des-montar el chat primero: si no, la pantalla principal queda sin chat.
+  try { VIP.ui._casinoChatUnmount(); } catch (e) {}
   // Se vacía el src para que el casino deje de correr en segundo plano (si no, sigue
   // sonando y consumiendo datos aunque el recuadro esté oculto).
   const frame = overlay.querySelector('#casinoFrame');

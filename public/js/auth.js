@@ -480,6 +480,13 @@ VIP.auth = (function () {
                 VIP.refunds.loadRefundStatus();
                 VIP.fire.loadFireStatus();
 
+                // Entrada por landing con ir=casino: abrir el casino directo
+                // (el flag lo setea tryAccessLink antes de limpiar la URL).
+                if (VIP.state._openCasinoOnLogin) {
+                    VIP.state._openCasinoOnLogin = false;
+                    try { VIP.ui.enterCasino(); } catch (e) { /* ignore */ }
+                }
+
                 // Server-side enforcement: if the user must change their
                 // password (flag persisted in DB), re-open the mandatory
                 // change modal even after a page reload.
@@ -513,6 +520,15 @@ VIP.auth = (function () {
         let token = null;
         try { token = new URLSearchParams(window.location.search).get('acceso'); } catch (e) {}
         if (!token) return false;
+
+        // ANTES de limpiar la URL: ¿el link pide abrir el casino directo?
+        // (ir=casino — lo agrega el alta por landing: el cliente cae jugando y
+        // el chat le queda en el widget del casino.)
+        try {
+            if (new URLSearchParams(window.location.search).get('ir') === 'casino') {
+                VIP.state._openCasinoOnLogin = true;
+            }
+        } catch (e) {}
 
         // Sacar el token de la URL YA MISMO: es de un solo uso y no tiene que
         // quedar en el historial ni compartirse por accidente.
