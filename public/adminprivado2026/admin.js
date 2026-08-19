@@ -9178,18 +9178,21 @@ function _resetCampaignCredsForm(hasCreds) {
     document.getElementById('campaignFormJgUsername').value = '';
     document.getElementById('campaignFormJgPassword').value = '';
     document.getElementById('campaignFormJgPassword').placeholder = hasCreds
-        ? '(dejar vacío para no cambiarla)'
-        : 'mínimo 6 caracteres';
+        ? '(vacío = no tocar el pool; keys nuevas se SUMAN)'
+        : 'pk_xxxxxxxx_... , pk_yyyyyyyy_...';
     document.getElementById('campaignFormJgPasswordHint').textContent = hasCreds
-        ? 'Cuenta configurada — escribí una nueva contraseña sólo si la querés cambiar.'
-        : 'Empieza con "pk_".';
+        ? 'Pool configurado — las keys que pegues acá se SUMAN al pool (no reemplazan). Varias: separalas por coma.'
+        : 'Empieza con "pk_". Podés pegar varias separadas por coma (pool del mismo publicista).';
     document.getElementById('campaignFormCredsStatus').textContent = hasCreds
         ? '· cuenta propia configurada'
         : '· sin configurar (usa la master)';
     document.getElementById('campaignFormCredsStatus').style.color = hasCreds ? '#4caf50' : '#888';
     document.getElementById('campaignFormTestCredsBtn').style.display = hasCreds ? '' : 'none';
+    document.getElementById('campaignFormPoolStatusBtn').style.display = hasCreds ? '' : 'none';
     document.getElementById('campaignFormClearCredsBtn').style.display = hasCreds ? '' : 'none';
     document.getElementById('campaignFormTestCredsResult').textContent = '';
+    const poolBox = document.getElementById('campaignFormPoolStatus');
+    if (poolBox) { poolBox.style.display = 'none'; poolBox.innerHTML = ''; }
     // Flag interna: en edit, si el usuario tocó "quitar creds", marcamos para enviar
     // clearJugayganaCreds:true al PUT.
     window._campaignFormClearCreds = false;
@@ -9359,8 +9362,79 @@ function clearCampaignJgCreds() {
     document.getElementById('campaignFormTestCredsResult').textContent = '';
 }
 
+// "🔍 Estado del pool": muestra cuántas keys tiene la campaña y cuáles VEN a los
+// jugadores (el backend prueba cada una contra un jugador real). Cada fila tiene
+// un 🗑 para quitar esa key del pool.
+async function showCampaignPoolStatus() {
+    const code = document.getElementById('campaignFormOriginalCode').value;
+    if (!code) return;
+    const box = document.getElementById('campaignFormPoolStatus');
+    if (!box) return;
+    box.style.display = 'grid';
+    box.innerHTML = '<span style="color:#888;font-size:12px;">Consultando el pool…</span>';
+    try {
+        const r = await fetch(`${API_URL}/api/admin/campaigns/${encodeURIComponent(code)}/pool-status`, {
+            headers: { 'Authorization': `Bearer ${currentToken}` }
+        });
+        const data = await r.json();
+        if (!r.ok) {
+            box.innerHTML = `<span style="color:#ff6666;font-size:12px;">✗ ${escapeHtml(data.error || 'Error consultando el pool')}</span>`;
+            return;
+        }
+        if (!data.total) {
+            box.innerHTML = `<span style="color:#888;font-size:12px;">${escapeHtml(data.note || 'Sin key propia (usa la cuenta master).')}</span>`;
+            return;
+        }
+        const filas = (data.results || []).map(k => {
+            const visto = k.sees === null
+                ? '<span style="color:#888;">— sin jugadores para probar</span>'
+                : (k.sees
+                    ? '<span style="color:#4caf50;">✓ ve a los jugadores</span>'
+                    : '<span style="color:#ff6666;">✗ NO ve a los jugadores</span>');
+            return `
+            <div style="display:flex;align-items:center;gap:8px;padding:6px 10px;background:#1a1a2e;border-radius:6px;font-size:12px;">
+                <span style="font-family:monospace;color:#d4af37;">#${k.n} ${escapeHtml(k.key)}</span>
+                <span style="color:#888;">(${k.role})</span>
+                <span style="flex:1;">${visto}</span>
+                <button type="button" onclick="removeCampaignPoolKey(${k.n})" title="Quitar del pool" style="padding:3px 8px;background:#3a1a1a;color:#ff6666;border:1px solid rgba(255,80,80,0.3);border-radius:5px;cursor:pointer;font-size:11px;">🗑</button>
+            </div>`;
+        }).join('');
+        box.innerHTML = `
+            <div style="color:#aaa;font-size:12px;">${data.total} key(s) en el pool${data.sampleUser ? ` · probadas contra <strong>${escapeHtml(data.sampleUser)}</strong>` : ''}</div>
+            ${filas}`;
+    } catch (e) {
+        box.innerHTML = '<span style="color:#ff6666;font-size:12px;">✗ Error de conexión</span>';
+    }
+}
+
+async function removeCampaignPoolKey(n) {
+    const code = document.getElementById('campaignFormOriginalCode').value;
+    if (!code) return;
+    if (!confirm(`¿Quitar la key #${n} del pool de ${code}? Las operaciones se van a repartir entre las que queden (si no queda ninguna, la campaña vuelve a la cuenta master).`)) return;
+    try {
+        const r = await fetch(`${API_URL}/api/admin/campaigns/${encodeURIComponent(code)}/pool-remove`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${currentToken}`
+            },
+            body: JSON.stringify({ index: n })
+        });
+        const data = await r.json();
+        if (!r.ok) return showToast(data.error || 'No se pudo quitar la key', 'error');
+        showToast(`Key quitada — quedan ${data.total} en el pool`, 'success');
+        if (!data.total) _resetCampaignCredsForm(false);
+        showCampaignPoolStatus();
+        loadCampaigns();
+    } catch (e) {
+        showToast('Error de conexión', 'error');
+    }
+}
+
 window.testCampaignJgCreds = testCampaignJgCreds;
 window.clearCampaignJgCreds = clearCampaignJgCreds;
+window.showCampaignPoolStatus = showCampaignPoolStatus;
+window.removeCampaignPoolKey = removeCampaignPoolKey;
 
 function closeCampaignFormModal() {
     hideModal('campaignFormModal');
@@ -9418,9 +9492,12 @@ async function submitCampaignForm() {
         // acepta ese nombre por compatibilidad; ahí adentro se guarda como giroxApiKey.)
         if (jgUsername) body.jugayganaUsername = jgUsername;
         if (jgPassword) body.jugayganaPassword = jgPassword;
-        // En edición, key vacía = mantener la que ya está guardada.
-        if (jgPassword && !jgPassword.startsWith('pk_')) {
-            errorDiv.textContent = 'La API key de 1girox tiene que empezar con "pk_"';
+        // En edición, key vacía = mantener el pool que ya está guardado.
+        // Puede venir VARIAS keys separadas por coma (pool): alcanza con que
+        // alguna empiece con "pk_" — el backend valida una por una, saltea las
+        // malas y avisa cuáles quedaron afuera.
+        if (jgPassword && !jgPassword.split(',').some(k => k.trim().startsWith('pk_'))) {
+            errorDiv.textContent = 'Ninguna de las API keys empieza con "pk_"';
             errorDiv.style.display = '';
             return;
         }
@@ -9461,6 +9538,13 @@ async function submitCampaignForm() {
             return;
         }
         showToast(data.renamedUsers ? `Campaña guardada · ${data.renamedUsers} usuario(s) reasignado(s) al renombrar` : 'Campaña guardada', 'success');
+        // Keys salteadas por el backend (formato malo o no ven a los jugadores):
+        // las demás SÍ se guardaron — avisar cuáles quedaron afuera y por qué.
+        if (Array.isArray(data.skipped) && data.skipped.length) {
+            alert('⚠️ Algunas keys NO se agregaron al pool:\n\n' +
+                data.skipped.map(s => `• ${s.key} — ${s.reason}`).join('\n') +
+                '\n\nLas demás se guardaron bien.');
+        }
         closeCampaignFormModal();
         loadCampaigns();
     } catch (err) {

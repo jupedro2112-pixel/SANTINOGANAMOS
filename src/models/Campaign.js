@@ -118,6 +118,19 @@ const campaignSchema = new mongoose.Schema({
     default: null,
     select: false
   },
+  // POOL de keys ADICIONALES del MISMO publicista (2026-08-19). Un publicista
+  // gigante satura su única key (60 req/min en la plataforma); el owner controla
+  // el panel de cada publicista y puede generarle MÁS keys. Comprobado: una 2ª
+  // key del mismo publicista VE a los jugadores creados con la 1ª (comparten
+  // scope bajo el agente) → repartir entre N keys = N×60/min de cupo.
+  // `giroxApiKey` sigue siendo la "principal"; el resolver de server.js devuelve
+  // [principal, ...extras] y giroxService elige la key con más lugar libre.
+  // Mismo tratamiento de secreto que giroxApiKey (select:false, nunca al panel).
+  giroxApiKeysExtra: {
+    type: [String],
+    default: [],
+    select: false
+  },
   // Espejo booleano de "¿tiene giroxApiKey?", SIN select:false.
   // Existe para que el listado de campañas del panel pueda mostrar el badge
   // "cuenta propia configurada" sin tener que traer la key (que es un secreto) ni
