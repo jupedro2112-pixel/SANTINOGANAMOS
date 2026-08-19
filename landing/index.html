@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>CARGAS 1GIROX — Jugá ahora</title>
+<meta name="description" content="Creá tu cuenta en segundos y empezá a jugar. Acreditación al instante y retiros rápidos.">
+<!--
+  LANDING PUENTE de conversión (archivo suelto — NO va en public/).
+  Se sube al dominio puente (Vercel / Cloudflare Pages / dominio final).
+
+  CONFIG (constantes de abajo):
+    API_BASE_DEFAULT  backend de producción (se puede pisar con ?api=https://otro)
+    CAMPAIGN_CODE     código fijo de campaña; vacío = tomar de ?p= / ?campaign= / path
+    BONUS_BIG/SUB     texto del banner de bono.
+                      ⚠️ Deben ser la oferta REAL: mostrarle a Meta algo distinto
+                      de lo que ve el usuario es cloaking → baneo de dominio,
+                      pixel y cuenta publicitaria.
+-->
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
+  body {
+    font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;
+    background:#0d0d1a; color:#fff; min-height:100vh;
+    display:flex; flex-direction:column; align-items:center;
+  }
+  .wrap { width:100%; max-width:420px; padding:18px 16px 40px; }
+  .bonus {
+    background:linear-gradient(135deg,#d4af37,#f5d76e);
+    color:#1a1a2e; border-radius:14px; padding:18px 16px; text-align:center;
+    box-shadow:0 6px 24px rgba(212,175,55,0.35); margin-bottom:18px;
+  }
+  .bonus .big { font-size:26px; font-weight:900; letter-spacing:0.5px; }
+  .bonus .sub { font-size:14px; font-weight:600; margin-top:4px; }
+  h1 { font-size:22px; text-align:center; margin-bottom:6px; color:#f5d76e; }
+  .pitch { text-align:center; color:#cfcfe0; font-size:14.5px; line-height:1.5; margin-bottom:18px; }
+  .card {
+    background:#16162a; border:1px solid rgba(212,175,55,0.25);
+    border-radius:14px; padding:18px 16px; margin-bottom:16px;
+  }
+  label { display:block; font-size:13px; color:#aaa; margin-bottom:6px; }
+  input[type=text] {
+    width:100%; padding:14px 12px; font-size:17px; border-radius:10px;
+    border:1px solid rgba(212,175,55,0.4); background:#0d0d1a; color:#fff; outline:none;
+  }
+  input[type=text]:focus { border-color:#f5d76e; }
+  .btn {
+    display:block; width:100%; margin-top:14px; padding:16px; font-size:17px;
+    font-weight:800; border:none; border-radius:12px; cursor:pointer;
+    background:linear-gradient(135deg,#00c853,#00e676); color:#062812;
+    box-shadow:0 5px 18px rgba(0,200,83,0.35);
+  }
+  .btn:disabled { opacity:0.6; cursor:default; }
+  .err { color:#ff7b7b; font-size:13px; margin-top:10px; display:none; text-align:center; }
+  .sellos { display:flex; justify-content:space-between; gap:8px; margin-bottom:16px; }
+  .sello {
+    flex:1; background:#16162a; border:1px solid rgba(255,255,255,0.08);
+    border-radius:10px; padding:10px 6px; text-align:center; font-size:11.5px; color:#cfcfe0;
+  }
+  .sello .ico { font-size:20px; display:block; margin-bottom:4px; }
+  .legal { text-align:center; color:#666; font-size:11px; line-height:1.5; margin-top:8px; }
+  /* Pantalla de credenciales */
+  .creds { display:none; }
+  .creds .dato {
+    background:#0d0d1a; border:1px dashed rgba(212,175,55,0.5); border-radius:10px;
+    padding:12px; text-align:center; margin-top:10px;
+  }
+  .creds .dato .k { font-size:12px; color:#888; }
+  .creds .dato .v { font-size:24px; font-weight:900; color:#f5d76e; letter-spacing:1px; font-family:monospace; }
+  .warn { color:#ffb74d; font-size:13px; text-align:center; margin-top:10px; }
+  /* Popup de enganche */
+  #hookPop {
+    display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75);
+    z-index:99; align-items:center; justify-content:center; padding:20px;
+  }
+  #hookPop .box {
+    background:#16162a; border:1px solid #d4af37; border-radius:16px;
+    padding:22px 18px; max-width:340px; text-align:center;
+  }
+  #hookPop .box h2 { color:#f5d76e; font-size:20px; margin-bottom:8px; }
+  #hookPop .box p { color:#cfcfe0; font-size:14px; margin-bottom:14px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="bonus">
+    <div class="big" id="bonusBig"></div>
+    <div class="sub" id="bonusSub"></div>
+  </div>
+
+  <h1>🎰 CARGAS 1GIROX</h1>
+  <p class="pitch">Creá tu cuenta <strong>en segundos</strong> y empezá a jugar ya mismo. Sin vueltas: solo decinos tu nombre.</p>
+
+  <div class="sellos">
+    <div class="sello"><span class="ico">⚡</span>Acreditación al instante</div>
+    <div class="sello"><span class="ico">💸</span>Retiros rápidos</div>
+    <div class="sello"><span class="ico">🎧</span>Soporte 24/7</div>
+  </div>
+
+  <!-- FORM -->
+  <div class="card" id="formCard">
+    <label for="nameInput">¿Cómo te llamás?</label>
+    <input type="text" id="nameInput" maxlength="60" autocomplete="name" placeholder="Tu nombre">
+    <button class="btn" id="goBtn" onclick="crearCuenta()">🎁 CREAR MI CUENTA GRATIS</button>
+    <div class="err" id="errMsg"></div>
+  </div>
+
+  <!-- CREDENCIALES -->
+  <div class="card creds" id="credsCard">
+    <h2 style="text-align:center;color:#00e676;font-size:19px;">✅ ¡Tu cuenta está lista!</h2>
+    <div class="dato"><div class="k">TU USUARIO</div><div class="v" id="credUser"></div></div>
+    <div class="dato"><div class="k">TU CLAVE</div><div class="v" id="credPass"></div></div>
+    <p class="warn">📌 Sacale captura o anotalos: con esto entrás desde cualquier dispositivo.</p>
+    <button class="btn" id="enterBtn" onclick="entrar()">🎰 ENTRAR A MI CUENTA</button>
+  </div>
+
+  <p class="legal">Juego para mayores de 18 años (+18). Jugá con responsabilidad.<br>Al crear la cuenta aceptás los términos y condiciones del servicio.</p>
+</div>
+
+<!-- Popup de enganche (una sola vez: intento de salida o 12s) -->
+<div id="hookPop">
+  <div class="box">
+    <h2>🎁 ¡Tu bono te espera!</h2>
+    <p>Creá tu cuenta gratis en segundos y jugá con tu regalo de bienvenida.</p>
+    <button class="btn" onclick="cerrarHook()">¡LO QUIERO!</button>
+  </div>
+</div>
+
+<script>
+// ============================================================
+// CONFIG
+// ============================================================
+var API_BASE_DEFAULT = 'https://cargas1girox.com'; // backend de producción
+var CAMPAIGN_CODE = ''; // fijo, o vacío = tomar de ?p= / ?campaign= / path
+// ⚠️ Oferta REAL (ver nota de cloaking arriba).
+var BONUS_BIG = '🎁 BONO DE BIENVENIDA';
+var BONUS_SUB = 'Creá tu cuenta gratis y empezá a jugar';
+
+// Override para pruebas: ?api=https://otro-backend pisa API_BASE sin editar el archivo.
+var qs = new URLSearchParams(location.search);
+var API_BASE = (qs.get('api') || API_BASE_DEFAULT).replace(/\/+$/, '');
+
+document.getElementById('bonusBig').textContent = BONUS_BIG;
+document.getElementById('bonusSub').textContent = BONUS_SUB;
+
+function campaignCode() {
+  if (CAMPAIGN_CODE) return CAMPAIGN_CODE;
+  var fromQs = qs.get('p') || qs.get('campaign');
+  if (fromQs) return fromQs.toUpperCase();
+  // Último recurso: primer segmento del path (/CODIGO)
+  var seg = location.pathname.split('/').filter(Boolean)[0];
+  return seg ? seg.toUpperCase() : '';
+}
+
+function getCookie(name) {
+  var m = document.cookie.match(new RegExp('(?:^|; )' + name + '=([^;]*)'));
+  return m ? decodeURIComponent(m[1]) : null;
+}
+// _fbc: cookie de Meta, o derivada del fbclid de la URL si la cookie no está.
+function fbcValue() {
+  var c = getCookie('_fbc');
+  if (c) return c;
+  var fbclid = qs.get('fbclid');
+  return fbclid ? 'fb.1.' + Date.now() + '.' + fbclid : null;
+}
+
+var accessUrl = null;
+var creado = false;
+
+async function crearCuenta() {
+  var name = (document.getElementById('nameInput').value || '').trim();
+  var errEl = document.getElementById('errMsg');
+  errEl.style.display = 'none';
+  if (name.length < 2) {
+    errEl.textContent = 'Escribí tu nombre para crear la cuenta.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var code = campaignCode();
+  if (!code) {
+    errEl.textContent = 'Link incompleto: falta el código de campaña. Volvé a entrar desde el anuncio.';
+    errEl.style.display = 'block';
+    return;
+  }
+  var btn = document.getElementById('goBtn');
+  btn.disabled = true;
+  btn.textContent = 'Creando tu cuenta…';
+  try {
+    var r = await fetch(API_BASE + '/api/landing/signup', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        campaignCode: code,
+        landingUrl: location.href.slice(0, 2000),
+        fbc: fbcValue(),
+        fbp: getCookie('_fbp')
+      })
+    });
+    var data = await r.json().catch(function () { return {}; });
+    if (!r.ok || !data.success) {
+      errEl.textContent = data.error || 'No pudimos crear tu cuenta. Probá de nuevo.';
+      errEl.style.display = 'block';
+      btn.disabled = false;
+      btn.textContent = '🎁 CREAR MI CUENTA GRATIS';
+      return;
+    }
+    creado = true;
+    accessUrl = data.accessUrl;
+    document.getElementById('credUser').textContent = data.username;
+    document.getElementById('credPass').textContent = data.password;
+    document.getElementById('formCard').style.display = 'none';
+    document.getElementById('credsCard').style.display = 'block';
+    window.scrollTo(0, 0);
+  } catch (e) {
+    errEl.textContent = 'Error de conexión. Revisá tu internet y probá de nuevo.';
+    errEl.style.display = 'block';
+    btn.disabled = false;
+    btn.textContent = '🎁 CREAR MI CUENTA GRATIS';
+  }
+}
+
+function entrar() {
+  if (accessUrl) location.href = accessUrl;
+}
+
+// ── Popup de enganche: una sola vez, al intento de salida o a los 12s ──
+var hookShown = false;
+function mostrarHook() {
+  if (hookShown || creado) return;
+  hookShown = true;
+  document.getElementById('hookPop').style.display = 'flex';
+}
+function cerrarHook() {
+  document.getElementById('hookPop').style.display = 'none';
+  var inp = document.getElementById('nameInput');
+  if (inp) inp.focus();
+}
+document.addEventListener('mouseout', function (e) {
+  if (!e.relatedTarget && e.clientY <= 0) mostrarHook();
+});
+setTimeout(mostrarHook, 12000);
+
+document.getElementById('nameInput').addEventListener('keydown', function (e) {
+  if (e.key === 'Enter') { e.preventDefault(); crearCuenta(); }
+});
+</script>
+</body>
+</html>

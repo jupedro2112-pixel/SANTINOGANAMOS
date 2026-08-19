@@ -198,6 +198,8 @@ const bulkSmsIpStore = new Map();
 // Tracks user registrations per IP: { ip -> [timestamp, ...] }
 // Anti-multicuenta: limita creación masiva de cuentas desde una misma IP.
 const registerIpStore = new Map();
+// Tracks landing signups per IP (alta solo-nombre desde landing externa).
+const landingIpStore = new Map();
 
 // Periodically clean up expired entries to prevent memory leaks (every 30 minutes)
 setInterval(() => {
@@ -216,6 +218,11 @@ setInterval(() => {
     const valid = timestamps.filter(ts => ts > now - 60 * 60 * 1000);
     if (valid.length === 0) registerIpStore.delete(ip);
     else registerIpStore.set(ip, valid);
+  }
+  for (const [ip, timestamps] of landingIpStore) {
+    const valid = timestamps.filter(ts => ts > now - 60 * 60 * 1000);
+    if (valid.length === 0) landingIpStore.delete(ip);
+    else landingIpStore.set(ip, valid);
   }
 }, 30 * 60 * 1000).unref();
 
@@ -298,6 +305,18 @@ const registerIpLimiter = createIpSmsLimiter(
   3,
   'Demasiados registros desde tu conexión. Esperá una hora antes de crear otra cuenta.',
   'register'
+);
+
+// Alta por LANDING externa (solo-nombre, sin SMS): límite propio por IP.
+// LANDING_SIGNUP_MAX_PER_IP_HOUR (default 8) — más laxo que el registro normal
+// porque la pauta puede traer varios usuarios detrás de un mismo CGNAT.
+const LANDING_SIGNUP_MAX_PER_IP_HOUR = Number(process.env.LANDING_SIGNUP_MAX_PER_IP_HOUR || 8);
+const landingIpLimiter = createIpSmsLimiter(
+  landingIpStore,
+  60 * 60 * 1000,
+  LANDING_SIGNUP_MAX_PER_IP_HOUR,
+  'Demasiadas cuentas creadas desde tu conexión. Probá de nuevo en una hora.',
+  'landing'
 );
 
 // ============================================
@@ -699,13 +718,39 @@ app.use(securityHeaders);
 if (!process.env.ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
   logger.warn('⚠️ SEGURIDAD: ALLOWED_ORIGINS no configurado en producción. CORS rechazará orígenes cruzados.');
 }
-app.use(cors({
+// CORS abierto SOLO para el alta por landing externa: las landings puente rotan
+// de dominio (Vercel/Cloudflare/dominio final) y no se puede redeployar por cada
+// host nuevo. Es seguro: endpoint público, sin credenciales (no manda cookies —
+// SIN Allow-Credentials), protegido por código de campaña + límite por IP.
+// Se refleja el Origin (no '*') y se corta el preflight acá mismo.
+app.use((req, res, next) => {
+  if (req.path === '/api/landing/signup') {
+    const origin = req.headers.origin;
+    if (origin) {
+      res.setHeader('Access-Control-Allow-Origin', origin);
+      res.setHeader('Vary', 'Origin');
+      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    }
+    if (req.method === 'OPTIONS') return res.status(204).end();
+    return next();
+  }
+  next();
+});
+// El resto de las rutas sigue con el CORS estricto de ALLOWED_ORIGINS. El
+// endpoint de landing se saltea este middleware (ya recibió sus headers arriba;
+// si pasara por acá, corsOriginFn rechazaría el dominio puente con un error).
+const _strictCors = cors({
   origin: corsOriginFn,
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['X-Total-Count', 'X-RateLimit-Remaining']
-}));
+});
+app.use((req, res, next) => {
+  if (req.path === '/api/landing/signup') return next();
+  return _strictCors(req, res, next);
+});
 app.use('/api/', generalLimiter);
 // Guardamos el body CRUDO (Buffer) en req.rawBody para poder validar firmas
 // HMAC de webhooks (ej. hgcash) sobre los bytes exactos. No cambia el parseo
@@ -3522,6 +3567,174 @@ app.post('/api/auth/register-quick', authLimiter, registerIpLimiter, async (req,
     });
   } catch (error) {
     logger.error(`register-quick error: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ============================================
+// ALTA POR LANDING EXTERNA (solo-nombre, sin SMS)
+// ============================================
+// Una landing en un dominio puente pide SOLO un nombre → se crea el usuario en
+// 1girox atribuido a la pauta, se vincula a la app local y se devuelve un link
+// de acceso de un solo uso + las credenciales (usuario + PIN de 6 dígitos, para
+// que pueda volver a entrar desde cualquier dispositivo). El SMS NO se pide al
+// crear: el candado ya vive en el retiro (/api/withdrawal/request exige
+// phoneVerified) — y no se le avisa al cliente al principio.
+
+// Base de username a partir del nombre real: sin acentos (NFD), minúsculas,
+// solo [a-z0-9], máx 12 chars (deja lugar al sufijo numérico), prefijo "gx" si
+// queda demasiado corto.
+function _sanitizeUsernameBase(name) {
+  let base = String(name || '')
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // saca acentos/diacríticos
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, '')
+    .slice(0, 12);
+  if (base.length < 3) base = ('gx' + base).slice(0, 12);
+  return base;
+}
+
+// Deriva un username ÚNICO: hasta 12 intentos de base + sufijo aleatorio,
+// validando las reglas de 1girox y la colisión local case-insensitive.
+async function _deriveUniqueUsername(base) {
+  for (let attempt = 0; attempt < 12; attempt++) {
+    const candidate = (base + String(crypto.randomInt(100, 999999))).slice(0, 18);
+    if (!girox.validateUsername(candidate).valid) continue;
+    const collision = await findUserByUsernameCI(candidate, { lean: true });
+    if (!collision) return candidate;
+  }
+  return null;
+}
+
+app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
+  try {
+    // Kill-switch (leído en runtime: se puede apagar desde SSM + redeploy).
+    if (String(process.env.LANDING_SIGNUP_DISABLED || '').toLowerCase() === 'true') {
+      return res.status(410).json({ error: 'El registro por landing está deshabilitado.' });
+    }
+
+    const { name, campaignCode, utm, fbc, fbp, landingUrl } = req.body || {};
+
+    const cleanName = String(name || '').trim();
+    if (cleanName.length < 2 || cleanName.length > 60) {
+      return res.status(400).json({ error: 'Decinos tu nombre (2 a 60 caracteres).' });
+    }
+    const normalizedCode = String(campaignCode || '').toUpperCase().trim();
+    if (!normalizedCode) {
+      return res.status(400).json({ error: 'Falta el código de campaña.' });
+    }
+    const campaign = await Campaign.findOne({ code: normalizedCode, isActive: true }).lean();
+    if (!campaign) {
+      return res.status(400).json({ error: 'Código de campaña inválido o inactivo.' });
+    }
+
+    const base = _sanitizeUsernameBase(cleanName);
+    const username = await _deriveUniqueUsername(base);
+    if (!username) {
+      return res.status(500).json({ error: 'No pudimos generar tu usuario. Probá de nuevo.' });
+    }
+
+    // PIN de 6 dígitos: cumple el mínimo ≥6 de 1girox y se DEVUELVE en la
+    // respuesta para mostrárselo al cliente.
+    const password = String(crypto.randomInt(100000, 1000000));
+
+    // 1girox PRIMERO (si falla, NO queda cuenta local huérfana). Si la campaña
+    // tiene key propia, el jugador nace bajo SU sub-agente (y sus operaciones se
+    // firmarán con esa key vía giroxOwnerCampaign).
+    let ownerCampaign = null;
+    let syncStatus = 'synced';
+    const hasPubKey = await Campaign.hasGiroxApiKey(normalizedCode);
+    if (hasPubKey) {
+      const result = await giroxPublisherKeys.createUserAsPublisher(normalizedCode, { username, password });
+      if (!result.success) {
+        console.error(`[landing-signup] alta 1girox (publicista ${normalizedCode}) falló para ${username}: ${result.error}`);
+        return res.status(502).json({ error: 'No pudimos crear tu cuenta en este momento. Probá de nuevo en unos minutos.' });
+      }
+      ownerCampaign = normalizedCode;
+    } else {
+      const result = await girox.syncUserToPlatform({ username, password });
+      if (!result.success) {
+        console.error(`[landing-signup] alta 1girox (master) falló para ${username}: ${result.error}`);
+        return res.status(502).json({ error: 'No pudimos crear tu cuenta en este momento. Probá de nuevo en unos minutos.' });
+      }
+      if (result.alreadyExists) syncStatus = 'linked';
+    }
+
+    // Identificadores de Meta Ads: del body de la landing, o de las cookies del request.
+    const _fbCtx = metaCapi.extractRequestContext(req);
+    const metaFbc = sanitizeFbCookie(fbc) || sanitizeFbCookie(_fbCtx.fbc);
+    const metaFbp = sanitizeFbCookie(fbp) || sanitizeFbCookie(_fbCtx.fbp);
+
+    const userId = uuidv4();
+    let newReferralCode = null;
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const candidate = generateReferralCode();
+      const collision = await User.findOne({ referralCode: candidate }).lean();
+      if (!collision) { newReferralCode = candidate; break; }
+    }
+
+    const newUser = await User.create({
+      id: userId,
+      username,
+      password,
+      email: null,
+      phone: null,
+      phoneVerified: false,
+      phoneVerificationPending: true,
+      role: 'user',
+      accountNumber: generateAccountNumber(),
+      balance: 0,
+      createdAt: new Date(),
+      isActive: true,
+      giroxUserId: null,
+      giroxSyncStatus: syncStatus,
+      giroxOwnerCampaign: ownerCampaign,
+      // Se creó con el PIN que ve el propio usuario → sincronizadas.
+      giroxPasswordSynced: true,
+      referralCode: newReferralCode,
+      acquisitionCampaign: normalizedCode,
+      acquisitionSource: 'landing',
+      acquisitionUtm: {
+        source: utm && utm.source ? String(utm.source).slice(0, 100) : null,
+        medium: utm && utm.medium ? String(utm.medium).slice(0, 100) : null,
+        campaign: utm && utm.campaign ? String(utm.campaign).slice(0, 100) : null,
+        content: utm && utm.content ? String(utm.content).slice(0, 100) : null,
+        term: utm && utm.term ? String(utm.term).slice(0, 100) : null
+      },
+      acquiredAt: new Date(),
+      metaFbc,
+      metaFbp,
+      landingUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
+      registrationIp: req.ip || req.socket?.remoteAddress || null,
+      registrationUserAgent: (req.get('User-Agent') || '').slice(0, 500) || null
+    });
+
+    // Conversión: Meta CAPI + webhook fb-ads (fire-and-forget).
+    metaCapi.track(
+      'CompleteRegistration',
+      { externalId: newUser.id, fbc: metaFbc, fbp: metaFbp },
+      {
+        content_name: 'signup_landing',
+        status: true,
+        campaign_code: normalizedCode,
+        publisher: campaign.publisher,
+        utm_source: newUser.acquisitionUtm?.source || null,
+        utm_campaign: newUser.acquisitionUtm?.campaign || null
+      },
+      { req }
+    );
+    fbAdsWebhook.notify('CompleteRegistration', newUser);
+
+    // Link de acceso de un solo uso + ir=casino: la PWA abre el casino directo
+    // al loguear. (El canje NO fuerza cambio de clave para cuentas de landing:
+    // el cliente YA vio usuario+PIN en pantalla.)
+    const accessUrl = (await issueAccessLinkFor(newUser.id)) + '&ir=casino';
+
+    logger.info(`[landing-signup] ${username} creado (campaña ${normalizedCode}${ownerCampaign ? ', key publicista' : ''})`);
+    res.status(201).json({ success: true, accessUrl, username, password });
+  } catch (error) {
+    // Stack a stdout: el winston va solo a archivo y los 500 eran invisibles en EB.
+    console.error('[landing-signup] error:', error && error.stack ? error.stack : error);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -15027,16 +15240,25 @@ app.post('/api/auth/access-link', authLimiter, async (req, res) => {
     }
     const hash = crypto.createHash('sha256').update(token).digest('hex');
 
+    // El findOneAndUpdate consume el hash en el mismo paso (single-use atómico).
+    // mustChangePassword se decide DESPUÉS según el origen de la cuenta: las de
+    // LANDING ya recibieron usuario+clave en pantalla → no se les fuerza el
+    // cambio; las creadas por agente (clave temporal) siguen forzándolo.
     const user = await User.findOneAndUpdate(
       { accessLinkHash: hash, role: 'user', isActive: { $ne: false }, isBlocked: { $ne: true } },
-      { $set: { accessLinkHash: null, mustChangePassword: true, lastLogin: new Date() } },
+      { $set: { accessLinkHash: null, lastLogin: new Date() } },
       { new: true }
-    ).select('id username role tokenVersion').lean();
+    ).select('id username role tokenVersion acquisitionSource').lean();
 
     if (!user) {
       // Genérico a propósito: no revelar si el link existió, venció o la cuenta
       // está bloqueada.
       return res.status(401).json({ error: 'Este link de acceso ya fue usado o no es válido. Pedile uno nuevo al soporte.' });
+    }
+
+    const forceChange = user.acquisitionSource !== 'landing';
+    if (forceChange) {
+      await User.updateOne({ id: user.id }, { $set: { mustChangePassword: true } });
     }
 
     const jwtToken = jwt.sign(
@@ -15045,10 +15267,10 @@ app.post('/api/auth/access-link', authLimiter, async (req, res) => {
       { expiresIn: '30d' }
     );
 
-    logger.info(`[access-link] canjeado por ${user.username}`);
+    logger.info(`[access-link] canjeado por ${user.username}${forceChange ? '' : ' (landing: sin cambio de clave forzado)'}`);
     res.json({
       token: jwtToken,
-      user: { id: user.id, username: user.username, role: user.role, mustChangePassword: true }
+      user: { id: user.id, username: user.username, role: user.role, mustChangePassword: forceChange }
     });
   } catch (error) {
     console.error('Error canjeando link de acceso:', error);

@@ -368,11 +368,14 @@ const userSchema = new mongoose.Schema({
   },
   // 'organic' = el usuario llegó solo por link de pauta (?p=CODE o vanity URL).
   // 'manual'  = lo creó un publisher_admin desde el panel.
+  // 'landing' = se creó solo desde una landing externa (POST /api/landing/signup,
+  //             solo-nombre sin SMS). ⚠️ Sin este valor en el enum, el endpoint
+  //             tira 500 por ValidationError de Mongoose.
   // El default es 'organic' por compatibilidad con usuarios pre-existentes y
   // con el flujo de registro público que no toca este campo.
   acquisitionSource: {
     type: String,
-    enum: ['organic', 'manual'],
+    enum: ['organic', 'manual', 'landing'],
     default: 'organic',
     index: true
   },
