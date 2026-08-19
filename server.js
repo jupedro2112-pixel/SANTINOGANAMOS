@@ -19674,6 +19674,11 @@ if (process.env.VERCEL) {
     } catch (e) {
       console.warn('[girox] radiografía de config falló:', e.message);
     }
+    try {
+      console.log(`[MetaCAPI] pixels: ${metaCapi.destinationsSummary()}`);
+    } catch (e) {
+      console.warn('[MetaCAPI] radiografía de pixels falló:', e.message);
+    }
 
     await initializeData();
     await setupRedisAdapter();

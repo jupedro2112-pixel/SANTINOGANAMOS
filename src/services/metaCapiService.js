@@ -22,8 +22,33 @@ try { logger = require('../utils/logger') || console; } catch (e) { /* fallback 
 const GRAPH_API_VERSION = 'v22.0';
 let _missingConfigLogged = false;
 
+// Destinos CAPI. Se arma EN CADA envío (las env de SSM cargan post-require):
+// siempre el pixel propio y, si están las env `_2`, el del PARTNER de tracking
+// (recibe los MISMOS eventos server-side en su pixel). Cada destino usa su
+// propio test_event_code.
+function _capiDestinations() {
+  const dests = [];
+  if (process.env.META_PIXEL_ID && process.env.META_CAPI_ACCESS_TOKEN) {
+    dests.push({
+      name: 'propio',
+      pixelId: process.env.META_PIXEL_ID,
+      accessToken: process.env.META_CAPI_ACCESS_TOKEN,
+      testEventCode: process.env.META_TEST_EVENT_CODE || null
+    });
+  }
+  if (process.env.META_PIXEL_ID_2 && process.env.META_CAPI_ACCESS_TOKEN_2) {
+    dests.push({
+      name: 'partner',
+      pixelId: process.env.META_PIXEL_ID_2,
+      accessToken: process.env.META_CAPI_ACCESS_TOKEN_2,
+      testEventCode: process.env.META_TEST_EVENT_CODE_2 || null
+    });
+  }
+  return dests;
+}
+
 function isConfigured() {
-  return Boolean(process.env.META_PIXEL_ID && process.env.META_CAPI_ACCESS_TOKEN);
+  return _capiDestinations().length > 0;
 }
 
 function sha256(value) {
@@ -139,7 +164,8 @@ function parseCookies(cookieHeader) {
 //   customData      — { value, currency, content_name, ... } pasado tal cual a Meta
 //   options         — { eventId, eventSourceUrl, actionSource, testEventCode, req }
 async function sendEvent(eventName, userInfo, customData, options) {
-  if (!isConfigured()) {
+  const destinations = _capiDestinations();
+  if (!destinations.length) {
     if (!_missingConfigLogged) {
       _missingConfigLogged = true;
       logger.warn('[MetaCAPI] META_PIXEL_ID o META_CAPI_ACCESS_TOKEN no configurados — eventos server-side deshabilitados');
@@ -157,6 +183,8 @@ async function sendEvent(eventName, userInfo, customData, options) {
 
   const user_data = buildUserData(userInfo || {}, requestCtx);
 
+  // UN solo objeto evento, con el MISMO event_id para TODOS los destinos: cada
+  // pixel deduplica por su lado contra su propio pixel de navegador.
   const event = {
     event_name: eventName,
     event_time: Math.floor(Date.now() / 1000),
@@ -172,24 +200,46 @@ async function sendEvent(eventName, userInfo, customData, options) {
     event.event_source_url = String(req.headers.referer);
   }
 
-  const payload = { data: [event] };
-  if (opts.testEventCode || process.env.META_TEST_EVENT_CODE) {
-    payload.test_event_code = opts.testEventCode || process.env.META_TEST_EVENT_CODE;
-  }
+  // Un fallo en un destino no afecta al otro (cada envío atrapa su propio error).
+  const results = await Promise.all(destinations.map(async (dest) => {
+    const payload = { data: [event] };
+    const testCode = opts.testEventCode || dest.testEventCode;
+    if (testCode) payload.test_event_code = testCode;
 
-  const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${process.env.META_PIXEL_ID}/events`;
+    const url = `https://graph.facebook.com/${GRAPH_API_VERSION}/${dest.pixelId}/events`;
+    try {
+      const response = await axios.post(url, payload, {
+        params: { access_token: dest.accessToken },
+        timeout: 5000
+      });
+      return { dest: dest.name, sent: true, data: response.data };
+    } catch (err) {
+      const detail = err.response && err.response.data ? JSON.stringify(err.response.data) : err.message;
+      logger.warn(`[MetaCAPI] Error enviando evento ${eventName} (pixel ${dest.name}): ${detail}`);
+      return { dest: dest.name, sent: false, reason: 'request_failed', error: detail };
+    }
+  }));
 
-  try {
-    const response = await axios.post(url, payload, {
-      params: { access_token: process.env.META_CAPI_ACCESS_TOKEN },
-      timeout: 5000
-    });
-    return { sent: true, eventId: event.event_id, data: response.data };
-  } catch (err) {
-    const detail = err.response && err.response.data ? JSON.stringify(err.response.data) : err.message;
-    logger.warn(`[MetaCAPI] Error enviando evento ${eventName}: ${detail}`);
-    return { sent: false, reason: 'request_failed', error: detail };
-  }
+  const anySent = results.some((r) => r.sent);
+  return {
+    sent: anySent,
+    eventId: event.event_id,
+    results,
+    // compat: el data "principal" sigue siendo el del pixel propio
+    data: (results[0] && results[0].data) || null,
+    reason: anySent ? undefined : 'request_failed'
+  };
+}
+
+// Resumen de destinos para la radiografía de boot de server.js.
+function destinationsSummary() {
+  const dests = _capiDestinations();
+  if (!dests.length) return 'no configurado';
+  const propio = dests.find((d) => d.name === 'propio');
+  const partner = dests.find((d) => d.name === 'partner');
+  const parts = [`propio=${propio ? 'OK' : 'FALTA'}`];
+  if (partner) parts.push(`partner(2º)=OK ${String(partner.pixelId).slice(0, 6)}…`);
+  return parts.join(' · ');
 }
 
 // Fire-and-forget. Útil para no bloquear el response del endpoint.
@@ -250,5 +300,6 @@ module.exports = {
   sendEvent,
   track,
   buildAdvancedMatching,
-  valueCategory
+  valueCategory,
+  destinationsSummary
 };
