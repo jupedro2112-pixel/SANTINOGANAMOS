@@ -4,7 +4,53 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-08-19**
+> **Última actualización: 2026-08-25**
+
+## Sesión 2026-08-25 — Réplica de la gemela: ${amount} literal, retiro real desde el casino, header del widget
+
+### 175. Header del widget del casino: "Soporte Cargas 1Girox" → "Carga rápida 1Girox"
+- **Motivo:** los clientes confundían el widget nuestro con el soporte propio de
+  la página del casino. Solo el título del header verde (ui.js, const `MARCA`
+  pasa a '1Girox' — "Carga rápida Cargas 1Girox" quedaba redundante); el
+  subtítulo "EN LÍNEA", la burbuja 🎧 y el resto quedan igual.
+
+### 174. "💸 Solicitar Retiro" del casino abre el FORMULARIO REAL de retiro (→ sector Pagos)
+- **Síntoma:** en el widget del casino, "Solicitar Retiro" solo mandaba
+  "Quiero retirar mi premio" al chat de CARGAS — el pedido nunca llegaba al
+  sector PAGOS, no cargaba datos bancarios y alentecía todo. En el chat normal
+  SÍ existe el flujo bueno: modal autogestionado (titular + CBU/alias + SMS) →
+  `/api/withdrawal/request` → bandeja de Pagos.
+- **Fix (`ui.js`, `casinoQuickAction` case 'retirar'):** abre el MISMO modal
+  del chat normal (`VIP.withdraw.openWithdrawModal`, verificado que es
+  autocontenido: sus propios ids + fetch de cuenta/saldo). El overlay del
+  casino vive en z-index 99999 y los modales en 10000 → se eleva
+  `#withdrawModal` a 100001 para que se vea ENCIMA del juego (verificados los
+  3 valores en esta repo, idénticos al original). Si el módulo no está, cae al
+  mensaje de siempre.
+- **PROBAR:** casino embebido → widget → "Solicitar Retiro" → formulario
+  ENCIMA del juego → datos + SMS → el retiro cae en la pestaña PAGOS del panel
+  con los datos bancarios. Cancelar devuelve al casino intacto.
+
+### 173. El mensaje del bono por instalar la app mostraba "${amount}" LITERAL
+- **Síntoma (captura del owner):** al reclamar el bono de la app el chat decía
+  "Te acreditamos tu BONO DE ${amount} por instalar la app".
+- **Causa:** el `/sys_install_bonus` guardado en la BASE quedó de la era en que
+  ese bono acreditaba monto fijo. El flujo actual (100% en la PRÓXIMA carga,
+  #100 — no se acredita monto) renderiza solo `{username}` → el `{amount}` del
+  texto viejo quedaba sin reemplazar.
+- **Fix (server.js, 2 partes):** (1) seed de `systemCmds` actualizado al texto
+  vigente ("🎁 ¡Listo {username}! Tenés un *100% de bono en tu próxima
+  carga*…" — solo aplica a instalaciones frescas, es $setOnInsert); (2)
+  migración one-shot al final de `initializeData` (patrón /sys_reminder #151):
+  `updateOne({name:'/sys_install_bonus', response:/\{amount\}/}, {$set:
+  {response: <texto vigente>}})`. Idempotente sin flag: tras pisarlo deja de
+  matchear; un texto editado a mano sin {amount} no se toca. El owner no tiene
+  que borrar/editar nada.
+- **Validado:** `node --check` OK (server.js, ui.js, SW). SW PWA a **v102**
+  (fixes #174/#175). **Back necesita redeploy** (corre la migración al
+  arrancar y loguea "✅ /sys_install_bonus…"). PROBAR: reclamar el bono con un
+  usuario de prueba → mensaje sin "${amount}"; COMANDOS → /sys_install_bonus
+  con el texto vigente.
 
 ## Sesión 2026-08-19 (3ª tanda) — CAUSA RAÍZ del botón CASINO que "carga y falla"
 
