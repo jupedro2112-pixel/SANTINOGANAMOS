@@ -6,6 +6,30 @@
 >
 > **Última actualización: 2026-08-25**
 
+## Sesión 2026-08-25 (2ª tanda) — Burbuja 🎧 del casino ARRASTRABLE
+
+### 176. La burbuja 🎧 fija tapaba controles de los juegos → arrastrable con imán al borde
+- **Reporte de un cliente (captura):** la burbuja de soporte fija abajo a la
+  derecha tapaba la botonera de la ruleta y "no hay cómo eliminarla" — lo que
+  quedaba debajo era imposible de tocar.
+- **Solución elegida por el owner (réplica del #202 del original):** burbuja
+  **ARRASTRABLE** estilo Messenger, dedo o mouse. IIFE `_makeBubbleDraggable`
+  dentro del `if (!overlay)` de `_showCasinoFrame` (ui.js): pointer events con
+  `setPointerCapture` + `touch-action:none`; umbral de 8px separa tap de
+  arrastre; límites dentro del viewport; al soltar, imán al borde horizontal
+  más cercano (left/right 16px, la altura queda donde la dejó). Sin
+  PointerEvent → fija como antes.
+- **Guards:** `_bubbleWasDragged` (con auto-limpieza a 400ms) evita que el
+  click posterior al arrastre abra el chat; `_bubbleSide` hace que el drawer
+  `#casinoChatDrawer` se abra del MISMO lado en que quedó la burbuja
+  (`toggleCasinoChat` lo aplica antes de montar/desmontar). La posición dura
+  mientras el overlay viva; al reingresar arranca en su rincón default (OK).
+- **Validado:** `node --check` OK (ui.js). SW PWA a **v103**. Solo front —
+  deploy de estáticos. PROBAR (celu, tras 2 aperturas de la app): arrastrar la
+  burbuja a la izquierda → se pega al borde y el control tapado queda usable;
+  un toque abre igual que siempre; con la burbuja a la izquierda el panel se
+  abre de ese lado; en PC se arrastra con el mouse.
+
 ## Sesión 2026-08-25 — Réplica de la gemela: ${amount} literal, retiro real desde el casino, header del widget
 
 ### 175. Header del widget del casino: "Soporte Cargas 1Girox" → "Carga rápida 1Girox"

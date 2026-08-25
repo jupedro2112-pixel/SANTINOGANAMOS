@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v102'; // v102: "Solicitar Retiro" del casino abre el formulario real + header "Carga rápida 1Girox"
+const CACHE_VERSION = 'v103'; // v103: burbuja 🎧 del casino arrastrable con imán al borde (tapaba controles de juegos)
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 // Logs por-fetch del SW (corren en CADA request). Apagados por default;
