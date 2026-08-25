@@ -6,6 +6,38 @@
 >
 > **Última actualización: 2026-08-25**
 
+## Sesión 2026-08-25 (3ª tanda) — Identidad de la burbuja: logo 1GIROX + "⚡ CARGA RÁPIDA" + widget abierto
+
+### 177. La burbuja se diferencia del soporte del casino: logo, etiqueta, arranque abierto y pista de arrastre
+- **Pedido del owner (sobre #176):** "a simple vista parece que es un soporte
+  de la página" del casino — que la diferencia sea CLARA, que se note que se
+  puede arrastrar, que el widget aparezca abierto para que vean qué es, y que
+  el 🎧 sea el logo de 1girox.
+- **4 cambios (todo en ui.js, dentro del overlay del casino):**
+  1. **Burbuja con logo + etiqueta:** el 🎧 verde pasa a ser el logo
+     `/images/soporte-1girox.png` (redondo 60px, borde verde — el mismo avatar
+     del chat) con la etiqueta pill "⚡ CARGA RÁPIDA" DEBAJO, todo dentro del
+     mismo button → se arrastra junto. `draggable="false"` +
+     `-webkit-user-drag:none` en la img para que el drag nativo de imágenes no
+     pise los pointer events en PC. El badge de no leídos queda en la esquina
+     del logo (mismo id).
+  2. **El header del widget** también muestra el logo (38px redondo) en vez
+     del 🎧 — consistencia con "Carga rápida 1Girox".
+  3. **El widget arranca ABIERTO** al entrar al casino (`_casinoChatMount()`
+     al final de `_showCasinoFrame`): el jugador ve de una el panel verde
+     "Carga rápida 1Girox" y entiende que es nuestro. Lo cierra con la ✕ o
+     tocando la burbuja, como siempre.
+  4. **Pista de arrastre una vez por dispositivo**
+     (`_showBubbleDragHintOnce`, localStorage `casinoBubbleDragHint`): al
+     PRIMER cierre del widget aparece un globito junto a la burbuja "✋ ¿Te
+     tapa el juego? Mantené apretado y arrastrá…" que se esfuma a los 6s. Se
+     muestra al cerrar (no al abrir) porque recién ahí la burbuja queda sola;
+     posicionado del lado en que esté la burbuja.
+- **Validado:** `node --check` OK (ui.js). SW PWA a **v104**. Solo front.
+  PROBAR: entrar al casino → widget abierto con header con logo; cerrarlo →
+  burbuja con logo + "⚡ CARGA RÁPIDA" y el globito de arrastre (solo la 1ª
+  vez); arrastrarla → la etiqueta viaja con el logo; un toque abre el panel.
+
 ## Sesión 2026-08-25 (2ª tanda) — Burbuja 🎧 del casino ARRASTRABLE
 
 ### 176. La burbuja 🎧 fija tapaba controles de los juegos → arrastrable con imán al borde

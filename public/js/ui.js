@@ -1114,15 +1114,25 @@ VIP.ui._showCasinoFrame = function() {
       '<iframe id="casinoFrame" title="Casino" style="flex:1;width:100%;border:0;display:none;" ' +
         'allow="autoplay; fullscreen; payment"></iframe>' +
 
-      // ── Burbuja de soporte (abre/cierra el widget) ──
+      // ── Burbuja "Carga rápida" (abre/cierra el widget) ──
+      // Logo 1GIROX + etiqueta "⚡ CARGA RÁPIDA": con el 🎧 pelado los clientes
+      // creían que era el soporte propio de la página del casino. Todo vive
+      // DENTRO del button para que al arrastrar se mueva junto.
       '<button type="button" id="casinoSupportBubble" onclick="VIP.ui.toggleCasinoChat()" ' +
         'style="position:absolute;right:16px;bottom:calc(18px + env(safe-area-inset-bottom,0px));' +
-        'width:60px;height:60px;border-radius:50%;border:none;cursor:pointer;z-index:6;' +
-        'background:linear-gradient(135deg,#00a844,#00e676);color:#fff;font-size:26px;' +
-        'box-shadow:0 6px 22px rgba(0,200,83,0.55);">🎧' +
-        '<span id="casinoChatBadge" style="display:none;position:absolute;top:-3px;right:-3px;' +
-          'background:#ff3b30;color:#fff;font-size:11px;font-weight:800;min-width:19px;height:19px;' +
-          'border-radius:10px;line-height:19px;padding:0 4px;box-shadow:0 2px 6px rgba(0,0,0,0.4);"></span>' +
+        'display:flex;flex-direction:column;align-items:center;gap:4px;padding:0;z-index:6;' +
+        'background:none;border:none;cursor:pointer;user-select:none;-webkit-user-select:none;">' +
+        '<span style="position:relative;display:block;width:60px;height:60px;">' +
+          '<img src="/images/soporte-1girox.png" alt="Carga rápida 1Girox" draggable="false" ' +
+            'style="width:60px;height:60px;border-radius:50%;object-fit:cover;display:block;' +
+            'border:2px solid #00e676;box-shadow:0 6px 22px rgba(0,200,83,0.55);-webkit-user-drag:none;">' +
+          '<span id="casinoChatBadge" style="display:none;position:absolute;top:-3px;right:-3px;' +
+            'background:#ff3b30;color:#fff;font-size:11px;font-weight:800;min-width:19px;height:19px;' +
+            'border-radius:10px;line-height:19px;padding:0 4px;box-shadow:0 2px 6px rgba(0,0,0,0.4);"></span>' +
+        '</span>' +
+        '<span style="display:block;background:linear-gradient(135deg,#00a844,#00e676);color:#04240f;' +
+          'font-size:10px;font-weight:900;letter-spacing:0.3px;padding:3px 8px;border-radius:9px;' +
+          'white-space:nowrap;box-shadow:0 3px 10px rgba(0,0,0,0.45);">⚡ CARGA RÁPIDA</span>' +
       '</button>' +
 
       // ── Widget flotante (panel anclado a la esquina; el juego sigue visible) ──
@@ -1135,8 +1145,9 @@ VIP.ui._showCasinoFrame = function() {
         // 1. Header verde
         '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;flex:0 0 auto;' +
           'background:linear-gradient(135deg,#00933c,#00c853);">' +
-          '<span style="width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.2);' +
-            'display:flex;align-items:center;justify-content:center;font-size:19px;flex:0 0 auto;">🎧</span>' +
+          '<img src="/images/soporte-1girox.png" alt="" draggable="false" ' +
+            'style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex:0 0 auto;' +
+            'border:2px solid rgba(255,255,255,0.35);">' +
           '<div style="flex:1;min-width:0;">' +
             '<div style="color:#fff;font-weight:800;font-size:14px;">Carga rápida ' + MARCA + '</div>' +
             '<div style="color:#d8ffe9;font-size:11px;font-weight:700;">' +
@@ -1298,6 +1309,11 @@ VIP.ui._showCasinoFrame = function() {
   // Bloquea el scroll del fondo mientras el casino está abierto.
   document.body.style.overflow = 'hidden';
   VIP.ui._casinoOpen = true;
+
+  // El widget arranca ABIERTO: así el jugador ve de una que es NUESTRA "Carga
+  // rápida 1Girox" y no el soporte de la página del casino (pedido owner). Lo
+  // cierra con la ✕ del header o tocando la burbuja, como siempre.
+  if (!VIP.ui._casinoChatOpen) { try { VIP.ui._casinoChatMount(); } catch (e) {} }
 };
 
 // ── Widget de soporte: abrir/cerrar y mudanza del chat real ──
@@ -1313,8 +1329,39 @@ VIP.ui.toggleCasinoChat = function() {
     if (VIP.ui._bubbleSide === 'left') { drawer.style.left = '16px'; drawer.style.right = 'auto'; }
     else if (VIP.ui._bubbleSide === 'right') { drawer.style.left = 'auto'; drawer.style.right = '16px'; }
   }
-  if (VIP.ui._casinoChatOpen) VIP.ui._casinoChatUnmount();
+  if (VIP.ui._casinoChatOpen) { VIP.ui._casinoChatUnmount(); VIP.ui._showBubbleDragHintOnce(); }
   else VIP.ui._casinoChatMount();
+};
+
+/**
+ * Pista de arrastre (una vez por dispositivo): al PRIMER cierre del widget se
+ * muestra un globito junto a la burbuja avisando que se puede arrastrar — sin
+ * esto nadie descubre que la burbuja se mueve (el pedido vino de un cliente al
+ * que le tapaba la botonera de la ruleta).
+ */
+VIP.ui._showBubbleDragHintOnce = function() {
+  try {
+    if (localStorage.getItem('casinoBubbleDragHint')) return;
+    localStorage.setItem('casinoBubbleDragHint', '1');
+  } catch (e) { return; }
+  const overlay = document.getElementById('casinoOverlay');
+  const b = document.getElementById('casinoSupportBubble');
+  if (!overlay || !b) return;
+  const r = b.getBoundingClientRect();
+  const hint = document.createElement('div');
+  hint.textContent = '✋ ¿Te tapa el juego? Mantené apretado y arrastrá la burbuja a donde quieras';
+  hint.style.cssText =
+    'position:absolute;max-width:230px;background:rgba(13,13,26,0.95);color:#ffd700;' +
+    'border:1px solid rgba(212,175,55,0.6);border-radius:12px;padding:9px 12px;' +
+    'font-size:12px;font-weight:700;line-height:1.35;z-index:8;' +
+    'box-shadow:0 8px 30px rgba(0,0,0,0.6);transition:opacity 0.6s;';
+  // Del mismo lado en que está la burbuja, justo arriba de ella.
+  if ((r.left + r.width / 2) < window.innerWidth / 2) hint.style.left = '12px';
+  else hint.style.right = '12px';
+  hint.style.bottom = (window.innerHeight - r.top + 8) + 'px';
+  overlay.appendChild(hint);
+  setTimeout(function() { hint.style.opacity = '0'; }, 6000);
+  setTimeout(function() { try { hint.remove(); } catch (e) {} }, 6800);
 };
 
 /**
