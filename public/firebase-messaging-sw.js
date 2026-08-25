@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v101'; // v101: iframe del casino a about:blank (el src vacío navegaba a la PWA y rompía la carga)
+const CACHE_VERSION = 'v102'; // v102: "Solicitar Retiro" del casino abre el formulario real + header "Carga rápida 1Girox"
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 // Logs por-fetch del SW (corren en CADA request). Apagados por default;

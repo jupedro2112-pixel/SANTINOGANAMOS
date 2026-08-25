@@ -1092,7 +1092,9 @@ VIP.ui._showCasinoFrame = function() {
   let overlay = document.getElementById('casinoOverlay');
 
   if (!overlay) {
-    const MARCA = 'Cargas 1Girox';
+    // "Carga rápida" y no "Soporte": los clientes confundían el widget nuestro
+    // con el soporte propio de la página del casino.
+    const MARCA = '1Girox';
     overlay = document.createElement('div');
     overlay.id = 'casinoOverlay';
     // iPhone standalone (viewport-fit=cover + status bar translúcida): el
@@ -1136,7 +1138,7 @@ VIP.ui._showCasinoFrame = function() {
           '<span style="width:38px;height:38px;border-radius:50%;background:rgba(255,255,255,0.2);' +
             'display:flex;align-items:center;justify-content:center;font-size:19px;flex:0 0 auto;">🎧</span>' +
           '<div style="flex:1;min-width:0;">' +
-            '<div style="color:#fff;font-weight:800;font-size:14px;">Soporte ' + MARCA + '</div>' +
+            '<div style="color:#fff;font-weight:800;font-size:14px;">Carga rápida ' + MARCA + '</div>' +
             '<div style="color:#d8ffe9;font-size:11px;font-weight:700;">' +
               '<span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#5cff9d;' +
               'box-shadow:0 0 6px #5cff9d;margin-right:4px;"></span>EN LÍNEA</div>' +
@@ -1361,10 +1363,24 @@ VIP.ui.casinoQuickAction = function(action, arg) {
       if (attach) attach.click();
       break;
     }
-    case 'retirar':
-      // El SMS se exige recién al procesar el retiro real — sin cambios acá.
+    case 'retirar': {
+      // FORMULARIO REAL de retiro: antes solo mandaba "quiero retirar" al chat de
+      // CARGAS — el pedido nunca llegaba al sector PAGOS. Ahora abre el MISMO modal
+      // autogestionado del chat normal (datos bancarios + SMS →
+      // /api/withdrawal/request → bandeja de Pagos).
+      try {
+        if (VIP.withdraw && VIP.withdraw.openWithdrawModal) {
+          // El overlay del casino vive en z-index 99999 y los modales en 10000:
+          // se eleva el modal para que se vea ENCIMA del casino.
+          const m = document.getElementById('withdrawModal');
+          if (m) m.style.zIndex = '100001';
+          VIP.withdraw.openWithdrawModal();
+          break;
+        }
+      } catch (e) { /* si el módulo no está, cae al mensaje de siempre */ }
       VIP.ui._casinoSendQuick('💸 Quiero retirar mi premio');
       break;
+    }
     case 'escribir': {
       const input = document.getElementById('messageInput');
       if (input) input.focus();
