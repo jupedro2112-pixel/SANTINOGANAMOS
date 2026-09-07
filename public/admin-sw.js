@@ -34,7 +34,7 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v35'; // v35: Transacciones con ruleta / rakeback / nivel VIP (etiquetas, filtros, tarjetas, total regalos)
+const CACHE_VERSION = 'v36'; // v36: sin checkbox de aviso push en Reiniciar ruleta (ninguna push menciona la ruleta)
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).

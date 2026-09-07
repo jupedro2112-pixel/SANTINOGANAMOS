@@ -855,7 +855,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
 | Motor | Frecuencia | Estado | Idempotencia |
 |---|---|---|---|
 | `_runNotifRulesEvaluator` (reglas push) | 5 min | activo (reglas refund/tier inertes: PlayerStats no portado) | lastFiredAt + ventana |
-| `_runEncuestaTick` | 5 min | pushes sí, **bonos apagados** (`bDays=[]`) | EncuestaFire.slotKey único |
+| `_runEncuestaTick` | 5 min | pushes sí, **bonos apagados** (`bDays=[]`); el incentivo de la ruleta se eliminó (2026-09-07) | EncuestaFire.slotKey único |
 | `_runInactividadTick` | 6 h | **APAGADO** (`INACTIVIDAD_DISABLED=true`) | InactividadFire.fireKey único |
 | `_runBonusStrategy` | 10 min | **APAGADO** (`BONUS_STRATEGY_DISABLED=true`) | step en StrategyEnrollment |
 | `_runDueSchedules` (ScheduledNotif) | 60 s | activo | lastRunAt |
@@ -930,6 +930,11 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   (`GIROX_NETWIN_SCOPE`).
 - **Sin `User.giroxUserId` no hay reembolso ni comisión** para ese usuario. El buscador
   del panel hace LIKE: la coincidencia tiene que ser EXACTA o se le paga a otro (§4.6).
+- **NINGUNA push puede mencionar la ruleta diaria** (2026-09-07): candado global
+  `isRouletteText` al inicio de las 5 funciones de envío de
+  `notificationService` (devuelve `blocked:'roulette'`), migración de reglas y
+  plantillas guardadas en el seed del boot, y sin aviso push en "Reiniciar
+  ruleta". La ruleta NO está activa; si se reactiva, sacar el candado.
 - **Message TTL 3 días; Transaction permanente.** Snapshot en ChatDelay por eso.
 - **ChatStatus se crea con actividad**, no al crear el usuario.
 - **Atribución de publicista** se fija al registrar; el login NO la cambia. El referido

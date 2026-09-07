@@ -8,6 +8,42 @@
 
 ## Sesión 2026-09-07 — Regalos como BONO en el panel de 1girox (chau "Carga" para ruleta/reembolsos)
 
+### 181. NINGUNA push puede mencionar la RULETA DIARIA (réplica #204 del original)
+- **Por qué:** la ruleta diaria NO está activa (confirmado por el owner para
+  esta repo) y a los clientes les llegaba "🔥 La ruleta diaria te espera ·
+  Tenés tu giro gratis del día sin usar" (motor de ENCUESTA) → se quejaban
+  porque no hay ruleta para tirar.
+- **Candado GLOBAL (`src/services/notificationService.js`):** `ROULETTE_TEXT_RE`
+  + `isRouletteText(title, body, data)` (también mira `data.source|kind|type`);
+  al INICIO de las 5 funciones de envío (toUser / toMultiple / toTopic /
+  toAllUsers / toUsernames) si matchea → NO envía, `console.warn('[FCM] 🚫 push
+  BLOQUEADA (<fn>): texto de RULETA — "…"')` y devuelve `{ success:false,
+  blocked:'roulette', successCount:0, failureCount:0 }`. Cubre motores
+  automáticos, reglas/plantillas/lotes editados desde el panel y envíos
+  manuales. Exportados `isRouletteText` y `ROULETTE_TEXT_RE`.
+- **Biblioteca de la encuesta (`encuestaService.INCENTIVO_MSGS`):** eliminada
+  (con lápida) la entrada de la ruleta. Los OTROS incentivos ("Te estamos
+  esperando", etc.) siguen saliendo si la ENCUESTA está activa — si el owner
+  tampoco los quiere, se apaga desde el panel (isActive).
+- **Seed + migraciones de lo GUARDADO:** la seed `PLAN-ACTIVO-DIARIO` pasa de
+  "¡Girá la ruleta y jugá!" a "¡Jugá y divertite!". En `seedDefaultRulesIfMissing`
+  (antes del loop de altas) migración idempotente: reglas cuyo title/body
+  matcheen la regex → si es seed con copy limpio se pisa title/body; si no →
+  `enabled:false` + warn para editarla desde el panel. En server.js, tras el
+  seed: `NotifTemplate.updateMany({title|body: RE}, {title:'', body:''})` (vacío
+  = vuelve al default, que no menciona la ruleta).
+- **Botón "Reiniciar ruleta" del panel:** eliminado el checkbox "📲 Avisar a
+  todos por notificación" (index.html), su lectura en `resetRouletteDaily()`
+  (manda `{}`) y la rama del back que mandaba esa push (`notified` queda en null
+  por compat con paneles cacheados). admin-sw a **v36**.
+- **Validado:** `node --check` OK (server.js, notificationService.js,
+  encuestaService.js, notificationRulesService.js, admin.js, admin-sw.js).
+  **Back necesita redeploy.** PROBAR: en los logs del boot buscar `migración
+  ruleta` (reglas/plantillas tocadas); envío manual de push desde el panel con
+  la palabra "ruleta" → no llega y aparece `[FCM] 🚫 push BLOQUEADA`.
+- ⚠️ Si algún día se reactiva la ruleta, sacar el candado de notificationService
+  (y revisar #178/#179: la acreditación de premios como bono sigue intacta).
+
 ### 180. Username tomado en 1girox por OTRA estructura → el alta FALLA sin dejar cuenta local (réplica #205 del original)
 - **Bug (caso real en el original, gxdaiana323):** los usernames de 1girox son
   únicos para TODA la plataforma pero la visibilidad/operación es POR RAMA. Si

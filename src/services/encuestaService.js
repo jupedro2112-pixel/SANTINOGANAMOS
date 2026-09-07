@@ -19,7 +19,9 @@ const DOW_NAME = ['dom', 'lun', 'mar', 'mie', 'jue', 'vie', 'sab'];
 // Biblioteca de mensajes de incentivo (sin bono). Rotan por índice.
 const INCENTIVO_MSGS = [
   { title: '🎰 Te estamos esperando', body: 'Entrá y probá tu suerte — hoy puede ser tu día.' },
-  { title: '🔥 La ruleta diaria te espera', body: 'Tenés tu giro gratis del día sin usar. ¡Aprovechalo!' },
+  // 🪦 2026-09-07: eliminado '🔥 La ruleta diaria te espera / Tenés tu giro gratis
+  // del día sin usar' — la ruleta diaria NO está activa y los clientes se quejaban.
+  // notificationService además BLOQUEA cualquier push que mencione la ruleta.
   { title: '💰 Revisá tus reembolsos', body: 'Fijate si tenés reembolsos para reclamar en la sala.' },
   { title: '⭐ ¿Cómo la venís pasando?', body: 'Entrá un rato, jugá y disfrutá de tus beneficios VIP.' },
   { title: '🎲 Un ratito de juego', body: 'Date una vuelta por la sala, te estamos esperando.' },

@@ -703,7 +703,7 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
       audienceType: 'notification-plan',
       audienceConfig: { plan: 'activo' },
       title: '🎰 Tu suerte te espera',
-      body: 'Entrá y aprovechá los bonos de hoy. ¡Girá la ruleta y jugá!',
+      body: 'Entrá y aprovechá los bonos de hoy. ¡Jugá y divertite!',
       bonus: { type: 'none' },
       requiresAdminApproval: false,
       cooldownMinutes: 20 * 60
@@ -758,6 +758,29 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
   ]);
   for (const def of defaults) {
     if (_seedDisabledAudiences.has(def.audienceType)) def.enabled = false;
+  }
+
+  // MIGRACIÓN idempotente (2026-09-07, réplica #204): ninguna push puede
+  // mencionar la RULETA DIARIA (no está activa). Reglas GUARDADAS cuyo title/body
+  // la mencionen: si es una seed cuyo copy nuevo ya está limpio → se pisa con el
+  // de la seed; si no (regla editada a mano) → enabled:false + warn para que el
+  // owner la edite desde el panel. notificationService igual bloquea el envío.
+  try {
+    const { ROULETTE_TEXT_RE } = require('./notificationService');
+    const dirty = await NotificationRule.find({ $or: [{ title: ROULETTE_TEXT_RE }, { body: ROULETTE_TEXT_RE }] }).lean();
+    for (const rule of dirty) {
+      const def = defaults.find((d) => d.code === rule.code);
+      const seedClean = def && !ROULETTE_TEXT_RE.test(String(def.title || '') + ' ' + String(def.body || ''));
+      if (seedClean) {
+        await NotificationRule.updateOne({ code: rule.code }, { $set: { title: def.title, body: def.body } });
+        console.log(`[notif-rules] migración ruleta: regla ${rule.code} → copy de la seed (sin ruleta)`);
+      } else {
+        await NotificationRule.updateOne({ code: rule.code }, { $set: { enabled: false } });
+        console.warn(`[notif-rules] migración ruleta: regla ${rule.code} ("${String(rule.title || '').slice(0, 60)}") menciona la ruleta → DESACTIVADA. Editala desde el panel.`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[notif-rules] migración ruleta falló: ${e.message}`);
   }
 
   for (const def of defaults) {

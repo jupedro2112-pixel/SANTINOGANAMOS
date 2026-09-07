@@ -16,6 +16,30 @@ let isInitialized = false;
 // ============================================
 const FCM_SEND_TIMEOUT_MS = 10000;
 
+// ============================================================
+// CANDADO GLOBAL: NINGUNA push puede mencionar la RULETA DIARIA (2026-09-07,
+// réplica #204 del original). La ruleta diaria NO está activa y a los clientes
+// les llegaba "🔥 La ruleta diaria te espera · Tenés tu giro gratis del día sin
+// usar" (motor de encuesta) → se quejaban porque no hay ruleta para tirar.
+// Se chequea al INICIO de las 5 funciones de envío, así queda bloqueado TODO:
+// motores automáticos, reglas/plantillas/lotes editados desde el panel y envíos
+// manuales. Si algún día la ruleta se reactiva, sacar este candado.
+// ============================================================
+const ROULETTE_TEXT_RE = /ruleta|roulette|giro\s+(gratis|del\s+d[ií]a)|\bgir[aá]\b/i;
+function isRouletteText(title, body, data) {
+  const t = String(title || '') + ' ' + String(body || '');
+  if (ROULETTE_TEXT_RE.test(t)) return true;
+  if (data && typeof data === 'object') {
+    const src = String(data.source || data.kind || data.type || '');
+    if (/roulette|ruleta/i.test(src)) return true;
+  }
+  return false;
+}
+function _blockedRoulette(where, title) {
+  console.warn(`[FCM] 🚫 push BLOQUEADA (${where}): texto de RULETA — "${String(title || '').slice(0, 80)}"`);
+  return { success: false, blocked: 'roulette', successCount: 0, failureCount: 0, error: 'Push bloqueada: menciona la ruleta diaria (no está activa)' };
+}
+
 function _sendWithTimeout(promise, timeoutMs) {
   let timeoutId;
   const timeoutPromise = new Promise((_, reject) => {
@@ -363,6 +387,7 @@ function initializeFirebase() {
 // ENVIAR NOTIFICACIÓN A UN USUARIO
 // ============================================
 async function sendNotificationToUser(fcmToken, title, body, data = {}) {
+  if (isRouletteText(title, body, data)) return _blockedRoulette('sendNotificationToUser', title);
   if (!isInitialized) {
     const initialized = initializeFirebase();
     if (!initialized) {
@@ -482,6 +507,7 @@ async function sendNotificationToUser(fcmToken, title, body, data = {}) {
 // ENVIAR NOTIFICACIÓN A MÚLTIPLES USUARIOS
 // ============================================
 async function sendNotificationToMultiple(fcmTokens, title, body, data = {}) {
+  if (isRouletteText(title, body, data)) return _blockedRoulette('sendNotificationToMultiple', title);
   if (!isInitialized) {
     const initialized = initializeFirebase();
     if (!initialized) {
@@ -585,6 +611,7 @@ async function sendNotificationToMultiple(fcmTokens, title, body, data = {}) {
 // ENVIAR NOTIFICACIÓN A TÓPICO
 // ============================================
 async function sendNotificationToTopic(topic, title, body, data = {}) {
+  if (isRouletteText(title, body, data)) return _blockedRoulette('sendNotificationToTopic', title);
   if (!isInitialized) {
     const initialized = initializeFirebase();
     if (!initialized) {
@@ -677,6 +704,7 @@ async function unsubscribeFromTopic(fcmToken, topic) {
 // ENVIAR NOTIFICACIÓN MASIVA A TODOS LOS USUARIOS
 // ============================================
 async function sendNotificationToAllUsers(UserModel, title, body, data = {}, filter = {}) {
+  if (isRouletteText(title, body, data)) return _blockedRoulette('sendNotificationToAllUsers', title);
   if (!isInitialized) {
     const initialized = initializeFirebase();
     if (!initialized) {
@@ -869,6 +897,7 @@ async function sendNotificationToAllUsers(UserModel, title, body, data = {}, fil
 // ENVIAR NOTIFICACIÓN A USUARIOS ESPECÍFICOS POR USERNAME
 // ============================================
 async function sendNotificationToUsernames(UserModel, usernames, title, body, data = {}) {
+  if (isRouletteText(title, body, data)) return _blockedRoulette('sendNotificationToUsernames', title);
   if (!isInitialized) {
     const initialized = initializeFirebase();
     if (!initialized) {
@@ -1068,5 +1097,7 @@ module.exports = {
   subscribeToTopic,
   unsubscribeFromTopic,
   pruneInvalidFcmTokens,
-  initializeFirebase
+  initializeFirebase,
+  isRouletteText,
+  ROULETTE_TEXT_RE
 };

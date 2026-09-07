@@ -16626,23 +16626,11 @@ app.post('/api/admin/roulette/reset-daily', authMiddleware, adminMiddleware, asy
     const deleted = (r && r.deletedCount) || 0;
     logger.warn(`[roulette] RESET diario por ${(req.user && req.user.username) || '?'} — dateKey=${dateKey} giros borrados=${deleted}`);
 
-    // Aviso opcional por push a todos: "ruleta actualizada, volvé a girar".
-    let notified = null;
-    if (req.body && req.body.notify) {
-      try {
-        const bc = await sendNotificationToAllUsers(
-          User,
-          '🎰 Ruleta diaria actualizada',
-          'Podés volver a probar tu suerte. ¡Girá de nuevo!',
-          { source: 'roulette' },
-          {}
-        );
-        notified = (bc && bc.successCount) || 0;
-        logger.info(`[roulette] RESET notif enviada → success=${notified}`);
-      } catch (notifErr) {
-        logger.warn(`[roulette] RESET notif falló: ${notifErr.message}`);
-      }
-    }
+    // 🪦 2026-09-07 (réplica #204): se eliminó el aviso push "🎰 Ruleta diaria
+    // actualizada · ¡Girá de nuevo!" — ninguna push puede mencionar la ruleta
+    // (notificationService la bloquearía igual). `notified` queda en null por
+    // compat con paneles cacheados que todavía leen ese campo.
+    const notified = null;
 
     res.json({ success: true, deleted, dateKey, notified });
   } catch (err) {
@@ -17152,6 +17140,17 @@ setTimeout(async () => {
   try {
     await notificationRulesService.seedDefaultRulesIfMissing(NotificationRule);
     logger.info('[notif-rules] seed inicial completado');
+    // Migración ruleta (2026-09-07, réplica #204): plantillas de push GUARDADAS
+    // que mencionen la ruleta → title/body vacíos = vuelven al texto default (que
+    // no la menciona). Idempotente: una vez vacías dejan de matchear.
+    try {
+      const NotifTemplateModel = require('./src/models/NotifTemplate');
+      const RE = require('./src/services/notificationService').ROULETTE_TEXT_RE;
+      const r = await NotifTemplateModel.updateMany({ $or: [{ title: RE }, { body: RE }] }, { $set: { title: '', body: '' } });
+      if (r && r.modifiedCount) console.log(`[notif-templates] migración ruleta: ${r.modifiedCount} plantilla(s) vaciadas (vuelven al default)`);
+    } catch (e) {
+      console.warn(`[notif-templates] migración ruleta falló: ${e.message}`);
+    }
   } catch (err) {
     logger.error('[notif-rules] seed error: ' + err.message);
   }

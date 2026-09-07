@@ -9883,14 +9883,14 @@ async function saveRouletteBudget() {
 // volver a girar. Confirmación obligatoria — es una acción destructiva.
 async function resetRouletteDaily() {
     if (!confirm('¿Reiniciar la ruleta de HOY?\n\nTodos los que ya giraron hoy van a poder girar de nuevo. Los premios ya acreditados NO se tocan.')) return;
-    const notify = !!(document.getElementById('rouletteResetNotify') || {}).checked;
+    // 2026-09-07: sin aviso push (ninguna push puede mencionar la ruleta).
     const box = document.getElementById('rouletteResetStatus');
     if (box) { box.style.color = '#aaa'; box.textContent = '⏳ Reiniciando…'; }
     try {
         const r = await rouletteAuthFetch('/api/admin/roulette/reset-daily', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ notify: notify })
+            body: JSON.stringify({})
         });
         const d = await r.json();
         if (!r.ok || !d.success) throw new Error(d.error || 'No se pudo reiniciar');
