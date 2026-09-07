@@ -8,6 +8,51 @@
 
 ## Sesión 2026-09-07 — Regalos como BONO en el panel de 1girox (chau "Carga" para ruleta/reembolsos)
 
+### 179. Auditoría "todo lo que no es depósito común = BONO" + Transacciones del panel separadas por tipo
+- **Pedido del owner (sobre #178):** chequear que TODO lo que no sea depósito común
+  (reembolso, bonificación, ruleta, etc.) vaya como BONUS a 1girox, y que en la
+  sección Transacciones del panel admin quede anotado bien, separado.
+- **Auditoría de los 6 `depositToUser` que quedaban:** auto-carga hgcash y carga
+  manual del agente = depósito común (OK); `/api/movements/deposit` (legacy,
+  gateado) = depósito; **fueguito con rollover** = era Carga → cambiado (abajo);
+  **devolución de retiro rechazado** (`vip-payoutref-*`) se DEJA como depósito a
+  propósito: no es un regalo, es plata real que vuelve por un retiro que no se
+  pagó (si el owner quiere verla como Bono, es un cambio de una línea).
+- **Fueguito como BONO con rollover (`_creditFireReward`, server.js):** con
+  rollover >0 va por `/bonus` con ese multiplier (bloqueado hasta apostar
+  multiplier × premio; con `claim_required` el jugador lo libera tocando el
+  regalito del casino al completar el objetivo — el mensaje de éxito lo dice).
+  Requisitos: bono suelto habilitado, multiplier ∈ `bonus.multipliers`
+  ([0,2,5,10,20,40] — el default 5 está), monto dentro de fixed_min/max y que el
+  jugador NO tenga bono activo (`bonus_locked + claimable = 0`, lectura fresh):
+  otorgar otro lo PISARÍA y le debitaría el resto. Si algo no se cumple → cae al
+  depósito CON multiplier de antes (mismo candado, figura como Carga) con warn
+  `[FIRE_REWARD] ... va por DEPÓSITO`. Con rollover 0 = regalo directo (bono 0).
+  Misma reference `vip-fire-*` en todas las ramas. El POST de `fire-milestones`
+  ahora rechaza un rollover que no sea multiplicador de bono permitido (lista en
+  el error), igual que hace el welcome code.
+- **RULETA: no escribía Transaction** — el premio vivía sólo en
+  `DailyRouletteSpin` y era invisible en Transacciones. Tipo nuevo **`roulette`**
+  en el enum de Transaction; `_recordRouletteTransaction` (idempotente por
+  `metadata.spinId`) se llama en el spin y en el retry-credit del panel.
+- **Transacciones del panel:** el resumen de `GET /api/admin/transactions` suma
+  `rakebacks`, `vipLevelups`, `roulette` y **`gifts`** (todo lo que no es carga
+  ni retiro = lo que en 1girox va como Bono). Panel: etiquetas para
+  `rakeback`/`vip_levelup`/`roulette`/`transfer` (antes salían con el nombre
+  crudo), botones de filtro 🎡 Ruleta / 💎 Rakeback / 👑 Nivel VIP, tarjetas
+  Ruleta (siempre), Rakeback y Nivel VIP (si >0) y **"🎁 Total regalos (no
+  cargas)"**, badges con color propio. admin-sw a **v35**.
+- **`metadata.creditedAs`** ('bonus'|'deposit') en las Transactions de ruleta y
+  fueguito: dice cómo salió DE VERDAD hacia 1girox (si hubo fallback a depósito,
+  queda registrado para cruzar con el panel de la plataforma).
+- **Validado:** `node --check` OK (server.js, Transaction.js, admin.js,
+  admin-sw.js). **Back necesita redeploy; panel, recargar.** PROBAR: girar la
+  ruleta con premio → fila "🎡 Ruleta" en Transacciones y Bono en 1girox;
+  reclamar un premio de fueguito → en 1girox "Bono" con rollover (o Carga con
+  rollover + warn en logs si el jugador ya tenía bono activo); filtros y
+  tarjetas nuevas; en Config → Fueguito, poner rollover 3 → rechazado con la
+  lista de permitidos.
+
 ### 178. `creditUserBalance` pasa de depósito libre a BONO 0 "regalo directo" (Partner API v1.10+, manual v1.15)
 - **Reclamo del owner (captura del panel de 1girox, 4/9):** los premios de ruleta
   (`vip-roulette-*`) y los reembolsos (`vip-rf-daily-*`) aparecen como "↑ Carga",

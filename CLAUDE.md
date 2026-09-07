@@ -100,8 +100,11 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   permitido o el monto sale de `fixed_min/fixed_max`. Kill switch `GIROX_GIFT_AS_BONUS=0`.
   Un `multiplier` EXPLÍCITO (>0) sí usa `/bonus` con rollover: puede quedar "a reclamar"
   (`girox.claimPendingBonus()`) y PISA un bono activo. El **fueguito** con rollover >0
-  sigue con **depósito CON `multiplier`** (candado de la plataforma, figura como carga);
-  con rollover 0 va como regalo directo.
+  va por `/bonus` con ese multiplier (`_creditFireReward`) salvo que el jugador ya
+  tenga bono activo → cae al depósito con `multiplier` de antes. **La ruleta escribe
+  `Transaction type:'roulette'`**; tipo de Transaction nuevo ⇒ etiqueta + filtro +
+  case del resumen en el panel (§6 de ARCHITECTURE). La devolución de retiro
+  rechazado sigue como depósito (no es regalo).
 - **Roles:** `user`, `admin` (todo), `depositor` (solo cargas), `withdrawer` (solo
   retiros), `publisher_admin` (solo crea usuarios de su publicista — lockdown via
   `PUBLISHER_ADMIN_ALLOWED_PATHS`).

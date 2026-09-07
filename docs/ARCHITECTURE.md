@@ -97,7 +97,10 @@ modelos); sus migraciones corren únicamente si algo llamara a ese connectDB.
   `installBonusClaimed`, `notificationPlan`, `notifMonthlyCounts`,
   `loginWithoutPassword`, `withdrawalAccount`, `pendingAccessCode`.
 - **Transaction** — registro PERMANENTE (sin TTL). `type`: deposit|withdrawal|bonus|
-  refund|transfer|referral_commission|fire_reward|rakeback|vip_levelup.
+  refund|transfer|referral_commission|fire_reward|rakeback|vip_levelup|roulette
+  (`roulette` desde 2026-09-07: antes la ruleta no escribía Transaction).
+  `metadata.creditedAs` ('bonus'|'deposit') en ruleta y fueguito = cómo salió de
+  verdad hacia 1girox (fallback a depósito queda registrado).
   `metadata.source` distingue regalos ('install_bonus','welcome_gift') y devoluciones
   ('payout_refund') que se EXCLUYEN de los reportes de carga real. **Fuente de toda la
   analítica.**
@@ -385,14 +388,20 @@ reintento manda la misma reference y la plataforma responde `duplicate:true`.
   apostar amount × multiplier, con `claim_required` puede quedar "a reclamar" (los
   callers hacen `claimPendingBonus`) y ⚠️ **PISA un bono activo previo** ("bono
   sobre bono": se debita lo que quedaba del viejo).
-- **FUEGUITO (2026-08-05):** con rollover >0 sus premios van con **DEPÓSITO CON
-  `multiplier`** (`girox.depositToUser(..., {multiplier: x})`, x editable en el
-  panel — Config['fireRolloverMultiplier'], default 5): la plata entra al saldo ya
-  (jugable) pero la plataforma exige apostar multiplier × premio para retirarla.
-  Figura como Carga (con rollover) en el panel; NO va por `/bonus` con rollover
-  porque requeriría reclamo y pisa bonos activos. Con rollover 0 va por
-  `creditUserBalance` = regalo directo (Bono). El viejo requisito de cargas
-  (milestone.requireDeposits) ya NO se chequea al reclamar (campos ignorados).
+- **FUEGUITO (2026-09-07, `_creditFireReward` en server.js):** con rollover >0
+  (Config['fireRolloverMultiplier'], default 5, editable en el panel — validado
+  contra `bonus.multipliers`) el premio va por **`/bonus` con ese multiplier** →
+  figura como BONO, jugable ya, retirable tras apostar multiplier × premio; con
+  `claim_required` el jugador lo libera tocando el regalito del casino al
+  completar el objetivo. Guard: si el jugador YA tiene bono activo
+  (`bonus_locked + claimable > 0`, lectura fresh) — o el bono suelto está apagado,
+  el multiplier no está permitido o el monto sale de fixed_min/max — cae al
+  **depósito CON `multiplier`** de antes (mismo candado, figura como Carga, warn
+  en logs) para no PISAR el bono en curso. Con rollover 0 = regalo directo (bono
+  0). Misma reference `vip-fire-*` en todas las ramas. El viejo requisito de
+  cargas (milestone.requireDeposits) ya NO se chequea (campos ignorados).
+- **Devolución de retiro rechazado** (`vip-payoutref-*`) sigue siendo DEPÓSITO a
+  propósito: no es un regalo, es plata real que vuelve (decisión 2026-09-07).
 - `depositToUser` acepta `wagering` opcional (`multiplier`, `bonus_percent`,
   `bonus_amount`, `bonus_multiplier`). Caso raro documentado: la carga se acredita pero
   el bono falla (`wagering.bonus.status === 'failed'`) → se marca `bonusFailed` y se
@@ -700,9 +709,10 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   referidor (7%). Ver §4.6.
 - **Ruleta diaria**: requiere PWA instalada (token FCM standalone) + cliente activo
   (>10 cargas reales/30d). Pick ponderado + **budget pacing** (distribuye el
-  presupuesto diario por hora ART; si excede → fuerza SIN PREMIO). Auto-crédito con
-  depósito libre (`vip-roulette-<spinId>`); `credit_failed` → retry desde el panel con
-  la MISMA reference.
+  presupuesto diario por hora ART; si excede → fuerza SIN PREMIO). Auto-crédito como
+  bono 0 / regalo directo (`vip-roulette-<spinId>`, §4.5); `credit_failed` → retry
+  desde el panel con la MISMA reference. Escribe `Transaction type:'roulette'`
+  (idempotente por `metadata.spinId`, desde 2026-09-07).
 - **Fueguito**: reclamo diario sin requisitos; premios de hitos (editables en panel,
   Config['fireMilestones']) exigen actividad de cargas y expiran el mismo día. Crédito
   con depósito libre (`vip-fire-<userId>-d<día>-<fecha>`).
@@ -817,7 +827,14 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   edad), desglose pauta/agente/orgánico, $/nuevo y c3Pct10d; tablas con
   semáforo + "🎯 Rendimiento por campaña" (publisher de Campaign). Botones
   "❓ Cómo leer esta hoja" en Datos y Datos 2.0 (guía compartida).
-- `admin-sw.js` (v31, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
+- **Sección Transacciones** (`GET /api/admin/transactions`, paginado + resumen por
+  aggregation sobre el rango sin filtro de tipo): tarjetas Depósitos / Retiros /
+  Bonificaciones / Reembolsos / Referidos / Fueguito / Ruleta / Rakeback / Nivel VIP
+  y **"Total regalos (no cargas)"** (`summary.gifts` = todo lo que no es deposit ni
+  withdrawal — lo que en 1girox va como Bono); filtros por tipo incluyen roulette,
+  rakeback y vip_levelup; etiquetas en `getTransactionTypeLabel` (tipo nuevo ⇒
+  sumar etiqueta + botón + case del resumen).
+- `admin-sw.js` (v35, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
   network-first no-store para el shell.
 - Servido por handlers propios con cache en memoria (`readFileCached`) + ADMIN_HOST
   check opcional; el catch-all bloquea todo otro path bajo /adminprivado2026/.
