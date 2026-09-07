@@ -8,6 +8,44 @@
 
 ## Sesión 2026-09-07 — Regalos como BONO en el panel de 1girox (chau "Carga" para ruleta/reembolsos)
 
+### 180. Username tomado en 1girox por OTRA estructura → el alta FALLA sin dejar cuenta local (réplica #205 del original)
+- **Bug (caso real en el original, gxdaiana323):** los usernames de 1girox son
+  únicos para TODA la plataforma pero la visibilidad/operación es POR RAMA. Si
+  alguien creaba un username que ya existía bajo OTRA estructura (que nuestras
+  keys no ven), `girox.syncUserToPlatform` lo trataba como "ya existe → lo
+  vinculo" (`alreadyExists:true` → `giroxSyncStatus:'linked'`) → cuenta local
+  IMPOSIBLE de operar para siempre: cargas, retiros y SSO dan
+  `player_not_found`, y la red de seguridad del depósito intenta crearlo → "ya
+  existe".
+- **Fix en la fuente (`giroxService.syncUserToPlatform`):** si
+  `getUserInfoByName` NO lo ve pero `createPlatformUser` devuelve
+  `alreadyExists` → `{ success:false, foreignUsername:true, code:
+  'username_taken_foreign' }` (antes success+alreadyExists). La rama "lo VEO →
+  vincular" no se tocó.
+- **Call sites (todos rebotan SIN cuenta local):** registro PWA y
+  `register-quick` → 400 "Ese nombre de usuario ya está en uso. Elegí otro.";
+  `POST /api/users` y `POST /api/admin/users` (crean local primero) → en la
+  rama de fallo del sync, si es `username_taken_foreign` → `User.deleteOne` +
+  400 (antes quedaba creada con `platformWarning`); **alta del publicista**
+  (`publisher-admin/create-user`): el sync pasó de IIFE fire-and-forget a
+  **await inline** para poder abortar — `result.alreadyExists` con la key del
+  publicista (acá sólo llegan ajenos: un jugador nuestro rebota antes en el
+  chequeo local) o `username_taken_foreign` en los fallbacks a master → borrar
+  + 400; excepción/transitorio → NO aborta (queda y se repara con la red de
+  seguridad de la 1ª carga). Costo: el alta espera ~1-2 s. **SSO** (rama
+  `player_not_found` → crear al vuelo): si falla con `username_taken_foreign`
+  se persiste `giroxSyncStatus:'error'` + `giroxSyncError` antes del 502 →
+  cuentas YA rotas quedan marcadas y visibles en el panel. La landing hereda el
+  rechazo por la fuente (responde 502 genérico, sin cuenta huérfana).
+- **Operativo (pasar a los agentes):** una cuenta ya "vinculada" a un jugador
+  ajeno NO se rescata (recrearla no lo mueve de rama): username NUEVO para el
+  cliente y bloquear/anotar la cuenta local vieja.
+- **Validado:** `node --check` OK (server.js, giroxService.js). **Back necesita
+  redeploy.** PROBAR: registrar (PWA) y crear (panel general y publicista) un
+  username que exista en OTRA estructura → rechaza con mensaje claro y NO
+  aparece en Usuarios; nombre libre → igual que siempre; cliente ya roto →
+  CASINO responde "escribinos por chat" y el user queda con sync en error.
+
 ### 179. Auditoría "todo lo que no es depósito común = BONO" + Transacciones del panel separadas por tipo
 - **Pedido del owner (sobre #178):** chequear que TODO lo que no sea depósito común
   (reembolso, bonificación, ruleta, etc.) vaya como BONUS a 1girox, y que en la

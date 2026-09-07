@@ -743,7 +743,20 @@ async function syncUserToPlatform({ username, password }) {
     return { success: true, alreadyExists: false, platformUsername: username, player: created.player };
   }
   if (created.alreadyExists) {
-    return { success: true, alreadyExists: true, platformUsername: username, player: null };
+    // El nombre está TOMADO en la plataforma pero nuestra key NO lo ve (el
+    // getUserInfoByName de arriba dio null): pertenece a OTRA estructura/agente.
+    // Antes se devolvía success+alreadyExists y el caller lo "vinculaba" → cuenta
+    // local imposible de operar para siempre (cargas, retiros y SSO dan
+    // player_not_found; la red de seguridad del depósito intenta crearlo → "ya
+    // existe"). Los usernames de 1girox son únicos para TODA la plataforma pero
+    // la visibilidad es por rama. Fix 2026-09-07 (réplica #205): es un ERROR y el
+    // alta tiene que rebotar sin dejar cuenta local.
+    return {
+      success: false,
+      foreignUsername: true,
+      code: 'username_taken_foreign',
+      error: 'Ese nombre de usuario ya está en uso en la plataforma (pertenece a otra estructura). Elegí otro nombre.'
+    };
   }
   return { success: false, error: created.error, code: created.code };
 }

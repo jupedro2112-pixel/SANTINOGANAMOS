@@ -566,6 +566,14 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
 
 ## 5. Flujos principales
 
+- **Username tomado por OTRA estructura de 1girox (2026-09-07):**
+  `syncUserToPlatform` devuelve `code:'username_taken_foreign'` cuando el nombre
+  está tomado en la plataforma pero nuestra key no lo ve (los usernames son
+  únicos en TODA la plataforma, la visibilidad es por rama). TODAS las altas
+  rebotan con 400 sin dejar cuenta local (registro, register-quick, POST
+  /api/users, POST /api/admin/users — borran la local recién creada —, alta del
+  publicista — sync ahora con await inline). El SSO marca `giroxSyncStatus:
+  'error'` en cuentas ya rotas. No se rescatan: username nuevo.
 - **Registro**: `POST /api/auth/register` (user+pass; OTP solo si manda teléfono) o
   `register-quick` (link de pauta con campaignCode válido, sin SMS,
   phoneVerificationPending=true → no puede retirar hasta verificar). Crea en 1girox

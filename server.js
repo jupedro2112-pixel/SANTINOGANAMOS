@@ -3215,6 +3215,11 @@ app.post('/api/auth/register', authLimiter, registerIpLimiter, async (req, res) 
       });
       
       if (!jgResult.success && !jgResult.alreadyExists) {
+        // Username tomado en 1girox por OTRA estructura (nuestra key no lo ve):
+        // rebotar con mensaje claro y SIN cuenta local (réplica #205).
+        if (jgResult.code === 'username_taken_foreign') {
+          return res.status(400).json({ error: 'Ese nombre de usuario ya está en uso. Elegí otro.' });
+        }
         return res.status(400).json({ error: 'No se pudo crear el usuario en la plataforma: ' + (jgResult.error || 'Error desconocido') });
       }
       
@@ -3449,6 +3454,9 @@ app.post('/api/auth/register-quick', authLimiter, registerIpLimiter, async (req,
     try {
       jgResult = await girox.syncUserToPlatform({ username, password });
       if (!jgResult.success && !jgResult.alreadyExists) {
+        if (jgResult.code === 'username_taken_foreign') {
+          return res.status(400).json({ error: 'Ese nombre de usuario ya está en uso. Elegí otro.' });
+        }
         return res.status(400).json({ error: 'No se pudo crear el usuario en la plataforma: ' + (jgResult.error || 'Error desconocido') });
       }
     } catch (jgError) {
@@ -4694,6 +4702,15 @@ async function platformSessionHandler(req, res) {
       const sync = await girox.syncUserToPlatform({ username: user.username, password: provisional });
       if (!sync.success) {
         logger.error(`[girox-sso] no se pudo crear a ${user.username}: ${sync.error}`);
+        // Username tomado por OTRA estructura (cuenta ya rota de este tipo): dejarla
+        // MARCADA para que se vea en el panel (réplica #205). No se puede rescatar:
+        // recrearla no la mueve de rama → username nuevo + bloquear/anotar la vieja.
+        if (sync.code === 'username_taken_foreign') {
+          await User.updateOne({ id: user.id }, { $set: {
+            giroxSyncStatus: 'error',
+            giroxSyncError: String(sync.error).slice(0, 500)
+          } }).catch(() => {});
+        }
         return res.status(502).json({ error: 'No pudimos abrir tu cuenta en el casino. Escribinos por chat y lo resolvemos.' });
       }
       await User.updateOne({ id: user.id }, { $set: { giroxSyncStatus: sync.alreadyExists ? 'linked' : 'synced' } }).catch(() => {});
@@ -5713,6 +5730,12 @@ app.post('/api/users', authMiddleware, adminMiddleware, async (req, res) => {
             { id: userId },
             { giroxSyncStatus: result.alreadyExists ? 'linked' : 'synced' }
           );
+        } else if (result.code === 'username_taken_foreign') {
+          // Username tomado en 1girox por OTRA estructura: la cuenta local sería
+          // inoperable para siempre → se borra y el alta rebota (réplica #205).
+          await User.deleteOne({ id: userId }).catch(() => {});
+          logger.warn(`[users] ${newUser.username}: username tomado en 1girox por otra estructura — alta abortada`);
+          return res.status(400).json({ error: 'El usuario ya existe en la plataforma de 1girox (bajo otra estructura que no manejamos). Elegí OTRO nombre de usuario.' });
         } else {
           platformWarning = result.error || 'No se pudo crear en la plataforma de juego';
           await User.updateOne({ id: userId }, {
@@ -12372,55 +12395,52 @@ app.post('/api/admin/publisher-admin/create-user', authMiddleware, publisherAdmi
     // crea recién cuando el usuario ingresa (endpoint /api/messages/welcome) o
     // cuando envía su primer mensaje (upsert en /api/messages/send).
 
-    // Sincronizar con la plataforma en background. Si la campaña tiene API key propia
-    // (la del publicista), el alta se hace con ESA key para que el jugador quede
-    // colgado del publicista correcto en la jerarquía de 1girox — y la comisión la
-    // cobre quien debe. Si la campaña no tiene key configurada, fallback a la master
+    // Sincronizar con la plataforma. Si la campaña tiene API key propia (la del
+    // publicista), el alta se hace con ESA key para que el jugador quede colgado
+    // del publicista correcto en la jerarquía de 1girox — y la comisión la cobre
+    // quien debe. Si la campaña no tiene key configurada, fallback a la master
     // (comportamiento legacy / idéntico al de POST /api/users).
-    (async () => {
-      try {
-        const hasPubKey = await Campaign.hasGiroxApiKey(campaign.code);
-        if (hasPubKey) {
-          const result = await giroxPublisherKeys.createUserAsPublisher(campaign.code, {
-            username: newUser.username,
-            password: password
+    //
+    // 2026-09-07 (réplica #205): antes corría en un IIFE fire-and-forget. Ahora es
+    // await INLINE para poder ABORTAR el alta cuando el username está tomado en
+    // 1girox por OTRA estructura (nuestras keys no lo ven): esa cuenta local sería
+    // inoperable para siempre → se borra y se responde 400. Un error TRANSITORIO
+    // (girox caído) NO aborta: la cuenta queda y se repara con la red de seguridad
+    // de la 1ª carga, como siempre. Costo: el alta espera ~1-2 s (igual que la del
+    // admin general).
+    const FOREIGN_USERNAME_MSG = 'El usuario ya existe en la plataforma de 1girox (bajo otra estructura que no manejamos). Elegí OTRO nombre de usuario.';
+    const abortForeign = async (via) => {
+      await User.deleteOne({ id: newUserId }).catch(() => {});
+      logger.warn(`[publisher_admin create-user] ${campaign.code}/${username}: username tomado en 1girox por otra estructura (${via}) — alta abortada`);
+      return res.status(400).json({ error: FOREIGN_USERNAME_MSG });
+    };
+    try {
+      const hasPubKey = await Campaign.hasGiroxApiKey(campaign.code);
+      if (hasPubKey) {
+        const result = await giroxPublisherKeys.createUserAsPublisher(campaign.code, {
+          username: newUser.username,
+          password: password
+        });
+        if (result.success) {
+          // Sin giroxUserId: la Partner API no lo devuelve; lo completa después
+          // resolveGiroxUserId cuando se necesite.
+          // giroxOwnerCampaign: el jugador quedó bajo el SUB-AGENTE de esta
+          // campaña → todas sus operaciones se firman con la key de la campaña
+          // (la master no lo ve por API; ver el resolver de giroxService).
+          await User.updateOne({ id: newUserId }, {
+            giroxSyncStatus: 'synced',
+            giroxOwnerCampaign: campaign.code
           });
-          if (result.success) {
-            // Sin giroxUserId: la Partner API no lo devuelve; lo completa después
-            // resolveGiroxUserId cuando se necesite.
-            // giroxOwnerCampaign: el jugador quedó bajo el SUB-AGENTE de esta
-            // campaña → todas sus operaciones se firman con la key de la campaña
-            // (la master no lo ve por API; ver el resolver de giroxService).
-            await User.updateOne({ id: newUserId }, {
-              giroxSyncStatus: 'synced',
-              giroxOwnerCampaign: campaign.code
-            });
-            logger.info(`[publisher_admin create-user] ${username} creado con la key de ${campaign.code} (owner=${campaign.code})`);
-          } else if (result.code === 'NO_CREDS') {
-            // El check inicial dijo que había key pero al leerla no estaba — race
-            // condition con un PUT de campaña justo en ese momento. Fallback al master.
-            logger.warn(`[publisher_admin create-user] ${campaign.code} sin key tras race — fallback master`);
-            const fallback = await girox.syncUserToPlatform({
-              username: newUser.username, password
-            });
-            if (fallback.success) {
-              await User.updateOne({ id: newUserId }, {
-                giroxSyncStatus: fallback.alreadyExists ? 'linked' : 'synced'
-              });
-            }
-          } else {
-            // Falló el alta con la key del publicista. NO hacemos fallback a la master
-            // automáticamente: si falla con la key del publicista queremos que el admin
-            // se entere y la arregle — si no, el jugador terminaría bajo la cuenta
-            // master con la atribución mal asignada (y la comisión al que no es).
-            await User.updateOne({ id: newUserId }, {
-              giroxSyncStatus: 'error',
-              giroxSyncError: `[${result.code}] ${result.error}`.slice(0, 500)
-            });
-            logger.warn(`[publisher_admin create-user] alta por publicista falló ${campaign.code}/${username}: ${result.error}`);
-          }
-        } else {
-          // Campaña sin key propia — comportamiento legacy: usar la cuenta master.
+          logger.info(`[publisher_admin create-user] ${username} creado con la key de ${campaign.code} (owner=${campaign.code})`);
+        } else if (result.alreadyExists) {
+          // La key del publicista dice "ya existe": si fuera un jugador nuestro con
+          // cuenta local, el alta ya rebotó antes en el chequeo local → acá sólo
+          // llegan jugadores AJENOS (otra estructura).
+          return await abortForeign('key del publicista');
+        } else if (result.code === 'NO_CREDS') {
+          // El check inicial dijo que había key pero al leerla no estaba — race
+          // condition con un PUT de campaña justo en ese momento. Fallback al master.
+          logger.warn(`[publisher_admin create-user] ${campaign.code} sin key tras race — fallback master`);
           const fallback = await girox.syncUserToPlatform({
             username: newUser.username, password
           });
@@ -12428,14 +12448,38 @@ app.post('/api/admin/publisher-admin/create-user', authMiddleware, publisherAdmi
             await User.updateOne({ id: newUserId }, {
               giroxSyncStatus: fallback.alreadyExists ? 'linked' : 'synced'
             });
-          } else {
-            logger.warn(`[publisher_admin create-user] sync 1girox (master) falló para ${username}: ${fallback.error}`);
+          } else if (fallback.code === 'username_taken_foreign') {
+            return await abortForeign('master tras race');
           }
+        } else {
+          // Falló el alta con la key del publicista. NO hacemos fallback a la master
+          // automáticamente: si falla con la key del publicista queremos que el admin
+          // se entere y la arregle — si no, el jugador terminaría bajo la cuenta
+          // master con la atribución mal asignada (y la comisión al que no es).
+          await User.updateOne({ id: newUserId }, {
+            giroxSyncStatus: 'error',
+            giroxSyncError: `[${result.code}] ${result.error}`.slice(0, 500)
+          });
+          logger.warn(`[publisher_admin create-user] alta por publicista falló ${campaign.code}/${username}: ${result.error}`);
         }
-      } catch (err) {
-        logger.warn(`[publisher_admin create-user] sync 1girox excepción para ${username}: ${err.message}`);
+      } else {
+        // Campaña sin key propia — comportamiento legacy: usar la cuenta master.
+        const fallback = await girox.syncUserToPlatform({
+          username: newUser.username, password
+        });
+        if (fallback.success) {
+          await User.updateOne({ id: newUserId }, {
+            giroxSyncStatus: fallback.alreadyExists ? 'linked' : 'synced'
+          });
+        } else if (fallback.code === 'username_taken_foreign') {
+          return await abortForeign('master');
+        } else {
+          logger.warn(`[publisher_admin create-user] sync 1girox (master) falló para ${username}: ${fallback.error}`);
+        }
       }
-    })();
+    } catch (err) {
+      logger.warn(`[publisher_admin create-user] sync 1girox excepción para ${username}: ${err.message}`);
+    }
 
     logger.info(
       `[publisher_admin] ${employee.username} (campaign=${campaign.code}, creds=${!!campaign.jugayganaUsername}` +
@@ -16194,6 +16238,12 @@ app.post('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) =
           await User.updateOne({ id: userId }, {
             giroxSyncStatus: result.alreadyExists ? 'linked' : 'synced'
           });
+        } else if (result.code === 'username_taken_foreign') {
+          // Username tomado en 1girox por OTRA estructura: la cuenta local sería
+          // inoperable para siempre → se borra y el alta rebota (réplica #205).
+          await User.deleteOne({ id: userId }).catch(() => {});
+          logger.warn(`[admin/users] ${newUser.username}: username tomado en 1girox por otra estructura — alta abortada`);
+          return res.status(400).json({ error: 'El usuario ya existe en la plataforma de 1girox (bajo otra estructura que no manejamos). Elegí OTRO nombre de usuario.' });
         } else {
           platformWarning = result.error || 'No se pudo crear en la plataforma de juego';
           await User.updateOne({ id: userId }, {
