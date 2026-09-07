@@ -5815,7 +5815,12 @@ app.get('/api/admin/girox/health', authMiddleware, adminMiddleware, async (req, 
         bonoSueltoHabilitado: !!(c.bonus && c.bonus.standalone_enabled),
         bonoDebeReclamarse: !!(c.bonus && c.bonus.claim_required),
         multiplicadoresRollover: (c.rollover && c.rollover.multipliers) || null,
-        limitesBonoFijo: c.bonus ? { min: c.bonus.fixed_min, max: c.bonus.fixed_max } : null
+        limitesBonoFijo: c.bonus ? { min: c.bonus.fixed_min, max: c.bonus.fixed_max } : null,
+        // Cómo se acreditan reembolsos/ruleta/rakeback/VIP/referidos (2026-09-07):
+        // bono 0 = figuran como BONO en el panel de 1girox; requiere bono suelto
+        // habilitado + 0 en multiplicadores; montos fuera de min/max caen a depósito.
+        regalosComoBono: girox.getGiftModeSummary(),
+        multiplicadoresBono: (c.bonus && c.bonus.multipliers) || null
       };
     } else {
       out.pruebas.configuracion = 'FALLÓ: ' + cfg.error;
@@ -11469,16 +11474,18 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
     // Acreditación CON ROLLOVER (owner 2026-08-05): depósito con `multiplier` → la
     // plata entra al saldo YA (jugable), pero la plataforma exige apostar
     // (multiplier × premio) antes de poder retirarla (el retiro valida contra
-    // wagering.available). Con multiplier 0 vuelve al depósito libre de antes.
-    // ⚠️ Se usa depositToUser (deposito con multiplier), NO creditUserBalance con
-    // multiplier: esa rama va por /bonus, que desde la v1.7 queda "a reclamar" en
-    // el casino y encima pisa un bono activo previo. La reference es la MISMA de
-    // siempre (se pasa explícita y _buildReference no la toca) → idempotencia intacta.
+    // wagering.available). En el panel de 1girox figura como Carga (con rollover).
+    // ⚠️ Con rollover > 0 se usa depositToUser (depósito con multiplier), NO
+    // creditUserBalance con multiplier: esa rama va por /bonus con rollover, que
+    // con claim_required queda "a reclamar" en el casino y encima PISA un bono
+    // activo previo. Con rollover 0 (2026-09-07) va por creditUserBalance = bono 0
+    // "regalo directo" → figura como BONO y no como carga (igual que ruleta y
+    // reembolsos). La reference es la MISMA de siempre en las dos ramas (se pasa
+    // explícita y _buildReference no la toca) → idempotencia intacta.
     const _fireMult = await getFireRolloverMultiplier();
-    const bonusResult = await girox.depositToUser(
-      username, rewardAmount, rewardDesc, _fireRef,
-      _fireMult > 0 ? { multiplier: _fireMult } : null
-    );
+    const bonusResult = _fireMult > 0
+      ? await girox.depositToUser(username, rewardAmount, rewardDesc, _fireRef, { multiplier: _fireMult })
+      : await girox.creditUserBalance(username, rewardAmount, _fireRef, { description: rewardDesc });
 
     if (!bonusResult.success) {
       // La acreditación falló → DEVOLVER el premio a pendiente para que el cliente
@@ -19685,7 +19692,8 @@ if (process.env.VERCEL) {
         `keys consultas cargadas: ${girox.getReadsKeysSummary()} · ` +
         `GIROX_MAX_RPM=${girox.getMasterMaxRpm()} · ` +
         `publicistas=${girox.getPublisherMaxRpm()}/min (+${girox.getPublisherKeyOverridesCount()} overrides) · ` +
-        `cache jugador=${girox.getPlayerCacheTtlMs()}ms`
+        `cache jugador=${girox.getPlayerCacheTtlMs()}ms · ` +
+        `regalos=${girox.getGiftModeSummary()}`
       );
     } catch (e) {
       console.warn('[girox] radiografía de config falló:', e.message);

@@ -91,12 +91,17 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   comisiones de referidos sin comerse el límite de 60 req/min.
 - **Reembolsos por RANGO** (Bronce 3% / Plata 6% / Oro 10%), según lo perdido EN EL
   PERÍODO que se reclama — no un acumulado. Ver `src/utils/refundTiers.js`.
-- **Bonos "a reclamar":** desde la v1.7 un bono no se libera solo. Por eso reembolsos,
-  ruleta y bono de instalación se acreditan con **depósito libre**, no con `/bonus`.
-  El **fueguito** (2026-08-05) va con **depósito CON `multiplier`** (rollover x5
-  configurable en el panel): jugable al instante, retirable recién tras apostar
-  multiplier × premio — el candado lo aplica la plataforma, NO usar `/bonus` para esto.
-  Si alguna vez hiciera falta, está `girox.claimPendingBonus()`.
+- **Regalos = BONO 0 "regalo directo" (2026-09-07, Partner API v1.10+/manual v1.15 en
+  `docs/`):** `creditUserBalance` sin `multiplier` va por `POST /players/{u}/bonus`
+  con `multiplier: 0` → disponible/retirable al instante, SIN reclamo, NO pisa el bono
+  en curso, y en el panel de 1girox figura como **Bono** (antes iba por `/deposit` y
+  reembolsos/ruleta/rakeback/VIP/referidos salían como "Carga"). Fallback automático
+  a depósito libre con la MISMA reference si el bono suelto está apagado, 0 no está
+  permitido o el monto sale de `fixed_min/fixed_max`. Kill switch `GIROX_GIFT_AS_BONUS=0`.
+  Un `multiplier` EXPLÍCITO (>0) sí usa `/bonus` con rollover: puede quedar "a reclamar"
+  (`girox.claimPendingBonus()`) y PISA un bono activo. El **fueguito** con rollover >0
+  sigue con **depósito CON `multiplier`** (candado de la plataforma, figura como carga);
+  con rollover 0 va como regalo directo.
 - **Roles:** `user`, `admin` (todo), `depositor` (solo cargas), `withdrawer` (solo
   retiros), `publisher_admin` (solo crea usuarios de su publicista — lockdown via
   `PUBLISHER_ADMIN_ALLOWED_PATHS`).

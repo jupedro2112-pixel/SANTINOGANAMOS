@@ -5,7 +5,11 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-08-14** — lote de features portadas del proyecto
+> Última actualización: **2026-09-07** — regalos (reembolsos, ruleta, rakeback, bono
+> VIP, referidos) pasan a acreditarse como BONO 0 "regalo directo" en vez de depósito
+> (§4.5, §4.4 nota, §4.8 env `GIROX_GIFT_AS_BONUS`, §4.11, §9). Manual Partner API
+> v1.15 guardado en `docs/PARTNER-APIv1.15.pdf`.
+> Antes: 2026-08-14 — lote de features portadas del proyecto
 > hermano (#153-#158): §2 (NotifBatch + PromoBonus con exención 'lote'), §4.4
 > (reference vip-nbatch), §5 (mínimos de reembolso + flujo completo de lotes con
 > regalo), §6 (Cerrados 48hs paginados, cards de lotes, Datos 2.0, admin-sw v31),
@@ -346,25 +350,49 @@ reintento manda la misma reference y la plataforma responde `duplicate:true`.
   pendiente). `getUserBalance` devuelve `balance`, `available`, `locked`, `bonusLocked`.
   Validar contra `balance` ⇒ la plataforma rechaza con `rollover_locked` y queda un
   retiro colgado en el panel. El confirm de payouts (~L12898) ya usa `available`.
-- **Bonos "a reclamar" (Partner API v1.7).** Un bono otorgado por
-  `POST /players/{username}/bonus` **ya no se libera solo** — ni con `multiplier: 0`.
-  Queda BLOQUEADO hasta que el jugador entre al casino y lo RECLAME (aparece en
-  `wagering.claimable`, es el "regalito" del header).
-  ➜ Por eso **reembolsos, ruleta, bono de instalación y comisiones de
-  referidos se acreditan con DEPÓSITO LIBRE** (`creditUserBalance` sin `multiplier`
-  cae en `depositToUser`), no con `/bonus`: si no, el usuario vería el mensaje
-  "¡reembolso acreditado!" y nada en su saldo.
-  **Excepción — FUEGUITO (2026-08-05):** sus premios van con **DEPÓSITO CON
+- **Regalos = BONO 0 "regalo directo" (2026-09-07; Partner API v1.10+, manual v1.15
+  §2.9/§2.12).** `creditUserBalance(username, amount, reference)` SIN `multiplier`
+  va por `POST /players/{username}/bonus` con `multiplier: 0`: la plata queda
+  disponible/RETIRABLE al instante, **no pasa por el reclamo** ("el bono 0 nunca
+  pasa por el claim: se acredita directo") y **no pisa el bono en curso**. En el
+  ledger figura `type: "bonus"` → en el panel de 1girox se ve como **Bono**, no como
+  Carga. Lo usan: reembolsos (`vip-rf-*`), ruleta (`vip-roulette-*`), rakeback
+  (`vip-rake-*`), bono de nivel VIP (`vip-lvl-*`), comisiones de referidos
+  (`vip-refcom-*`), fueguito con rollover 0 y la parte "bonus" de la devolución de
+  un retiro rechazado (`vip-payoutref-bonus-*`).
+  - **Precheck** contra `GET /config` (cacheado 10 min): `bonus.enabled`,
+    `bonus.standalone_enabled`, `0 ∈ bonus.multipliers` y `fixed_min ≤ monto ≤
+    fixed_max` (config real del owner: min 2 / max 1.000.000 → un reembolso de $1
+    va por depósito). Si no pasa → **depósito libre con la MISMA reference** (log
+    info). Si el precheck pasa pero la plataforma responde `feature_disabled`,
+    `bonus_out_of_range`, un 422 de validación o `player_not_found` → mismo
+    fallback (en un 422 no se mueve plata, reusar la reference es seguro). Errores
+    transitorios (red/429/5xx) NO caen al depósito: se devuelven para que el caller
+    reintente con la misma reference. El resultado trae `creditedAs:
+    'bonus'|'deposit'`.
+  - **Cinturón:** si la respuesta trajera el regalo "a reclamar" (`requirement_id`
+    presente en `claimable`), se reclama SÓLO ese requirement — nunca claim-all
+    (decisión del owner #162: no auto-reclamar el regalito que el cliente ya tenía).
+  - **Kill switch sin deploy:** `GIROX_GIFT_AS_BONUS=0` → todo vuelve a depósito
+    libre (comportamiento hasta 2026-09-07). La radiografía de boot `[girox]
+    config:` y `GET /api/admin/girox/health` (`regalosComoBono`) muestran el modo.
+  🪦 Entre la v1.7 (2026-07-31) y la v1.10 (2026-08-03) el bono 0 SÍ quedaba "a
+  reclamar"; por eso hasta el 2026-09-07 todos los regalos iban por `/deposit` y
+  figuraban como "Carga" (reclamo del owner con captura del panel).
+- **`opts.multiplier` EXPLÍCITO** (incluido 0) = `/bonus` ESTRICTO, sin fallback: un
+  `bonus_out_of_range` se devuelve como error (botón Bonificación del panel, welcome
+  code cash, lotes con regalo). Con multiplier >0 el bono queda bloqueado hasta
+  apostar amount × multiplier, con `claim_required` puede quedar "a reclamar" (los
+  callers hacen `claimPendingBonus`) y ⚠️ **PISA un bono activo previo** ("bono
+  sobre bono": se debita lo que quedaba del viejo).
+- **FUEGUITO (2026-08-05):** con rollover >0 sus premios van con **DEPÓSITO CON
   `multiplier`** (`girox.depositToUser(..., {multiplier: x})`, x editable en el
   panel — Config['fireRolloverMultiplier'], default 5): la plata entra al saldo ya
   (jugable) pero la plataforma exige apostar multiplier × premio para retirarla.
-  Sigue SIN usar `/bonus` (eso requeriría reclamo manual y pisa bonos activos). El
-  viejo requisito de cargas (milestone.requireDeposits) ya NO se chequea al
-  reclamar — quedó reemplazado por el rollover (los campos siguen en la config,
-  ignorados).
-  Sólo se usa `/bonus` si explícitamente se pasa `opts.multiplier`. ⚠️ Y ahí ojo con
-  "bono sobre bono": otorgar un bono a quien ya tiene uno activo PISA el anterior y le
-  debita lo que le quedaba.
+  Figura como Carga (con rollover) en el panel; NO va por `/bonus` con rollover
+  porque requeriría reclamo y pisa bonos activos. Con rollover 0 va por
+  `creditUserBalance` = regalo directo (Bono). El viejo requisito de cargas
+  (milestone.requireDeposits) ya NO se chequea al reclamar (campos ignorados).
 - `depositToUser` acepta `wagering` opcional (`multiplier`, `bonus_percent`,
   `bonus_amount`, `bonus_multiplier`). Caso raro documentado: la carga se acredita pero
   el bono falla (`wagering.bonus.status === 'failed'`) → se marca `bonusFailed` y se
@@ -453,6 +481,7 @@ tenían los 4 clientes viejos.
 | `LANDING_SIGNUP_DISABLED` | — | `true` = apaga el alta por landing (410) |
 | `SSM_SKIP_KEYS` | — | Claves que SSM NO pisa (solo entornos clon; `loadSecrets.js`) |
 | `META_PIXEL_ID_2` / `META_CAPI_ACCESS_TOKEN_2` / `META_TEST_EVENT_CODE_2` | — | 2º pixel CAPI del partner de tracking (mismo `event_id`, envío en paralelo) |
+| `GIROX_GIFT_AS_BONUS` | (on) | `0`/`false`/`off` = los regalos vuelven a depósito libre en vez de bono 0 (§4.5). Kill switch sin deploy |
 
 Opcionales/afinado: `GIROX_TIMEOUT_MS` (20000) y las `GIROX_MIGRATION_*` del script.
 🪦 `GIROX_ADMIN_*` y `GIROX_AGENT_USER_ID` se fueron con el scraping del panel (#101).
@@ -514,9 +543,17 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
    sigue siendo la solución). Error nuevo: `422 agent_not_allowed`.
 2. **v1.10 — bono con `multiplier: 0` = regalo directo:** se acredita
    disponible/retirable al instante, sin reclamo, y **ya no pisa el bono en
-   curso**. Implicación PENDIENTE de decisión del owner (NO implementar sin
-   que lo pida): los guards bono-sobre-bono podrían dejar pasar regalos con
-   multiplicador 0.
+   curso**. **IMPLEMENTADO 2026-09-07** como vía por defecto de todos los
+   regalos (§4.5). Queda PENDIENTE (sin pedido del owner): relajar los guards
+   bono-sobre-bono para regalos con multiplicador 0 (hoy siguen estrictos).
+3. **v1.12–1.15 (manual en `docs/PARTNER-APIv1.15.pdf`):** reglas automáticas
+   de bono del agente (`promo_code` / `no_bonus` en el depósito, `bonus.auto_rules`
+   en `GET /config`; un `/deposit` sin params de bono HEREDA la campaña vigente
+   del agente — si el owner configura una "promo 1er depósito" en su panel, las
+   cargas por API la aplican solas), `embed:true` en `/session` (oculta los
+   controles de sesión del casino en el iframe), `GET /chip-requests` (listado de
+   solicitudes de carga/retiro, requiere habilitación del operador) y whitelist
+   de IPs por key (`401 ip_not_allowed`). Nada de esto está cableado.
 
 ## 5. Flujos principales
 
@@ -853,9 +890,13 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   saliera del id, el reintento tras un fallo falso pagaría doble).
 - **Retiros: validar contra `available`, no `balance`** — el rollover está activo en
   1girox y parte del saldo puede estar bloqueado (§4.5).
-- **No acreditar regalos con `/bonus`**: desde la v1.7 el bono queda "a reclamar" hasta
-  que el jugador lo agarre en el casino. Reembolsos, ruleta, fueguito, bono de
-  instalación y comisiones van con **depósito libre** (§4.5).
+- **Regalos = bono 0 "regalo directo", NO depósito** (2026-09-07, §4.5): reembolsos,
+  ruleta, rakeback, bono VIP y comisiones van por `creditUserBalance` SIN multiplier
+  → `/bonus` con `multiplier: 0` (figuran como Bono en el panel de 1girox), con
+  fallback automático a depósito libre y misma reference. NO volver a llamar
+  `depositToUser` para un regalo (saldría como "Carga"). Un `multiplier` explícito
+  >0 en `/bonus` puede quedar "a reclamar" y PISA un bono activo — sólo donde ya
+  se hace (welcome code cash, lotes, Bonificación del panel).
 - **Rate limit 60/min es POR INSTANCIA** (`GIROX_MAX_RPM`, default 55): con N instancias
   el techo real es N×55. Si aparecen 429, BAJAR el valor (§4.3).
 - **Los reportes NO son la Partner API**: `giroxReportsService` scrapea el panel

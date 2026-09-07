@@ -4,7 +4,61 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-08-25**
+> **Última actualización: 2026-09-07**
+
+## Sesión 2026-09-07 — Regalos como BONO en el panel de 1girox (chau "Carga" para ruleta/reembolsos)
+
+### 178. `creditUserBalance` pasa de depósito libre a BONO 0 "regalo directo" (Partner API v1.10+, manual v1.15)
+- **Reclamo del owner (captura del panel de 1girox, 4/9):** los premios de ruleta
+  (`vip-roulette-*`) y los reembolsos (`vip-rf-daily-*`) aparecen como "↑ Carga",
+  indistinguibles de las cargas reales de los cajeros/hgcash. Pasó el manual
+  **Partner API v1.15** (guardado en `docs/PARTNER-APIv1.15.pdf`).
+- **Causa:** `creditUserBalance` sin `multiplier` caía en `depositToUser` (`POST
+  /deposit`). Se había decidido así el 2026-07-31 porque con la v1.7 un `/bonus`
+  con `multiplier: 0` quedaba "a reclamar". Desde la **v1.10 (2026-08-03)** el
+  bono 0 es un **regalo directo**: disponible/retirable al instante, sin reclamo
+  ("nunca pasa por el claim") y **no pisa el bono en curso**; en el ledger es
+  `type: "bonus"` → figura como Bono. Estaba anotado en ARCHITECTURE §4.11 como
+  pendiente de que el owner lo pidiera — lo pidió.
+- **Fix central (`giroxService.creditUserBalance`, rama por defecto):**
+  1. **Precheck** contra `GET /config` (cacheado 10 min): `bonus.enabled`,
+     `standalone_enabled`, `0 ∈ bonus.multipliers`, `fixed_min ≤ monto ≤
+     fixed_max`. En la config real del owner `fixed_min=2` → el reembolso de $1 de
+     la captura (Argenjose) sigue yendo por depósito, no rebota.
+  2. `POST /players/{u}/bonus {amount, multiplier:0, reference}` con la MISMA
+     reference de siempre (idempotencia intacta; `vip-rf-*`, `vip-roulette-*`,
+     `vip-rake-*`, `vip-lvl-*`, `vip-refcom-*`, `vip-payoutref-bonus-*`).
+  3. **Fallback automático a depósito libre con la misma reference** si el
+     precheck no pasa o la plataforma responde `feature_disabled` /
+     `bonus_out_of_range` / 422 de validación / `player_not_found` (en un 422 no
+     se mueve plata → reusar la reference es seguro). Errores transitorios
+     (red/429/5xx) NO caen al depósito: se devuelven al caller para que reintente
+     con la misma reference. Resultado trae `creditedAs: 'bonus'|'deposit'`.
+  4. **Cinturón anti "a reclamar":** si la respuesta trajera el `requirement_id`
+     del regalo dentro de `claimable`, se reclama SÓLO ese (nunca claim-all:
+     respeta la decisión #162 de no auto-reclamar el regalito previo del cliente).
+  5. **Kill switch sin deploy:** `GIROX_GIFT_AS_BONUS=0` → vuelve al depósito.
+  - La rama con `opts.multiplier` EXPLÍCITO (incluido 0) queda `/bonus` ESTRICTO
+    sin fallback: el botón Bonificación del panel, el welcome code cash y los
+    lotes siguen viendo `bonus_out_of_range` como error, no como carga silenciosa.
+- **Fueguito (`/api/fire/claim-reward`):** con rollover >0 sigue con depósito CON
+  `multiplier` (candado de la plataforma; figura como Carga con rollover — un
+  `/bonus` con rollover quedaría a reclamar y pisaría un bono activo); con
+  rollover 0 ahora va por `creditUserBalance` → Bono. Misma reference `vip-fire-*`.
+- **Visibilidad:** la radiografía de boot `[girox] config:` suma
+  `regalos=bono 0 (regalo directo, fallback depósito)`; `GET /api/admin/girox/health`
+  expone `regalosComoBono` y `multiplicadoresBono`.
+- **Novedades del manual v1.12–1.15 anotadas en ARCHITECTURE §4.11 (sin cablear):**
+  reglas automáticas de bono del agente (⚠️ un `/deposit` sin params HEREDA la
+  campaña de 1er depósito/promo del agente si la configura en su panel — hoy
+  ninguna regla configurada), `embed:true` en `/session`, `GET /chip-requests`,
+  whitelist de IPs por key.
+- **Validado:** `node --check` OK (giroxService.js, server.js). **Back necesita
+  redeploy.** PROBAR: reclamar un reembolso o girar la ruleta con premio → en el
+  panel de 1girox la operación figura como **Bono** con la ref `vip-rf-*` /
+  `vip-roulette-*` y el saldo `available` del jugador sube (retirable); un
+  reembolso < $2 → figura como Carga (fallback, log `va por depósito libre`);
+  logs de boot con `regalos=bono 0`. Rollback sin deploy: `GIROX_GIFT_AS_BONUS=0`.
 
 ## Sesión 2026-08-25 (3ª tanda) — Identidad de la burbuja: logo 1GIROX + "⚡ CARGA RÁPIDA" + widget abierto
 
