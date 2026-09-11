@@ -1241,6 +1241,17 @@ function formatStatsDate(date) {
   return `${d.toLocaleDateString('en-CA', opts)} ${d.toLocaleTimeString('en-GB', { ...opts, hour12: false })}`;
 }
 
+/** Bloque `bonus` del /stats (soporte 1girox 2026-09-10, sección 2.10 del manual
+ *  actualizado; ESPEC-REEMBOLSO-1GIROX.md §2.1): `granted` = total de bono
+ *  OTORGADO al jugador en el rango consultado; `still_locked` = cuánto de eso
+ *  sigue con rollover sin cumplir. Va a nivel jugador (no por categoría). Es el
+ *  dato oficial para calcular reembolsos sobre plata REAL. Ausente (API vieja)
+ *  → ceros. */
+function _statsBonus(b) {
+  const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
+  return { granted: n(b && b.granted), stillLocked: n(b && b.still_locked) };
+}
+
 /** Normaliza el bloque de totales que devuelve la API. */
 function _statsTotals(t) {
   const n = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
@@ -1265,7 +1276,7 @@ function _statsTotals(t) {
  * @param {string} [label] etiqueta para logs
  * @param {{fresh?: boolean}} [opts] fresh:true = saltea el cache
  * @returns {{success, netwin, casinoNetwin, sportsNetwin, wagered, payout, betsCount,
- *            playerId, from, to}} | {success:false, error, code}
+ *            bonusGranted, bonusStillLocked, playerId, from, to}} | {success:false, error, code}
  */
 async function getPlayerStats(username, fromDate, toDate, label = 'stats', opts = {}) {
   const from = formatStatsDate(fromDate);
@@ -1301,6 +1312,7 @@ async function getPlayerStats(username, fromDate, toDate, label = 'stats', opts 
   const cats = d.categories || {};
   const casino = _statsTotals(cats.casino);
   const sports = _statsTotals(cats.sports);
+  const bonus = _statsBonus(d.bonus);
 
   const out = {
     success: true,
@@ -1314,8 +1326,15 @@ async function getPlayerStats(username, fromDate, toDate, label = 'stats', opts 
     wagered: totals.wagered,
     payout: totals.payout,
     betsCount: totals.betsCount,
+    // Bono otorgado en el rango (dato oficial de la plataforma) — base "real"
+    // de reembolsos = netwin − bonusGranted (ESPEC §3.3 / §5). 0 si la API no lo manda.
+    bonusGranted: bonus.granted,
+    bonusStillLocked: bonus.stillLocked,
     categories: { casino, sports }
   };
+  // Diagnóstico (`GET /api/admin/girox/stats-raw`): la respuesta CRUDA completa,
+  // para ver qué campos manda la API. No se cachea junto al out normal.
+  if (opts && opts.includeRaw) return { ...out, raw: d };
   _statsCache.set(cacheKey, { data: out, ts: Date.now() });
   return out;
 }
@@ -1380,6 +1399,7 @@ async function getPlayersStatsBatch(usernames, fromDate, toDate, label = 'stats-
       const cats = p.categories || {};
       const casino = _statsTotals(cats.casino);
       const sports = _statsTotals(cats.sports);
+      const bonus = _statsBonus(p.bonus);
       players[String(p.username)] = {
         success: true,
         playerId: p.id != null ? Number(p.id) : null,
@@ -1390,6 +1410,8 @@ async function getPlayersStatsBatch(usernames, fromDate, toDate, label = 'stats-
         wagered: totals.wagered,
         payout: totals.payout,
         betsCount: totals.betsCount,
+        bonusGranted: bonus.granted,
+        bonusStillLocked: bonus.stillLocked,
         categories: { casino, sports }
       };
     }

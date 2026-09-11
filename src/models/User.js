@@ -243,6 +243,20 @@ const userSchema = new mongoose.Schema({
   },
 
   // ============================================
+  // REEMBOLSO ACUMULATIVO DE POR VIDA (ESPEC-REEMBOLSO-1GIROX.md §3.4, 2026-09-11)
+  // ============================================
+  // La API de stats admite máx. 92 días por consulta, así que el neto viejo se
+  // "pliega" acá y sólo se consulta en vivo desde el ancla:
+  //   netoDePorVida = cashbackCarryNet + netwin(ancla → hoy).
+  // carryNet puede ser NEGATIVO (venía ganando): la ganancia vieja resta para
+  // siempre y nunca se reembolsa plata que el jugador ganó. cashbackCarryGranted
+  // = bono OTORGADO (`bonus.granted` oficial) de esos mismos tramos plegados.
+  // Los tres se escriben en UN update atómico condicionado al ancla previa.
+  cashbackAnchorAt: { type: Date, default: null },
+  cashbackCarryNet: { type: Number, default: 0 },
+  cashbackCarryGranted: { type: Number, default: 0 },
+
+  // ============================================
   // LINK DE ACCESO DE UN SOLO USO (alta desde el panel admin)
   // ============================================
   // Se guarda SOLO el hash sha256 del token — el link en claro lo ve únicamente

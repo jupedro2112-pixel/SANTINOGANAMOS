@@ -90,7 +90,17 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   (`POST /players/stats/batch`, hasta 100) — es lo que hace viable el cálculo de
   comisiones de referidos sin comerse el límite de 60 req/min.
 - **Reembolsos por RANGO** (Bronce 3% / Plata 6% / Oro 10%), según lo perdido EN EL
-  PERÍODO que se reclama — no un acumulado. Ver `src/utils/refundTiers.js`.
+  PERÍODO que se reclama — no un acumulado. Ver `src/utils/refundTiers.js`. Desde
+  2026-09-11 la base del período es `casinoNetwin − bonus.granted` y se descuenta
+  lo ya cobrado como reembolso en vivo.
+- **REEMBOLSO EN VIVO acumulativo (2026-09-11):** espec en
+  `docs/ESPEC-REEMBOLSO-1GIROX.md` (leerla antes de tocar reembolsos). Fórmula pura
+  en `src/utils/cashbackFormula.js` + test `scripts/test-cashback-formula.js`
+  (correrlo tras cualquier cambio); motor `_cashbackStateToday` en server.js; modelo
+  `CashbackClaim`; reference `vip-cbk-<userId>-<día>-<seq>`. La base descuenta
+  TODO lo regalado (incluidos los reembolsos ya cobrados) → todo regalo nuevo tiene
+  que quedar en Transaction con tipo de regalo o en `deposit.bonus`. Config en el
+  panel (`Config['instantCashback']`, default apagado).
 - **Regalos = BONO 0 "regalo directo" (2026-09-07, Partner API v1.10+/manual v1.15 en
   `docs/`):** `creditUserBalance` sin `multiplier` va por `POST /players/{u}/bonus`
   con `multiplier: 0` → disponible/retirable al instante, SIN reclamo, NO pisa el bono

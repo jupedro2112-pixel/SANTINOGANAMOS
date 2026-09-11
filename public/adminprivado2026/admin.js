@@ -5221,6 +5221,12 @@ function renderTransactionStats(summary) {
                 <span class="stat-number">${formatMoney(summary.refunds || 0)}</span>
                 <span class="stat-label">Reembolsos</span>
             </div>
+            ${summary.cashback > 0 ? `
+            <div class="stat-card cashback" style="border-color:#4dd0ff">
+                <span style="font-size:1.2rem">📉</span>
+                <span class="stat-number" style="color:#4dd0ff">${formatMoney(summary.cashback || 0)}</span>
+                <span class="stat-label">Reembolso en vivo</span>
+            </div>` : ''}
             <div class="stat-card referral">
                 <span class="icon icon-users"></span>
                 <span class="stat-number">${formatMoney(summary.referrals || 0)}</span>
@@ -5249,7 +5255,7 @@ function renderTransactionStats(summary) {
                 <span class="stat-number">${formatMoney(summary.vipLevelups || 0)}</span>
                 <span class="stat-label">Bonos de nivel VIP</span>
             </div>` : ''}
-            <div class="stat-card gifts" title="Todo lo que NO es carga ni retiro: bonificaciones + reembolsos + fueguito + referidos + rakeback + nivel VIP + ruleta. En 1girox va como BONO.">
+            <div class="stat-card gifts" title="Todo lo que NO es carga ni retiro: bonificaciones + reembolsos + reembolso en vivo + fueguito + referidos + rakeback + nivel VIP + ruleta. En 1girox va como BONO.">
                 <span style="font-size:1.2rem">🎁</span>
                 <span class="stat-number">${formatMoney(summary.gifts || 0)}</span>
                 <span class="stat-label">Total regalos (no cargas)</span>
@@ -5386,7 +5392,7 @@ function renderTransactions(transactions) {
         <tr>
             <td>${formatDateTime(t.timestamp || t.createdAt)}</td>
             <td>${escapeHtml(t.username)}</td>
-            <td><span class="type-badge ${t.type}">${getTransactionTypeLabel(t.type)}</span></td>
+            <td><span class="type-badge ${_txIsCashback(t) ? 'cashback' : t.type}">${_txIsCashback(t) ? '📉 Reembolso en vivo' : getTransactionTypeLabel(t.type)}</span></td>
             <td>${formatMoney(t.amount)}</td>
             <td>${escapeHtml(t.description || '-')}</td>
             <td>${escapeHtml(t.adminUsername || '-')}</td>
@@ -5394,6 +5400,11 @@ function renderTransactions(transactions) {
     `).join('');
 }
 
+// El reembolso en vivo se guarda como 'bonus' + metadata.source 'instant_cashback'
+// (para 1girox ES un bono); en el panel se muestra como categoría propia.
+function _txIsCashback(t) {
+    return !!(t && t.type === 'bonus' && t.metadata && t.metadata.source === 'instant_cashback');
+}
 function getTransactionTypeLabel(type) {
     const labels = {
         deposit: 'Depósito',
@@ -5629,6 +5640,8 @@ async function loadCBUConfig() {
     loadHgcashConfig();
     // Cargar los porcentajes de reembolso (solo admin general)
     loadRefundTiers();
+    // Cargar la config del reembolso en vivo (solo admin general)
+    loadInstantCashbackCfg();
     // Cargar el estado de los niveles VIP (solo admin general)
     loadVipLevelsConfig();
     // Cargar los premios del fueguito (solo admin general)
@@ -5707,6 +5720,45 @@ async function toggleVipLevels() {
         _renderVipLevelsState();
     }
 }
+
+// ====== Reembolso EN VIVO acumulativo (ESPEC-REEMBOLSO-1GIROX.md, solo admin general) ======
+async function loadInstantCashbackCfg() {
+    const form = document.getElementById('cashbackForm');
+    const header = document.getElementById('cashbackHeader');
+    try {
+        const r = await authFetch('/api/admin/instant-cashback');
+        if (!r.ok) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; return; }
+        const cfg = await r.json();
+        if (form) form.style.display = '';
+        if (header) header.style.display = '';
+        const en = document.getElementById('cbkEnabled');
+        if (en) en.checked = cfg.enabled === true;
+        const set = function(id, v) { const el = document.getElementById(id); if (el && v != null) el.value = v; };
+        set('cbkPct', cfg.pct); set('cbkRoll', cfg.rolloverX); set('cbkMin', cfg.minArs); set('cbkMax', cfg.maxDailyArs);
+        const msg = document.getElementById('cashbackMsg');
+        if (msg) msg.textContent = cfg.enabled ? '🟢 Activo: los clientes ven el recuadro "Reembolso en vivo" en su perfil y en Reembolsos.' : '🔴 Apagado: los clientes no lo ven.';
+    } catch (e) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; }
+}
+async function saveInstantCashback() {
+    try {
+        const r = await authFetch('/api/admin/instant-cashback', {
+            method: 'POST',
+            body: JSON.stringify({
+                enabled: document.getElementById('cbkEnabled').checked,
+                pct: Number(document.getElementById('cbkPct').value) || 0,
+                rolloverX: Number(document.getElementById('cbkRoll').value) || 0,
+                minArs: Number(document.getElementById('cbkMin').value) || 0,
+                maxDailyArs: Number(document.getElementById('cbkMax').value) || 0
+            })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'No se pudo guardar', 'error'); return; }
+        showToast('Reembolso en vivo guardado', 'success');
+        loadInstantCashbackCfg();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+window.saveInstantCashback = saveInstantCashback;
+window.loadInstantCashbackCfg = loadInstantCashbackCfg;
 
 // ====== Rangos de reembolso (solo admin general) ======
 // 🪦 Acá vivían loadRefundPercents/saveRefundPercents (% fijos por período, sin

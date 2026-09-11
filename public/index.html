@@ -1596,6 +1596,9 @@
                 <p style="font-size:12px;color:#aaa;">Elegí el tipo de reembolso a consultar</p>
             </div>
             <div style="display:flex;flex-direction:column;gap:12px;padding:10px 0;">
+                <button id="unifiedCashbackBtn" onclick="VIP.refunds.showCashbackModal();VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="display:none;font-size:15px;padding:14px;background:linear-gradient(135deg,#0a4a6b,#1a8fc9);">
+                    📉 Reembolso EN VIVO (<span id="unifiedCashbackPct">5</span>% de lo que perdés, se acumula)
+                </button>
                 <button onclick="VIP.refunds.showRefundModal('daily');VIP.ui.hideModal('unifiedRefundModal');" class="btn btn-primary" style="font-size:15px;padding:14px;">
                     📅 Reembolso Diario (<span id="unifiedDailyPct">20</span>% de tu NETWIN de ayer)
                 </button>

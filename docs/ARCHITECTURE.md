@@ -5,7 +5,12 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-09-07** — regalos (reembolsos, ruleta, rakeback, bono
+> Última actualización: **2026-09-11** — REEMBOLSO EN VIVO acumulativo de por vida
+> sobre plata real + reembolsos por período que descuentan `bonus.granted` y lo ya
+> cobrado (espec en `docs/ESPEC-REEMBOLSO-1GIROX.md`; §2 CashbackClaim + campos
+> User, §4.4 reference `vip-cbk`, §4.6 bloque `bonus` del /stats, §5 flujo, §6
+> panel/PWA, §9 trampas).
+> Antes: 2026-09-07 — regalos (reembolsos, ruleta, rakeback, bono
 > VIP, referidos) pasan a acreditarse como BONO 0 "regalo directo" en vez de depósito
 > (§4.5, §4.4 nota, §4.8 env `GIROX_GIFT_AS_BONUS`, §4.11, §9). Manual Partner API
 > v1.15 guardado en `docs/PARTNER-APIv1.15.pdf`.
@@ -174,6 +179,13 @@ modelos); sus migraciones corren únicamente si algo llamara a ese connectDB.
   **BonusStrategyConfig** + **StrategyEnrollment** (estrategia
   por voto de encuesta — APAGADA), **EncuestaVote/EncuestaFire** (motor encuesta —
   bonos apagados), **InactividadFire** (motor inactivos — APAGADO).
+- **CashbackClaim** (2026-09-11) — reclamo del REEMBOLSO EN VIVO acumulativo
+  (`docs/ESPEC-REEMBOLSO-1GIROX.md`). Índice único `userId+dateKey+seq` = candado
+  del reclamo y fuente de la reference `vip-cbk-*`; `status` pending|credited (los
+  pending cuentan como cobrado → cierran la carrera de doble click); `creditedAs`
+  bonus|deposit. En `User`: `cashbackAnchorAt` / `cashbackCarryNet` (puede ser
+  NEGATIVO) / `cashbackCarryGranted` = acumulador PLEGADO del neto de por vida
+  (la API de stats admite 92 días por consulta). Ver §5.
 - **DailyRouletteSpin** — 1 giro/día (índices únicos userId+dateKey y
   username+dateKey). Auto-crédito en 1girox; `credit_failed` → retry desde panel.
 - **Review** (1 por user, moderada), **OtpCode** (TTL 5 min, hash bcrypt, 3 intentos),
@@ -336,6 +348,7 @@ Prefijos en uso hoy:
 | `vip-rake-<fromDateStr>-<userId>` | Rakeback semanal VIP | lunes de la semana reclamada + userId (derivada del PERÍODO, igual que los reembolsos y por el mismo motivo) |
 | `vip-welcome-<userId>` | Bono sorpresa del código de bienvenida (tipo cash) | userId (uno por cuenta para siempre, como el de instalación) |
 | `vip-nbatch-<batchId>-<userId>` | Regalo de fichas de un lote de notificaciones | id del NotifBatch + userId (uno por lote por usuario — los reintentos del motor o del canje jamás pagan dos veces) |
+| `vip-cbk-<userId>-<YYYY-MM-DD>-<seq>` | Reembolso EN VIVO acumulativo | userId + día ART + `seq` del índice único de CashbackClaim: si el crédito falla se borra el doc y el reintento reusa el MISMO seq → misma reference → `duplicate:true` |
 
 ⚠️ **Por qué la del reembolso sale del período y no del id del claim** (`_refundReference`,
 server.js ~L6086): si la acreditación falla, el handler BORRA el RefundClaim para que el
@@ -420,6 +433,14 @@ salen de la MISMA Partner API, con la misma `X-Api-Key` y por **username**:
 - Devuelven `totals` + `categories.casino/sports`, cada uno con `bets_count`,
   **`wagered` (apostado)**, `payout` y `netwin` — todo en **PESOS**.
 - ⚠️ `netwin` POSITIVO = el jugador PERDIÓ (base del reembolso); negativo = ganó.
+- **Bloque `bonus`** (soporte 1girox 2026-09-10, sección 2.10 del manual
+  actualizado): `bonus.granted` = bono OTORGADO al jugador en el rango,
+  `bonus.still_locked` = cuánto sigue con rollover. A nivel jugador, no por
+  categoría. `getPlayerStats`/batch lo exponen como `bonusGranted` /
+  `bonusStillLocked` (0 si la API no lo manda). Es el dato oficial para reembolsar
+  sobre plata REAL (`netwin − granted`). NO existe "qué parte de cada apuesta fue
+  bono": el bono entra al saldo unificado. Diagnóstico: `GET /api/admin/girox/
+  stats-raw?username=X&days=30` (solo admin general, respuesta cruda).
 - Rango **máximo 92 días** por consulta, evaluado en **hora argentina** del lado de
   la plataforma (`formatStatsDate` ancla a -03:00).
 - **Sólo CASINO** por decisión del owner (2026-07-31): reembolsos y comisiones usan
@@ -638,11 +659,41 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   devolver; si se descontó → devolución (split bonus/fichas para pagos legacy).
   `pay-other-bank` = pago manual (descuenta igual). Poller `_pollPayingPayouts` cada
   45s (últimas 2h) cubre webhooks perdidos.
+- **REEMBOLSO EN VIVO acumulativo de por vida** (2026-09-11, espec completa en
+  `docs/ESPEC-REEMBOLSO-1GIROX.md`; aritmética PURA en `src/utils/cashbackFormula.js`
+  validada por `scripts/test-cashback-formula.js`; motor `_cashbackStateToday` en
+  server.js tras `_refundReference`):
+  `reclamable = floor(pct% × max(0, netoDePorVida − regalado) − cobrado)`, capado
+  por `topeDiario − cobradoHoy`, con mínimo. `netoDePorVida` = `User.
+  cashbackCarryNet` + netwin casino (ancla → hoy): cuando el tramo vivo pasa los
+  85 días se PLIEGAN 60 días al carry con `updateOne` condicionado al ancla previa
+  (multi-instancia safe). `regalado` = por tramo (< ancla / ≥ ancla) el MAYOR
+  entre nuestras Transactions de regalo (`deposit.bonus` + bonus/fire_reward/
+  refund/rakeback/vip_levelup/referral_commission/roulette, INCLUIDO el propio
+  cashback cobrado → sin "reembolso del reembolso") y el `bonus.granted` oficial.
+  ⚠️ La Transaction 'bonus' aparte de la carga con bonus del agente
+  (`metadata.source:'deposit_bonus'` / "Bonificación incluida en depósito…") se
+  EXCLUYE: ya está en `deposit.bonus`. La suma local matchea por `userId` O
+  `username` (Transactions viejas de reembolso sin userId). Una ganancia grande
+  resta PARA SIEMPRE; al reclamar queda en 0. Reclamo (`POST /api/cashback/
+  claim`): recalcula fresh → reserva CashbackClaim (índice único userId+dateKey+
+  seq) → guard 20 s contra otro reclamo → `_creditGiftWithRollover` (= el helper
+  del fueguito: `/bonus` con el rollover del panel; cae a depósito CON multiplier
+  si el jugador tiene bono activo o el feat no está) con reference `vip-cbk-*` →
+  Transaction `bonus` + `metadata.source:'instant_cashback'` + nota admin-only.
+  Config `Config['instantCashback']` ({enabled, pct, rolloverX, minArs,
+  maxDailyArs}; default APAGADO) desde la card "📉 Reembolso en vivo" del panel
+  (solo admin general). Status `GET /api/cashback/status` (`?fresh=1` con
+  cooldown 30 s).
 - **Reembolsos**: `POST /api/refunds/claim/{daily|weekly|monthly}` — lock Redis,
   ventanas de `models/refunds.js` (semanal: lunes/martes; mensual: desde día 7),
   rangos en hora ART de `src/utils/periodRanges.js`, NETWIN real de
   `girox.getPlayerStats(username, …)` (**sólo casino**, ver §4.6; por username, sin
-  gate de ID). El % sale del RANGO por pérdida del período
+  gate de ID). **Desde 2026-09-11 (espec §5):** `netLoss = max(0, casinoNetwin −
+  bonusGranted)` del período (lo perdido de regalos no genera reembolso) y del
+  monto calculado se resta lo ya cobrado como REEMBOLSO EN VIVO dentro del
+  período (`_cashbackPaidBetween`) — en el status y en los 3 claims.
+  El % sale del RANGO por pérdida del período
   (`src/utils/refundTiers.js`). **Desde 2026-08-05 los rangos son EDITABLES desde
   el panel y CADA PERÍODO tiene su propia escalera** (diario ≠ semanal ≠ mensual):
   `Config['refundTiersByPeriod']` (`{daily/weekly/monthly: [{name,pct,max}]}`),
@@ -656,8 +707,8 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   Config['refundPercents'] quedaron `enUso:false` y su card del panel fue
   reemplazada por el editor de rangos. **El RefundClaim se CREA antes de acreditar** (el índice único
   `userId+type+periodKey` es el candado atómico contra doble cobro; si el crédito
-  falla se borra la reserva). El crédito va por `creditUserBalance` = **depósito
-  libre** (no `/bonus`: quedaría a reclamar) con la reference derivada del período.
+  falla se borra la reserva). El crédito va por `creditUserBalance` = **bono 0
+  "regalo directo"** (§4.5; antes depósito libre) con la reference derivada del período.
   Ver #96 y §4.4. ⚠️ En la UI los reembolsos muestran SOLO el % — los nombres
   Bronce/Plata/Oro son del nivel VIP (abajo). **Mínimos para cobrar (2026-08-14):**
   `Config['refundMinimums']` = `{weekly:1500, monthly:5000}` (0 = sin mínimo; el
@@ -837,11 +888,17 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   "❓ Cómo leer esta hoja" en Datos y Datos 2.0 (guía compartida).
 - **Sección Transacciones** (`GET /api/admin/transactions`, paginado + resumen por
   aggregation sobre el rango sin filtro de tipo): tarjetas Depósitos / Retiros /
-  Bonificaciones / Reembolsos / Referidos / Fueguito / Ruleta / Rakeback / Nivel VIP
-  y **"Total regalos (no cargas)"** (`summary.gifts` = todo lo que no es deposit ni
-  withdrawal — lo que en 1girox va como Bono); filtros por tipo incluyen roulette,
-  rakeback y vip_levelup; etiquetas en `getTransactionTypeLabel` (tipo nuevo ⇒
-  sumar etiqueta + botón + case del resumen).
+  Bonificaciones / Reembolsos / Reembolso en vivo / Referidos / Fueguito / Ruleta /
+  Rakeback / Nivel VIP y **"Total regalos (no cargas)"** (`summary.gifts` = todo lo
+  que no es deposit ni withdrawal — lo que en 1girox va como Bono); filtros por tipo
+  incluyen roulette, rakeback, vip_levelup y `cashback` (= `type:'bonus'` +
+  `metadata.source:'instant_cashback'`, separado de Bonificaciones en el resumen y
+  en el filtro); etiquetas en `getTransactionTypeLabel` / `_txIsCashback` (tipo
+  nuevo ⇒ sumar etiqueta + botón + case del resumen).
+- **Config → "📉 Reembolso en vivo"** (solo admin general): on/off, %, rollover
+  (validado contra `bonus.multipliers`), mínimo y tope diario. En la PWA el cliente
+  lo ve como botón en el modal 🎁 Reembolsos y como recuadro en el perfil
+  (`refunds.js`: `loadCashbackStatus` / `showCashbackModal` / `claimCashback`).
 - `admin-sw.js` (v35, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
   network-first no-store para el shell.
 - Servido por handlers propios con cache en memoria (`readFileCached`) + ADMIN_HOST
@@ -915,6 +972,14 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   saliera del id, el reintento tras un fallo falso pagaría doble).
 - **Retiros: validar contra `available`, no `balance`** — el rollover está activo en
   1girox y parte del saldo puede estar bloqueado (§4.5).
+- **Reembolso EN VIVO (2026-09-11):** la base descuenta TODO lo regalado, incluidos
+  los propios reembolsos cobrados (§3.2 de la espec) — no "arreglar" eso pensando
+  que es doble descuento. Todo regalo nuevo tiene que quedar en Transaction con un
+  tipo de `CASHBACK_GIFT_TX_TYPES` (o en `deposit.bonus`) o se reembolsaría. La
+  Transaction 'bonus' aparte de la carga con bonus va con `metadata.source:
+  'deposit_bonus'` (si no, se contaría dos veces). `User.cashbackCarryNet` puede
+  ser negativo a propósito. No cambiar `CASHBACK_STATS_EPOCH` (2026-07-31) ni el
+  orden del plegado sin releer §3.4.
 - **Regalos = bono 0 "regalo directo", NO depósito** (2026-09-07, §4.5): reembolsos,
   ruleta, rakeback, bono VIP y comisiones van por `creditUserBalance` SIN multiplier
   → `/bonus` con `multiplier: 0` (figuran como Bono en el panel de 1girox), con

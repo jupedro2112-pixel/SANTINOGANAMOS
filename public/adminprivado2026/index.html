@@ -547,6 +547,7 @@ document.addEventListener('change', function (ev) {
                     <button class="filter-btn" data-filter="bonus" onclick="filterTransactions('bonus')">Bonificaciones</button>
                     <button class="filter-btn" data-filter="fire_reward" onclick="filterTransactions('fire_reward')">🔥 Fueguito</button>
                     <button class="filter-btn" data-filter="refund" onclick="filterTransactions('refund')">Reembolsos</button>
+                    <button class="filter-btn" data-filter="cashback" onclick="filterTransactions('cashback')">📉 Reembolso en vivo</button>
                     <button class="filter-btn" data-filter="referral_commission" onclick="filterTransactions('referral_commission')">Referidos</button>
                     <button class="filter-btn" data-filter="roulette" onclick="filterTransactions('roulette')">🎡 Ruleta</button>
                     <button class="filter-btn" data-filter="rakeback" onclick="filterTransactions('rakeback')">💎 Rakeback</button>
@@ -687,6 +688,43 @@ document.addEventListener('change', function (ev) {
                                 <span class="icon icon-save"></span> Guardar código de bienvenida
                             </button>
                             <div id="welcomeCodeMsg" style="font-size:12px;margin-top:8px;color:#aaa;"></div>
+                        </div>
+                        <!-- REEMBOLSO EN VIVO acumulativo de por vida (ESPEC-REEMBOLSO-1GIROX.md, solo admin general) -->
+                        <div class="panel-subheader" style="margin-top: 24px;" id="cashbackHeader">
+                            <h3>📉 Reembolso en vivo (acumulativo sobre plata real)</h3>
+                        </div>
+                        <div class="cbu-form" id="cashbackForm">
+                            <p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">
+                                El cliente reclama cuando quiere un <b>% de lo que perdió de su propia plata</b> desde que se registró
+                                (netwin real de casino <b>menos TODO lo regalado</b>: bonos, ruleta, fueguito, reembolsos ya cobrados).
+                                Se acumula hasta que reclama, al reclamar arranca de 0 y una ganancia grande resta para siempre.
+                                Se acredita como <b>BONO con rollover</b> y lo cobrado <b>se descuenta</b> del reembolso diario/semanal/mensual.
+                            </p>
+                            <div class="form-group">
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;">
+                                    <input type="checkbox" id="cbkEnabled" style="width:auto;"> Reembolso en vivo ACTIVADO
+                                </label>
+                            </div>
+                            <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                <div class="form-group" style="flex:1;min-width:110px;">
+                                    <label>% de la pérdida real</label>
+                                    <input type="number" id="cbkPct" min="0" max="50" step="0.5" placeholder="5">
+                                </div>
+                                <div class="form-group" style="flex:1;min-width:110px;">
+                                    <label>Rollover del bono (x)</label>
+                                    <input type="number" id="cbkRoll" min="0" max="50" placeholder="2">
+                                </div>
+                                <div class="form-group" style="flex:1;min-width:110px;">
+                                    <label>Mínimo para reclamar ($)</label>
+                                    <input type="number" id="cbkMin" min="0" placeholder="300">
+                                </div>
+                                <div class="form-group" style="flex:1;min-width:130px;">
+                                    <label>Tope diario ($ por cliente)</label>
+                                    <input type="number" id="cbkMax" min="0" placeholder="50000">
+                                </div>
+                            </div>
+                            <button type="button" class="btn-primary" onclick="saveInstantCashback()">💾 Guardar reembolso en vivo</button>
+                            <div id="cashbackMsg" style="font-size:12px;margin-top:8px;color:#aaa;"></div>
                         </div>
                         <!-- Rangos de reembolso (solo admin general).
                              🪦 Acá estaba la card "Porcentajes de reembolso" (refundPercents,

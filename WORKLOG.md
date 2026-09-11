@@ -4,7 +4,118 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-09-07**
+> **Última actualización: 2026-09-11**
+
+## Sesión 2026-09-11 — Reembolso EN VIVO acumulativo sobre plata real (ESPEC-REEMBOLSO-1GIROX.md)
+
+### 182. Reembolso acumulativo de por vida + reembolsos por período sobre plata REAL (implementación de la espec, tal cual)
+- **Pedido del owner:** implementar el reembolso siguiendo
+  `docs/ESPEC-REEMBOLSO-1GIROX.md` (copiada desde la repo gemela
+  PAUTANUEVAsantino, WORKLOG #254→#276 de allá) tal cual, mostrando antes cómo
+  estaba el cálculo acá y validando con la tabla de casos de la §7.
+- **Cómo estaba acá (diagnóstico):** SOLO reembolsos por PERÍODO (diario/semanal/
+  mensual) con `netLoss = max(0, casinoNetwin)` del período × rango. Diferencias
+  con la espec: (§3) no existía el acumulado de por vida — la ganancia "vencía"
+  con el período y las pérdidas siguientes cobraban igual; no se descontaba
+  NADA de lo regalado (ni local ni `bonus.granted`, que `getPlayerStats` ni
+  parseaba) → un cliente que cargó $20k, recibió $20k de regalo y perdió $40k
+  cobraba el % sobre los $40k; (§4) sin registro de reclamos en vivo, sin
+  descuento de lo ya cobrado, sin tope diario; (§5) el reembolso por período no
+  restaba `bonus.granted` ni el cashback ya cobrado en el período. Lo que YA
+  cumplía: reserva atómica antes de acreditar, reference derivada del período
+  (`vip-rf-*`), solo casino, hora ART, montos en pesos, bono 0 como regalo.
+- **Nuevo `src/utils/cashbackFormula.js` (fórmula PURA, §3):**
+  `computeCashback({carryNet, liveNet, carryGranted, liveGranted,
+  giftedLocalBefore, giftedLocalLive, paidLife, paidToday, pct, maxDailyArs,
+  minArs})` → `reclamable = floor(pct% × max(0, (carryNet+liveNet) −
+  [max(localViejo,grantedViejo) + max(localVivo,grantedVivo)]) − cobrado)`,
+  capado por `topeDiario − cobradoHoy`; `nextFold(anchor, hoy)` = plegado de
+  60 días cuando el tramo vivo pasa los 85 (§3.4). Sin DB ni API a propósito:
+  `scripts/test-cashback-formula.js` la valida en frío contra la tabla de §7
+  (`node scripts/test-cashback-formula.js` → ✅ todos). ⚠️ Nota sobre el caso
+  §7.4 ("pierde 100k, cobra 5k, pierde 100k más → $5.000"): con la fórmula de
+  la espec (§3.2: lo cobrado cuenta como regalo) da $5.000 solo si continúa al
+  caso 3 (también perdió los $5k del reembolso → netwin 205k); si el reembolso
+  NO se perdió da $4.750 (es el "efecto aceptado" de §3.2, lado conservador).
+  El test cubre las dos variantes.
+- **Modelo `CashbackClaim` (nuevo) + campos en `User`:** `cashbackAnchorAt`,
+  `cashbackCarryNet` (puede ser NEGATIVO: la ganancia vieja resta para
+  siempre), `cashbackCarryGranted`. Índice único `userId+dateKey+seq`
+  (`unique_user_day_seq`) = candado del reclamo; `status` pending|credited
+  (los pending cuentan como cobrado, §4.2); `creditedAs` bonus|deposit.
+  Registrado en `src/models/index.js` y `config/database.js`.
+- **`giroxService`:** `getPlayerStats` y el batch parsean el bloque `bonus`
+  del /stats (`bonusGranted`, `bonusStillLocked`, 0 si la API no lo manda);
+  `opts.includeRaw` devuelve la respuesta cruda sin cachear.
+- **Motor `_cashbackStateToday(userId, username, {fresh})` (server.js, tras
+  `_refundReference`):** ancla = alta del usuario o `CASHBACK_STATS_EPOCH`
+  (2026-07-31, no hay stats previas); plegado con `User.updateOne` condicionado
+  a `cashbackAnchorAt` previo (`$inc` carryNet/carryGranted + `$set` ancla; si
+  no modificó, relee y sigue → dos instancias no pliegan dos veces); tramo vivo
+  `getPlayerStats(ancla → hoy)`; regalos LOCALES por aggregation sobre
+  Transaction partida por la MISMA ancla (`< ancla` / `≥ ancla`) — matchea por
+  `userId` O `username` porque las Transactions viejas de reembolso no guardan
+  userId; suma `deposit.bonus` + tipos bonus/fire_reward/refund/rakeback/
+  vip_levelup/referral_commission/roulette (incluye el propio cashback cobrado,
+  `metadata.source:'instant_cashback'`, §3.2). ⚠️ **Trampa propia de esta
+  repo:** la carga con bonus del agente escribe el bonus DOS veces (campo
+  `bonus` del deposit + Transaction 'bonus' aparte "Bonificación incluida en
+  depósito…"): la aparte se EXCLUYE de la suma (por `metadata.source:
+  'deposit_bonus'`, que se agrega desde hoy, y por regex del description para
+  las viejas). Cobrado = CashbackClaim pending+credited. Log `[cashback]
+  regalos: local vs plataforma` cuando difieren (§3.3).
+- **Endpoints:** `GET /api/cashback/status` (`?fresh=1` sin cache, cooldown
+  30s por usuario → 429 con `retryInSec`), `POST /api/cashback/claim`
+  (authLimiter; §4 completo: recalcula fresh → mínimo/tope → reserva del seq
+  con índice único (2 intentos) → guard anti doble click 20s → acredita con
+  `_creditGiftWithRollover(..., 'CASHBACK')` = `/bonus` con el rollover del
+  panel, cae a depósito CON multiplier si el jugador tiene bono activo o el
+  feat no está — es el helper del fueguito renombrado, `_creditFireReward`
+  quedó como alias — reference **`vip-cbk-<userId>-<YYYY-MM-DD>-<seq>`**;
+  fallo → se borra la reserva y el reintento reusa el MISMO seq/reference;
+  éxito → claim `credited` + Transaction `bonus` con `metadata.source:
+  'instant_cashback'` + nota admin-only en el chat). Config: `GET/POST
+  /api/admin/instant-cashback` (`Config['instantCashback']` = {enabled, pct,
+  rolloverX, minArs, maxDailyArs}; defaults apagado / 5% / x2 / $300 /
+  $50.000; POST solo admin general y valida el rollover contra
+  `bonus.multipliers`). Diagnóstico `GET /api/admin/girox/stats-raw?username=
+  X&days=30` (solo admin general): `parsed.bonusGranted` + respuesta cruda.
+- **Reembolsos por PERÍODO (§5) — status + los 3 claims:** `netLoss = max(0,
+  casinoNetwin − bonusGranted)` del período (el diario también, para ser
+  consistente — la espec habla de semanal/mensual "si el proyecto lo tiene";
+  acá el diario existe y se mantiene) y del monto calculado se resta lo ya
+  cobrado como reembolso en vivo dentro del período (`_cashbackPaidBetween`,
+  claims `credited` por `createdAt`). Imprecisión aceptada por la espec: un
+  bono otorgado la semana anterior y perdido esta semana no se descuenta.
+- **Panel:** card "📉 Reembolso en vivo" en Config (junto a los rangos; solo
+  admin general — se oculta si el GET da 403), `loadInstantCashbackCfg` /
+  `saveInstantCashback`. Transacciones: el reembolso en vivo es su propia
+  categoría `cashback` (resumen `summary.cashback`, se resta de
+  "Bonificaciones", suma a `gifts`; filtro "📉 Reembolso en vivo" → el back
+  filtra `type:'bonus' + metadata.source:'instant_cashback'`, y el filtro
+  "Bonificaciones" lo EXCLUYE); badge `.type-badge.cashback`. admin-sw **v37**.
+- **PWA (`refunds.js` + index.html):** `loadCashbackStatus` corre junto con
+  `loadRefundStatus`; botón "📉 Reembolso EN VIVO" en el modal 🎁 Reembolsos
+  (oculto si la feature está apagada; muestra "$X para reclamar" cuando hay);
+  modal propio `showCashbackModal` y el mismo recuadro arriba de "Tus
+  reembolsos" en el perfil: pérdida real acumulada, ya cobrado, rollover,
+  tope, botón RECLAMAR (confirm) y 🔄 Actualizar (`?fresh=1`). Tras reclamar
+  refresca saldo y los reembolsos por período. SW PWA **v105**.
+- **Validado:** `node --check` OK (server.js, giroxService.js, User.js,
+  CashbackClaim.js, index.js, database.js, cashbackFormula.js, admin.js,
+  refunds.js, SWs) + `node scripts/test-cashback-formula.js` ✅ (todos los
+  casos de §7; los de doble click y timeout se cubren por diseño: índice
+  único + reference estable). **Back necesita redeploy; panel y PWA,
+  recargar.** PROBAR post-deploy: (1) `stats-raw` de un jugador con bonos
+  recientes → `bonusGranted > 0`; (2) activar la card en Config con 5% / x2 /
+  $300 / $50.000; (3) cliente que perdió → 🎁 Reembolsos → "Reembolso EN
+  VIVO" muestra el reclamable, RECLAMAR → saldo sube, en 1girox figura como
+  Bono con rollover x2 y ref `vip-cbk-…`, nota admin-only en el chat, fila
+  "📉 Reembolso en vivo" en Transacciones; (4) volver a abrir → $0 (arranca de
+  0); (5) el semanal/mensual de ese período muestra el monto menos lo cobrado;
+  (6) doble toque en RECLAMAR → un solo pago (el segundo: "otro reclamo en
+  curso"). Rollback sin deploy: apagar la card (los reembolsos por período
+  siguen descontando `bonus.granted`).
 
 ## Sesión 2026-09-07 — Regalos como BONO en el panel de 1girox (chau "Carga" para ruleta/reembolsos)
 

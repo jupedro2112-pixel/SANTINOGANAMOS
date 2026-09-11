@@ -1831,6 +1831,7 @@ body {
 }
 /* Tipos de regalo agregados a Transacciones (2026-09-07) */
 .type-badge.roulette { background: rgba(168, 85, 247, 0.18); color: #c084fc; }
+.type-badge.cashback { background: rgba(77, 208, 255, 0.16); color: #4dd0ff; }
 .type-badge.rakeback { background: rgba(56, 189, 248, 0.18); color: #7dd3fc; }
 .type-badge.vip_levelup { background: rgba(250, 204, 21, 0.18); color: #fde047; }
 .type-badge.fire_reward { background: rgba(249, 115, 22, 0.18); color: #fb923c; }

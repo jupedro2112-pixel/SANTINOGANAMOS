@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v104'; // v104: burbuja del casino con logo 1GIROX + "⚡ CARGA RÁPIDA", widget arranca abierto, pista de arrastre
+const CACHE_VERSION = 'v105'; // v105: reembolso EN VIVO acumulativo (botón en Reembolsos + recuadro en el perfil)
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 // Logs por-fetch del SW (corren en CADA request). Apagados por default;

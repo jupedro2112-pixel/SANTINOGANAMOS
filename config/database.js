@@ -18,6 +18,7 @@ const {
   Command,
   Config,
   RefundClaim,
+  CashbackClaim,
   FireStreak,
   ChatStatus,
   Transaction
@@ -271,6 +272,7 @@ module.exports = {
   Command,
   Config,
   RefundClaim,
+  CashbackClaim,
   FireStreak,
   ChatStatus,
   Transaction,
