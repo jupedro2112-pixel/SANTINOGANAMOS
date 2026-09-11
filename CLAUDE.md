@@ -59,7 +59,9 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 - `src/utils/periodRanges.js` — rangos de fecha (ayer / semana / mes) en hora argentina.
 - `jugaygana*.js` + `referralRevenueService.js` + `jugayganaUserLinkService.js` —
   **muertos**, sin consumidores. Ver la nota de migración arriba.
-- `src/models/` — schemas Mongoose canónicos (fuente de verdad).
+- `src/models/` — schemas Mongoose canónicos (fuente de verdad). Banco: BankMovement,
+  BankSweep (bajadas), DailyClose (cierre), CashierSnapshot (saldo cajero 1girox — hoy
+  vacío, la API no lo informa).
 - `src/services/` — lógica (referidos, notificaciones, otp, metaCapi, fbAds, hgcash,
   comprobantes IA, analítica publicistas…).
 - `public/` — PWA del cliente (namespace global `window.VIP`, SW único
@@ -142,6 +144,15 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   y `BONUS_STRATEGY_DISABLED` (server.js) + `CHARGE_BONUSES_DISABLED`
   (notificationRulesService) + bonos de encuesta con `bDays=[]`. Tope 30% en TODO lo
   automático (cap de lectura en `_getActivePromoBonus` incluido).
+- **Bandeja del banco / cierre diario (#183, réplica 1:1 del #155 del gemelo
+  AUTOREEMBOLSOS):** una transferencia hgcash = UNA acreditación. Toda carga que venga
+  del banco deja el vínculo en las dos direcciones (`BankMovement.transactionId` +
+  `chargeSource` y `Transaction.metadata.movementId`), y la carga ASIGNADA desde la
+  bandeja va SIEMPRE por `hgcashAutoCarga({assign})` (misma reference `vip-hg-*`, mismo
+  candado por coelsa). Si no, el cierre diario (`src/services/bankCloseService.js`,
+  Telegram 00:05 ART) lo marca. Mismos nombres de modelos/endpoints/funciones del panel
+  que el gemelo: no renombrar. El cruce con el cajero queda `sin_datos` hasta que 1girox
+  informe el saldo del agente.
 - **Multi-instancia (AWS EB):** los crons son `setInterval` en CADA instancia; su
   idempotencia depende de índices únicos (EncuestaFire.slotKey, InactividadFire.fireKey,
   HgcashCharge.chargeKey, DailyRouletteSpin userId+dateKey). No quitar esos índices.

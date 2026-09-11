@@ -6,7 +6,117 @@
 >
 > **Última actualización: 2026-09-11**
 
-## Sesión 2026-09-11 — Reembolso EN VIVO acumulativo sobre plata real (ESPEC-REEMBOLSO-1GIROX.md)
+## Sesión 2026-09-11 — Reembolso EN VIVO acumulativo sobre plata real (ESPEC-REEMBOLSO-1GIROX.md) + 🏦 Banco
+
+### 183. 🏦 BANDEJA DEL BANCO en tiempo real + carga manual ANCLADA + BAJADAS + CIERRE DIARIO (réplica 1:1 del #155 del gemelo AUTOREEMBOLSOS, adaptada a 1girox)
+- **Pedido del owner:** exactamente la misma funcionalidad que el gemelo
+  (`~/Documents/AUTOREEMBOLSOSjygactivo`, paquete `docs/replicas/README-2026-09-11-
+  banco.md` + patch), con los MISMOS nombres de modelos, campos, endpoints, eventos
+  de socket y funciones del panel, para que los próximos parches se porten 1:1.
+  Objetivo de negocio: ninguna carga de más ni de menos — toda transferencia
+  hgcash termina asignada a un usuario (o marcada "no corresponde"), toda carga
+  tiene su transferencia (u origen declarado), y un cierre diario automático lo
+  cruza y avisa por Telegram.
+- **Diferencia de plataforma (1girox ≠ JUGAYGANA), decisiones tomadas:**
+  - La acreditación asignada va por `hgcashAutoCarga({assign})` con la MISMA
+    reference idempotente `vip-hg-<coelsa|movementId>` (es la misma transferencia:
+    un reintento devuelve `duplicate:true` y no paga dos veces). Sin `ambiguous`
+    (eso era el HTML/timeout de JUGAYGANA; acá la idempotencia lo resuelve).
+  - **Cruce 2 del cierre (cajero) = `sin_datos`:** verificado en el manual
+    `docs/PARTNER-APIv1.15.pdf` — `/deposit`, `/withdraw` y `/bonus` devuelven
+    SOLO el `balance` del JUGADOR y no existe endpoint de saldo del agente
+    (`GET /agents` lista sub-agentes, sin saldo). Igual quedaron `CashierSnapshot`
+    y `giroxService.setCashierBalanceHook` cableados: si 1girox agrega
+    `agent_balance` (o `agent.balance`) a esas respuestas, el cruce arranca solo.
+    **PENDIENTE: pedirle a 1girox el saldo del agente en las respuestas de plata.**
+    Rótulo en tiles y Telegram: "Cajero 1girox".
+  - Textos al agente y a Telegram dicen 1girox. `girox.errToString` nuevo
+    (paridad con el gemelo) para normalizar `.error`.
+  - Esta repo no tiene ruleta de bienvenida/diaria %, bono de primera carga ni
+    lote automático en la auto-carga (eso es de PAUTANUEVA): `assign` conserva lo
+    que SÍ hay acá (mínimo — salteado con assign, candado HgcashCharge por coelsa,
+    red de seguridad anti-duplicado — saltable con `force`, mensaje `/sys_deposit`,
+    SLA, oferta de recuperación).
+- **Modelos:** `BankMovement` + `fromKey` (identidad bancaria normalizada del
+  titular, la setea el webhook), `chargeSource` (auto|assigned|manual_link|
+  legacy_amount|legacy_name|close_link), `transactionId` (index), `assignedBy/At`,
+  `resolution/resolutionNote/resolvedBy/At`, `outKind` (payout|sweep|unknown),
+  `payoutId`, `sweepId`, índice `{direction, matchStatus, createdAt}`. Nuevos:
+  **`BankSweep`** (bajadas), **`DailyClose`** (cierre por día, diffs con `key`
+  estable y marca resuelto), **`CashierSnapshot`** (TTL 120 d; hoy vacío). Sin
+  migración (defaults null). Helpers portados a server.js: `_bankFromKey` /
+  `_bankIdentityOr` (BANK_IDENTITY_MIN_NAME 8), `_artDateKey/_artHour/_artDayRange`,
+  `_projectLabel`. Servicio nuevo `src/services/telegramAlertService.js` (env/SSM
+  `TELEGRAM_ALERT_BOT_TOKEN` + `TELEGRAM_ALERT_CHAT_ID`, lazy; sin token no manda
+  nada). `src/services/bankCloseService.js` portado con textos 1girox.
+- **`hgcashAutoCarga({movement, comprobante, mode, assign})`:** comprobante
+  OPCIONAL (`compId`, cada `Comprobante.updateOne` con `if (compId)`); `assign =
+  {user, agent, agentRole, agentId, force}` toma también movimientos frenados
+  (needs_review/error/no_match), sin mínimo, red de seguridad saltable con
+  `force`; Transaction `source:'hgcash_assigned'` con el agente; movimiento
+  `manual_charged` + `chargeSource:'assigned'` + `assignedBy/At` +
+  `transactionId` (= Transaction.id). **Devuelve `{ok, reason|txId}`**
+  (claimed / comprobante_taken / user_not_found / shadow / below_min / duplicate /
+  possible_duplicate / deposit_failed / exception). Emite `_emitHgcashUpdate(kind,
+  movementId)` en cada salida.
+- **Carga manual (`/api/admin/deposit`) ANCLADA:** acepta `movementId`, `origin`
+  (hgcash|otro_banco|sin_movimiento) y `originNote`. Con movimiento: monto EXACTO,
+  claim atómico ANTES de acreditar; éxito → `manual_charged` + `transactionId` +
+  `chargeSource:'manual_link'`; fallo/excepción → `_bankReleaseClaim`. Transaction
+  `metadata.{origin, originNote, movementId}`. Sin movimiento:
+  `hgcashConsumeOnManualDeposit(…, txId)` ahora también retro-vincula por
+  **titular** (originHolder de los comprobantes del cliente en 6 h vs `fromKey`
+  de pendientes del mismo monto → `legacy_name`) y guarda el `transactionId` +
+  `Transaction.metadata.movementId`.
+- **Webhook:** salientes clasificados por externalID (`sweep-<id>` → bajada;
+  otro → pago; ninguno → unknown); `fromKey`; `bank_movement` (documento sin
+  `raw`) en cada alta Y en cada reentrega; `TRANSACTION_REQUEST` de `sweep-…` (o
+  request cuyo `id` es `hgRequestId` de una BankSweep) → `_handleSweepStatusWebhook`.
+  Fan-out y guard anti-bucle intactos.
+- **Endpoints (bloque "#183 BANDEJA DEL BANCO", justo antes de PAGOS AUTOMÁTICOS,
+  después del `const authMiddleware` — scan TDZ 0):** `GET /api/admin/bank/tray?
+  tab=pending|today|day&day=&search=&amount=`, `GET …/bank/users-search?q=`,
+  `GET …/bank/movements/:id/suggestions`, `POST …/assign {userId, force}`,
+  `POST …/link {transactionId}`, `POST …/resolve {note}` (admin), `POST …/reopen`
+  (admin), `GET …/bank/balance` (admin|withdrawer, reusa `_hgcashBalanceCache`).
+  Bajadas: `GET/POST …/bank/sweeps` (admin|withdrawer; destino guardado, CBU o
+  alias vía `hgcashPay.lookupAlias`; chequeo de saldo neto; cash-out con
+  externalID `sweep-<id>`; Telegram "🏦 BAJADA"), `POST …/sweeps/:id/sync`,
+  `GET/POST …/bank/sweep-destinations` (`Config['sweepDestinations']`; editar
+  solo admin). Cierre: `GET …/bank/close`, `GET …/bank/close/:date` (`?live=1`),
+  `POST …/close/:date/run {telegram}` (admin), `POST …/close/:date/resolve {key,
+  note, reopen}` (admin). Cron `_runDailyCloseTick` cada 5 min: desde las 00:05
+  ART corre el día anterior UNA vez por clúster (claim `Config['dailyclose_last']`),
+  Telegram con arrastre, socket `bank_close`.
+- **Panel (admin-sw v37 → v38):** nav **🏦 Banco** (`nav-item-bank`, admin |
+  depositor | withdrawer, badge de pendientes), `bankSection` con tabs ⏳
+  Pendientes / 📅 Hoy / 🗓️ Otro día / ⬆️ Bajadas / 🧾 Cierre diario; modales
+  `bankAssignModal` / `bankSweepModal` / `bankSweepDestModal`; bloque
+  `depositOriginGroup` en el modal Depositar ("¿De dónde viene la plata?": si hay
+  UNA pendiente del mismo monto se propone sola y fija el monto); listeners
+  `bank_movement` / `hgcash_movement` / `bank_close`; mismas funciones globales
+  que el gemelo (bankSetTab, loadBankTray, openBankAssign, bankAssignConfirm,
+  bankLink, bankResolve, bankReopen, openSweepModal, submitSweep, openBankClose,
+  bankCloseResolve, getDepositOrigin…). Tile del cajero: "🎰 Cajero 1girox".
+- **Validado:** `node --check` OK (server.js, giroxService.js, BankMovement.js,
+  BankSweep.js, DailyClose.js, CashierSnapshot.js, bankCloseService.js,
+  telegramAlertService.js, admin.js, admin-sw.js); scan TDZ: 0 rutas con
+  middleware antes de `const authMiddleware` (línea ~2812); HTML del panel
+  659/659 divs, 26/26 sections, 560 ids únicos. Sin cambios en la PWA.
+  **Back necesita redeploy (+ cargar `TELEGRAM_ALERT_BOT_TOKEN` y
+  `TELEGRAM_ALERT_CHAT_ID` en SSM para las alertas); panel, recargar.**
+  **PROBAR:** (1) llega una transferencia sin foto → 🏦 Banco → Pendientes al
+  instante (sin F5) → Asignar → se acredita (en 1girox con ref `vip-hg-…`), la
+  fila pasa a verde y desaparece; (2) Depositar a mano con una pendiente del
+  mismo monto → viene preseleccionada → queda "manual anclada" y NO se auto-carga
+  cuando después llega la foto; (3) bajada chica a un destino guardado →
+  Telegram "🏦 BAJADA" + fila en Bajadas + saliente "Bajada" en la bandeja;
+  (4) 🧾 Cierre → Recalcular hoy → tiles y diffs (cajero: "sin datos"); a las
+  00:05 ART llega el cierre a Telegram; (5) resolver un diff con nota → ✅ con tu
+  usuario y el cierre pasa a "0 diferencias". **Fase acordada en el gemelo
+  (aplica acá):** modo espejo primero; cuando el cierre dé 0 varios días, apagar
+  la carga manual con monto libre (solo asignar desde la bandeja) — decisión del
+  owner.
 
 ### 182. Reembolso acumulativo de por vida + reembolsos por período sobre plata REAL (implementación de la espec, tal cual)
 - **Pedido del owner:** implementar el reembolso siguiendo

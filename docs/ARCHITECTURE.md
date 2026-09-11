@@ -5,7 +5,11 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-09-11** — REEMBOLSO EN VIVO acumulativo de por vida
+> Última actualización: **2026-09-11 (2ª tanda)** — 🏦 BANDEJA DEL BANCO en tiempo real,
+> carga manual anclada, bajadas y cierre diario (réplica del #155 del gemelo; §2 modelos
+> BankSweep/DailyClose/CashierSnapshot + campos de BankMovement, §4.8 envs TELEGRAM_*,
+> §5 auto-carga/bajadas/cierre, §6 panel, §7 cron, §9 trampas).
+> Antes (misma sesión): REEMBOLSO EN VIVO acumulativo de por vida
 > sobre plata real + reembolsos por período que descuentan `bonus.granted` y lo ya
 > cobrado (espec en `docs/ESPEC-REEMBOLSO-1GIROX.md`; §2 CashbackClaim + campos
 > User, §4.4 reference `vip-cbk`, §4.6 bloque `bonus` del /stats, §5 flujo, §6
@@ -130,6 +134,21 @@ modelos); sus migraciones corren únicamente si algo llamara a ese connectDB.
 - **Comprobante** — cada imagen que la IA (Claude vision) clasificó como comprobante.
   `dedupeKey` (N° operación normalizado, descartando CBU/CUIT) + `imageHash` (SHA-256)
   para detectar reutilización. `bankMatchStatus` para la auto-carga.
+- **BankMovement** — cada movimiento que hgcash notifica por webhook (ver arriba).
+  **Desde 2026-09-11 (#183):** `fromKey` (identidad bancaria normalizada del titular),
+  `chargeSource` (auto | assigned | manual_link | legacy_amount | legacy_name |
+  close_link), `transactionId` (Transaction.id de la acreditación vinculada),
+  `assignedBy/At`, `resolution/resolutionNote/resolvedBy/At` ("no corresponde"),
+  `outKind` (payout | sweep | unknown), `payoutId`, `sweepId`.
+- **BankSweep** (#183) — BAJADAS: salidas de hgcash a un CBU externo (financiera) para no
+  acumular capital; solo admin general / pagos; externalID `sweep-<id>`; registro permanente.
+- **DailyClose** (#183) — cierre diario por `dateKey` ART: `summary`, `cashier` (cruce con
+  el cajero 1girox — hoy `sin_datos`), `bank` (saldo hgcash), `diffs[]` con `key` estable y
+  `resolved`.
+- **CashierSnapshot** (#183) — saldo del cajero (cuenta agente 1girox) tras cada operación
+  de plata + `opAmount` con signo; TTL 120 d. ⚠️ La Partner API v1.15 NO informa el saldo
+  del agente → colección vacía hasta que 1girox lo agregue (`giroxService.
+  setCashierBalanceHook` ya está cableado para `agent_balance`).
 - **HgcashCharge** — candado de idempotencia de la carga automática: índice único por
   `chargeKey` (coelsaCode) — la MISMA transferencia se acredita UNA sola vez entre
   instancias. Si la carga falla en 1girox, el registro se BORRA para permitir retry
@@ -512,6 +531,7 @@ tenían los 4 clientes viejos.
 | `SSM_SKIP_KEYS` | — | Claves que SSM NO pisa (solo entornos clon; `loadSecrets.js`) |
 | `META_PIXEL_ID_2` / `META_CAPI_ACCESS_TOKEN_2` / `META_TEST_EVENT_CODE_2` | — | 2º pixel CAPI del partner de tracking (mismo `event_id`, envío en paralelo) |
 | `GIROX_GIFT_AS_BONUS` | (on) | `0`/`false`/`off` = los regalos vuelven a depósito libre en vez de bono 0 (§4.5). Kill switch sin deploy |
+| `TELEGRAM_ALERT_BOT_TOKEN` / `TELEGRAM_ALERT_CHAT_ID` | — | Bot + grupo de Telegram para las BAJADAS y el CIERRE DIARIO del banco (#183, `src/services/telegramAlertService.js`). Sin ambos, no se manda nada |
 
 Opcionales/afinado: `GIROX_TIMEOUT_MS` (20000) y las `GIROX_MIGRATION_*` del script.
 🪦 `GIROX_ADMIN_*` y `GIROX_AGENT_USER_ID` se fueron con el scraping del panel (#101).
@@ -647,6 +667,33 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   3 veces (la reference estable impide que el reintento duplique la carga).
   **Fan-out** (#94): reenvía el webhook crudo+firma a autoreembolsos.com
   (`HGCASH_FANOUT_URL`, 'off' para apagar).
+  **BANDEJA DEL BANCO (#183, réplica del #155 del gemelo):** manda el MOVIMIENTO, no
+  la foto. Todo entrante `done` termina en un estado: cargado auto (foto matcheó) ·
+  **asignado** por un agente desde panel→🏦 Banco (`POST /api/admin/bank/movements/:id/
+  assign` → `hgcashAutoCarga` con `assign`, mismo candado por coelsa, MISMA reference
+  `vip-hg-*`, sin comprobante, sin mínimo, red anti-duplicado saltable con `force`) ·
+  **manual anclado** (el modal Depositar manda `movementId`: monto exacto, claim
+  atómico antes de acreditar, `chargeSource:'manual_link'`; sin movimiento, `origin`
+  otro_banco|sin_movimiento) · vinculado a una carga manual ya hecha (`/link`) ·
+  "no corresponde" (admin, con motivo). `hgcashConsumeOnManualDeposit` además
+  retro-vincula por TITULAR (`fromKey` vs `originHolder` del comprobante, 6 h).
+  Salientes clasificados por externalID (`sweep-<id>` bajada / pago / unknown).
+  El panel se actualiza por socket `bank_movement` (doc entero, sin `raw`) sin
+  recargar — `_emitHgcashUpdate(kind, movementId)`. `BankMovement.chargeSource/
+  transactionId` y `Transaction.metadata.{movementId, origin}` son los vínculos en las
+  dos direcciones que el cierre cruza. `hgcashAutoCarga` devuelve `{ok, reason|txId}`.
+- **Bajadas** (#183): `POST /api/admin/bank/sweeps` (admin|withdrawer) → cash-out hgcash a
+  un CBU externo (destino guardado en `Config['sweepDestinations']`, CBU o alias resuelto),
+  externalID `sweep-<id>`; el webhook de estado (`_handleSweepStatusWebhook`) y el movimiento
+  saliente (`outKind:'sweep'`) se vinculan solos. Telegram "🏦 BAJADA". Registro en BankSweep.
+- **Cierre diario** (#183, `src/services/bankCloseService.js`): 3 cruces del día ART —
+  banco↔sistema (entrantes sin acreditar / cargas sin transferencia ni origen / salidas sin
+  pago ni bajada; vincula y PERSISTE pares inequívocos usuario+monto ±3 h), cajero 1girox
+  (Σ opAmount de CashierSnapshot vs delta de saldo, tolerancia $5 — **hoy `sin_datos`**, la
+  API no informa el saldo del agente) y errores (pago sin `debitConfirmed`, pago hgcash
+  sin movimiento, ambiguos sin resolver). Cron `_runDailyCloseTick` a las 00:05 ART (claim
+  `Config['dailyclose_last']`) → Telegram con arrastre + socket `bank_close`. Panel→🏦
+  Banco→Cierre: recalcular, resolver diffs con nota (admin).
 - **Retiro self-service**: `POST /api/withdrawal/request` — exige phoneVerified, lock
   anti-doble, chequeo de saldo (UX), dedup 10min → crea PendingPayout
   (`deductAtPay:true`, SIN descontar) → mueve el chat a Pagos. El AGENTE confirma:
@@ -899,7 +946,15 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   (validado contra `bonus.multipliers`), mínimo y tope diario. En la PWA el cliente
   lo ve como botón en el modal 🎁 Reembolsos y como recuadro en el perfil
   (`refunds.js`: `loadCashbackStatus` / `showCashbackModal` / `claimCashback`).
-- `admin-sw.js` (v35, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
+- **🏦 Banco** (#183): nav para admin/depositor/withdrawer (badge = pendientes). Tabs
+  Pendientes/Hoy/Otro día (filas en vivo por socket `bank_movement`), Bajadas (modal +
+  destinos guardados; crear solo admin|withdrawer), Cierre (tiles + diffs resolubles). El
+  modal Depositar tiene el bloque "¿De dónde viene la plata?" (transferencia pendiente /
+  otro banco / sin transferencia) que alimenta `movementId`/`origin` de `/api/admin/deposit`.
+  Funciones globales con los MISMOS nombres que el gemelo (bankSetTab, loadBankTray,
+  openBankAssign, bankAssignConfirm, bankLink, bankResolve, bankReopen, openSweepModal,
+  submitSweep, openBankClose, bankCloseResolve, getDepositOrigin…).
+- `admin-sw.js` (v38, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
   network-first no-store para el shell.
 - Servido por handlers propios con cache en memoria (`readFileCached`) + ADMIN_HOST
   check opcional; el catch-all bloquea todo otro path bajo /adminprivado2026/.
@@ -920,6 +975,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
 | `_runVipTick` (niveles VIP) | 30 min | activo (se apaga desde el panel: Config → "Niveles VIP", flag `vip_levels_disabled` en Config, SOLO admin general — sin cache a propósito para que aplique al instante en todas las instancias) | buckets con `$set` idempotente + bono con reference `vip-lvl-*` (la plataforma dedupe) |
 | `_runVipSweepCheck` (sweep VIP) | 1 h (corre a las 05 ART) | activo | claim atómico por día en Config (`vip_sweep_day`) → instancia única |
 | `_runFcmPrune` | 24 h | activo | flag anti-overlap en memoria |
+| `_runDailyCloseTick` (cierre diario del banco, #183) | 5 min (corre 1×/día desde las 00:05 ART) | activo | claim `Config['dailyclose_last']` + DailyClose único por dateKey |
 | `_processNotifBatchQueue` (lotes con regalo) | 45 s (+ setImmediate al crear un lote) | activo | claim atómico por recipient (`findOneAndUpdate` posicional a 'sending'; un 'sending' colgado >10 min se re-reclama solo) + reference `vip-nbatch-*` — reanudable tras deploy y multi-instancia safe |
 | `fbAdsWebhook.startWorker` | 5 min | activo | nextRetryAt |
 | Limpieza mensajes >3d | 6 h | activo (red de seguridad del TTL) | deleteMany |
@@ -1028,6 +1084,14 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   HTML sin pasar por `renderIndexHtml`.
 - **Firebase config duplicada** (index.html + firebase-messaging-sw.js) y VAPID key en
   el inline: cambiar en ambos lados.
+- **Vínculos banco↔carga (#183):** una transferencia = UNA acreditación. Cualquier flujo
+  nuevo que acredite plata que entró por hgcash tiene que dejar `BankMovement.transactionId`
+  + `chargeSource` y `Transaction.metadata.movementId` (o `origin:'otro_banco'`), o el cierre
+  diario lo marca como diferencia. La carga asignada SIEMPRE va por `hgcashAutoCarga({assign})`
+  (nunca un `depositToUser` suelto: perdería el candado por coelsa y la reference `vip-hg-*`).
+  `_emitHgcashUpdate(kind, movementId)` con movementId para que la bandeja se actualice en vivo.
+  Nombres de modelos/endpoints/funciones del panel = los del gemelo AUTOREEMBOLSOS (#155):
+  no renombrar, así los parches se portan 1:1.
 - **`Campaign.hasGiroxKey` es un espejo** de `giroxApiKey` (que es `select:false`):
   cualquier camino que escriba o limpie la key TIENE que actualizar el booleano, o el
   panel muestra el badge equivocado.

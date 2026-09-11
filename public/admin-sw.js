@@ -34,7 +34,7 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v37'; // v37: card "Reembolso en vivo" en Config + categoría/filtro en Transacciones
+const CACHE_VERSION = 'v38'; // v38: sección 🏦 Banco (bandeja en vivo, bajadas, cierre diario) + origen en Depositar (#183) // v37: card "Reembolso en vivo" en Config + categoría/filtro en Transacciones
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).

@@ -436,6 +436,36 @@ function _normalizeAmount(amount) {
  * Arma la respuesta de una operación de plata con la MISMA forma que los clientes
  * viejos, para no tocar los 27 call sites que leen data.transfer_id / user_balance_after.
  */
+// #183 Hook del saldo del CAJERO (cuenta agente). server.js registra un callback
+// que guarda un CashierSnapshot por operación (base del cruce 2 del cierre diario).
+// ⚠️ La Partner API v1.15 devuelve en /deposit, /withdraw y /bonus SOLO el saldo
+// del JUGADOR (`balance`) y no tiene endpoint de saldo del agente → hoy esto NO
+// reporta nada. Queda cableado para que, si 1girox agrega `agent_balance` (o
+// `agent.balance`) a esas respuestas, el cierre empiece a cruzar el cajero sin
+// tocar código. Best-effort: nunca puede tirar ni frenar la operación de plata.
+let _cashierHook = null;
+function setCashierBalanceHook(fn) { _cashierHook = (typeof fn === 'function') ? fn : null; }
+function _reportCashier(data, opKind, username, amountArs) {
+  try {
+    if (!_cashierHook || !data) return;
+    const raw = data.agent_balance !== undefined ? data.agent_balance
+      : (data.agent && data.agent.balance !== undefined ? data.agent.balance : undefined);
+    if (raw === undefined || raw === null || !Number.isFinite(Number(raw))) return;
+    if (data.duplicate) return; // no movió plata: el saldo no cambió por esta operación
+    const sign = opKind === 'withdraw' ? 1 : -1;
+    _cashierHook({ balance: Number(raw), opAmount: sign * Number(amountArs || 0), opKind, username, at: new Date() });
+  } catch (_) {}
+}
+
+/** Normaliza a string cualquier `.error` devuelto por este cliente (evita "[object Object]"). */
+function errToString(err) {
+  if (err == null) return '';
+  if (typeof err === 'string') return err;
+  if (err instanceof Error) return err.message || String(err);
+  if (typeof err === 'object') return err.message || err.error || (function () { try { return JSON.stringify(err); } catch (_) { return String(err); } })();
+  return String(err);
+}
+
 function _moneyResult(data) {
   const op = data.operation || {};
   return {
@@ -926,6 +956,7 @@ async function depositToUser(username, amount, description = '', reference = nul
   _invalidatePlayer(username);
 
   const out = _moneyResult(r.data);
+  _reportCashier(r.data, 'deposit', username, amt);
   // Caso excepcional documentado: la carga se acreditó pero el bono no.
   const bonusStatus = r.data && r.data.wagering && r.data.wagering.bonus && r.data.wagering.bonus.status;
   if (bonusStatus === 'failed') {
@@ -968,6 +999,7 @@ async function withdrawFromUser(username, amount, description = '', reference = 
   }
   // El saldo cambió: la próxima lectura tiene que ir a la plataforma.
   _invalidatePlayer(username);
+  _reportCashier(r.data, 'withdraw', username, amt);
   return _moneyResult(r.data);
 }
 
@@ -1035,6 +1067,7 @@ async function creditUserBalance(username, amount, reference = null, opts = {}) 
     _invalidatePlayer(username);
     const out = _moneyResult(r.data);
     out.creditedAs = 'bonus';
+    _reportCashier(r.data, 'bonus', username, amt);
     return out;
   }
 
@@ -1058,6 +1091,7 @@ async function creditUserBalance(username, amount, reference = null, opts = {}) 
         _invalidatePlayer(username);
         const out = _moneyResult(r.data);
         out.creditedAs = 'bonus';
+        _reportCashier(r.data, 'bonus', username, amt);
         // Cinturón: si (contra lo documentado) el regalo quedara "a reclamar", se
         // reclama SÓLO ese requirement — nunca claim-all, para respetar la decisión
         // del owner de no auto-reclamar el regalito que el cliente ya tuviera.
@@ -1525,6 +1559,10 @@ function getPlayerCacheTtlMs() {
 }
 
 module.exports = {
+  /** Normaliza a string cualquier `.error` devuelto por este cliente. */
+  errToString,
+  /** #183: callback({balance, opAmount, opKind, username, at}) con el saldo del cajero tras cada operación de plata (si la API lo informa). */
+  setCashierBalanceHook,
   // config
   isEnabled,
   getPlayUrl,

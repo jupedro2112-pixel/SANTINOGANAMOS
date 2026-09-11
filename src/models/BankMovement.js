@@ -8,7 +8,7 @@
  *
  * El matcheo con el comprobante del chat (monto + CBU origen + ventana de
  * tiempo) decide a qué usuario corresponde y dispara la carga automática en
- * JUGAYGANA (ver server.js). Toda la lógica está GATEADA por la config
+ * la plataforma (ver server.js). Toda la lógica está GATEADA por la config
  * `hgcash` (Config) y arranca en modo sombra (no carga sola hasta habilitarlo).
  */
 const mongoose = require('mongoose');
@@ -29,6 +29,10 @@ const bankMovementSchema = new mongoose.Schema({
 
   // Partes
   fromName: { type: String, default: null },
+  // Identidad bancaria normalizada del titular de origen (nombre sin acentos/
+  // puntuación, mayúsculas). La setea el webhook; sirve para "este titular ya
+  // cargó en @x" y el retro-vínculo por titular de la carga manual (#183).
+  fromKey: { type: String, default: null, index: true },
   fromCBU: { type: String, default: null, index: true },
   fromCUIT: { type: String, default: null },
   toName: { type: String, default: null },
@@ -63,6 +67,18 @@ const bankMovementSchema = new mongoose.Schema({
   matchedUserId: { type: String, default: null },
   matchedUsername: { type: String, default: null },
   matchedComprobanteId: { type: String, default: null },
+  // #183 Bandeja del banco / cierre diario (réplica del #155 del gemelo)
+  chargeSource: { type: String, default: null },   // auto | assigned (bandeja) | manual_link (carga manual anclada) | legacy_amount (consumo por monto) | legacy_name (retro-vínculo por titular) | close_link (vinculado por el cierre)
+  transactionId: { type: String, default: null, index: true }, // Transaction.id de la acreditación vinculada
+  assignedBy: { type: String, default: null },
+  assignedAt: { type: Date, default: null },
+  resolution: { type: String, default: null },     // no_corresponde | otro (movimiento entrante que NO se acredita a nadie, con motivo)
+  resolutionNote: { type: String, default: null },
+  resolvedBy: { type: String, default: null },
+  resolvedAt: { type: Date, default: null },
+  outKind: { type: String, default: null },        // salientes: payout | sweep | unknown
+  payoutId: { type: String, default: null },
+  sweepId: { type: String, default: null },
   chargeError: { type: String, default: null },
   chargeAttempts: { type: Number, default: 0 }, // intentos de auto-carga fallidos
   chargedAt: { type: Date, default: null },
@@ -74,5 +90,7 @@ const bankMovementSchema = new mongoose.Schema({
 
 // Búsqueda de candidatos para matchear con un comprobante.
 bankMovementSchema.index({ direction: 1, matchStatus: 1, amount: 1, createdAt: -1 });
+// #183 Bandeja del banco: pendientes por dirección y cierre por día.
+bankMovementSchema.index({ direction: 1, matchStatus: 1, createdAt: -1 });
 
 module.exports = mongoose.models['BankMovement'] || mongoose.model('BankMovement', bankMovementSchema);
