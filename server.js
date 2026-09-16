@@ -469,6 +469,38 @@ girox.setCashierBalanceHook((info) => {
       .catch(e => logger.warn(`[cajero] snapshot no guardado: ${e.message}`));
   } catch (_) {}
 });
+// #184 ROLLOVER GLOBAL DE BONOS (ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md §A):
+// un solo multiplicador para TODOS los regalos/bonos (bonus del agente, bono
+// manual, código de bienvenida, lotes, fueguito, reembolso en vivo, reembolsos,
+// rakeback, nivel VIP, ruleta). Config['bonusRolloverGlobal'] = { enabled, x }.
+// Default x3 encendido. Opciones: 0, 2, 3, 5, 10. Si la plataforma no permite el
+// elegido (bonus.multipliers), se usa el permitido más cercano hacia ARRIBA (y
+// el panel lo avisa). Excluidos a propósito: comisiones de referidos y
+// devoluciones de retiro rechazado (no son bonos: es plata del cliente/referidor).
+// Sin cache a propósito (multi-instancia). El resolver se inyecta en giroxService,
+// que lo aplica en los 3 puntos por donde pasa todo bono.
+const BONUS_ROLLOVER_OPTIONS = bonusRollover.BONUS_ROLLOVER_OPTIONS;
+async function getGlobalBonusRollover() {
+  let raw = null;
+  try { raw = await getConfig('bonusRolloverGlobal', null); } catch (_) {}
+  let allowed = null;
+  try {
+    const cfg = await girox.getPlatformConfig();
+    allowed = cfg.success && cfg.config && cfg.config.bonus && cfg.config.bonus.multipliers;
+  } catch (_) {}
+  return bonusRollover.resolveGlobalRollover(raw, allowed);
+}
+// Rollover a usar en un flujo (para mensajes/registros): el GLOBAL si está
+// encendido, si no el propio del flujo. Coincide con lo que acredita el cliente.
+async function applyGlobalRollover(flowValue) {
+  let g = null;
+  try { g = await getGlobalBonusRollover(); } catch (_) {}
+  return bonusRollover.pickRollover(g, flowValue);
+}
+girox.setRolloverResolver(async () => {
+  const g = await getGlobalBonusRollover();
+  return g.enabled ? g.effective : null;
+});
 // Etiqueta del proyecto para Telegram (un solo grupo recibe varios proyectos).
 function _projectLabel() {
   try { return new URL(String(process.env.PUBLIC_BASE_URL || '')).hostname.replace(/^www\./, ''); } catch (_) { return 'proyecto'; }
@@ -523,6 +555,9 @@ const periodRanges = require('./src/utils/periodRanges');
 const refundTiers = require('./src/utils/refundTiers');
 // Fórmula PURA del reembolso acumulativo de por vida (ESPEC-REEMBOLSO-1GIROX.md §3).
 const cashbackFormula = require('./src/utils/cashbackFormula');
+// #184 Rollover GLOBAL de bonos (parte pura) + identidad del titular del comprobante.
+const bonusRollover = require('./src/utils/bonusRollover');
+const { holderKey: _holderKey } = require('./src/utils/holderKey');
 // Niveles VIP por apostado acumulado (réplica de Stake) + su motor de sync.
 const vipLevels = require('./src/utils/vipLevels');
 const vipLevelService = require('./src/services/vipLevelService');
@@ -1557,6 +1592,35 @@ function getArgentinaYesterday() {
 // COMPROBANTES — detección de reutilización con IA (anti-estafa)
 // ============================================
 // Normaliza una huella de comprobante para comparar duplicados (sólo alfanumérico).
+// #184 — MULTICUENTA POR TITULAR DEL COMPROBANTE (ESPEC §B): el cruce de
+// identidad bancaria corre cuando LLEGA el movimiento por webhook; si la
+// transferencia no aparece (banco sin API / demora / datos que no matchean), la
+// IA verifica el comprobante, lee el titular… y nadie lo cruzaba. Acá se cruza
+// el titular que leyó la IA contra los comprobantes y movimientos de OTRAS
+// cuentas, en el momento de verificarlo. `_holderKey` vive en src/utils/holderKey.js.
+async function _findHolderConflict(userId, holderName) {
+  const key = _holderKey(holderName);
+  if (!key) return null;
+  const exact = new RegExp('^' + String(holderName).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '$', 'i');
+  try {
+    // 1) comprobantes VERIFICADOS de OTRAS cuentas con ese titular (key nueva o,
+    //    para filas viejas sin key, el nombre exacto case-insensitive).
+    const c = await Comprobante.findOne({
+      isComprobante: true, userId: { $ne: String(userId) },
+      $or: [{ originHolderKey: key }, { originHolder: exact }],
+      status: { $in: ['unique', 'no_key'] }
+    }).sort({ createdAt: -1 }).select('username userId createdAt').lean();
+    if (c) return { username: c.username, userId: c.userId, via: 'comprobante', at: c.createdAt };
+    // 2) movimientos bancarios de OTRAS cuentas con ese titular de origen.
+    const m = await BankMovement.findOne({
+      $or: [{ fromKey: key }, { fromName: exact }],
+      matchedUserId: { $exists: true, $nin: [null, String(userId)] }
+    }).select('matchedUsername matchedUserId createdAt').lean();
+    if (m) return { username: m.matchedUsername, userId: m.matchedUserId, via: 'banco', at: m.createdAt };
+  } catch (e) { logger.warn(`[comprobante] cruce de titular falló: ${e.message}`); }
+  return null;
+}
+
 function _normComprobanteKey(s) {
   return String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
 }
@@ -1667,6 +1731,7 @@ async function analyzeComprobanteFromMessage({ userId, username, content, messag
       isComprobante: true, aiConfidence: result.confidence || 0,
       operationNumber: result.operationNumber || null,
       amount: result.amount, originHolder: result.originHolder || null,
+      originHolderKey: _holderKey(result.originHolder), // #184
       originCbu: result.originCbu || null,
       destHolder: result.destHolder || null, destCbu: result.destCbu || null,
       bank: result.bank || null,
@@ -1726,6 +1791,15 @@ async function analyzeComprobanteFromMessage({ userId, username, content, messag
       await _emitAdminOnlyChatNote(userId, username,
         `🧾 Comprobante recibido (${dataDesc}). ⚠️ No se pudieron extraer datos para chequear duplicado — verificá a mano.`);
     }
+    // #184: ¿el TITULAR que envió la plata ya cargó en OTRA cuenta nuestra?
+    try {
+      const conflict = await _findHolderConflict(userId, result.originHolder);
+      if (conflict) {
+        await _emitAdminOnlyChatNote(userId, username,
+          `🚨 MULTICUENTA POR TITULAR: el comprobante viene de "${result.originHolder}", que YA cargó en la cuenta @${conflict.username || '?'} (${conflict.via === 'banco' ? 'transferencia confirmada por el banco' : 'comprobante anterior'}). Si se carga a mano, SIN bonos automáticos. Verificá y bloqueá si corresponde.`);
+        logger.warn(`[comprobante] MULTICUENTA titular: ${username} comprobante de "${result.originHolder}" ya usado por ${conflict.username} (${conflict.via})`);
+      }
+    } catch (_) {}
     // Banco automático: si fue al CBU con API, intentar matchear + cargar.
     hgcashMatchFromComprobante({ ...base, status }).catch(() => {});
   } catch (e) {
@@ -2316,6 +2390,32 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     }
   } catch (guardErr) {
     logger.warn(`[hgcash] red de seguridad falló (sigue la carga): ${guardErr.message}`);
+  }
+
+  // #184 MULTICUENTA por identidad bancaria / titular: ¿el mismo CBU o titular de
+  // origen ya fondeó a OTRA cuenta nuestra (movimiento del banco o comprobante
+  // leído por la IA)? La carga entra igual (es su plata) pero el agente recibe
+  // la alerta; en esta repo la auto-carga no aplica bonos automáticos, así que
+  // no hay nada que apagar (la carga manual con bonus la decide el agente).
+  let _dupBank = null;
+  try {
+    const _orB = _bankIdentityOr(movement);
+    if (_orB.length) {
+      _dupBank = await BankMovement.findOne({
+        $or: _orB, movementId: { $ne: movement.movementId },
+        matchedUserId: { $exists: true, $nin: [null, user.id] },
+        matchStatus: { $in: BANK_IDENTITY_STATES }
+      }).select('matchedUsername fromName fromCBU').lean();
+    }
+    if (!_dupBank && movement.fromName) {
+      const hc = await _findHolderConflict(user.id, movement.fromName);
+      if (hc) _dupBank = { fromName: movement.fromName, fromCBU: movement.fromCBU, matchedUsername: hc.username };
+    }
+  } catch (eDup) { logger.warn(`[hgcash] chequeo multicuenta bancaria falló (sigue la carga): ${eDup.message}`); }
+  if (_dupBank) {
+    await _emitAdminOnlyChatNote(user.id, user.username,
+      `🚨 MULTICUENTA CONFIRMADA POR BANCO: la transferencia viene de ${_dupBank.fromName || _dupBank.fromCBU} que YA cargó en la cuenta @${_dupBank.matchedUsername || '?'}. La carga se acredita (es su plata) SIN bonos automáticos. Verificá y bloqueá si corresponde.`);
+    logger.warn(`[hgcash] MULTICUENTA banco: ${user.username} fondeado por ${_dupBank.fromName || _dupBank.fromCBU} (ya usado por ${_dupBank.matchedUsername})`);
   }
 
   // Modo auto: cargar de verdad en la plataforma.
@@ -7125,7 +7225,7 @@ async function _cashbackStateToday(userId, username, opts) {
     logger.info(`[cashback] ${username} regalos: local $${calc.giftedLocal} (plegado ${giftedLocalBefore} + vivo ${giftedLocalLive}) vs plataforma $${calc.giftedPlatform} (plegado ${carryGranted} + vivo ${liveRes.bonusGranted || 0}) → base descuenta $${calc.giftedLife}`);
   }
   return {
-    enabled: true, pct: cfg.pct, rolloverX: cfg.rolloverX, minArs: cfg.minArs,
+    enabled: true, pct: cfg.pct, rolloverX: await applyGlobalRollover(cfg.rolloverX), minArs: cfg.minArs, // #184
     maxDailyArs: cfg.maxDailyArs, dateKey: today.dateStr,
     lifeNet: calc.lifeNet, lossLife: calc.lossLife,
     giftedLife: calc.giftedLife, giftedLocal: calc.giftedLocal, giftedPlatform: calc.giftedPlatform,
@@ -7250,6 +7350,24 @@ app.post('/api/cashback/claim', authMiddleware, authLimiter, async (req, res) =>
     logger.error(`[cashback] claim falló: ${e.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
+});
+
+// #184 Rollover GLOBAL de bonos (GET cualquier staff; POST solo admin general).
+app.get('/api/admin/bonus-rollover', authMiddleware, adminMiddleware, async (req, res) => {
+  try { res.json(await getGlobalBonusRollover()); }
+  catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.post('/api/admin/bonus-rollover', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin general' });
+    const b = req.body || {};
+    const x = Math.round(Number(b.x));
+    if (!BONUS_ROLLOVER_OPTIONS.includes(x)) return res.status(400).json({ error: `Rollover inválido. Opciones: ${BONUS_ROLLOVER_OPTIONS.map((n) => 'x' + n).join(', ')}` });
+    const enabled = b.enabled !== false;
+    await Config.set('bonusRolloverGlobal', { enabled, x }, req.user.username);
+    logger.info(`[bonus-rollover] ${req.user.username}: global ${enabled ? 'ON' : 'OFF'} x${x}`);
+    res.json(await getGlobalBonusRollover());
+  } catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
 });
 
 // Config del reembolso en vivo (GET cualquier staff; POST solo admin general).
@@ -8467,6 +8585,7 @@ app.get('/api/movements', authMiddleware, async (req, res) => {
 // bonos manuales del agente). Prioridad: GIROX_BONUS_MULTIPLIER (env/SSM) si la
 // plataforma lo permite; si no, 0 si está permitido; si no, el menor permitido.
 async function getGiroxBonusMultiplier() {
+  try { const g = await getGlobalBonusRollover(); if (g.enabled) return g.effective; } catch (_) {} // #184
   let allowed = null;
   try {
     const cfg = await girox.getPlatformConfig();
@@ -11389,7 +11508,7 @@ app.post('/api/community-code/claim', authMiddleware, authLimiter, async (req, r
       // con el ROLLOVER elegido en el panel (bonus.multipliers permite 0 = sin
       // rollover) → en el panel de 1girox figura como Bono, no como Carga.
       // claim_required=true en la config del sitio → auto-claim más abajo.
-      const _welcomeRolloverX = await getWelcomeCodeRolloverX();
+      const _welcomeRolloverX = await applyGlobalRollover(await getWelcomeCodeRolloverX()); // #184
       const credit = await girox.creditUserBalance(
         user.username, amount, `vip-welcome-${user.id}`,
         { multiplier: _welcomeRolloverX, description: 'Bono sorpresa — código de bienvenida de la Comunidad' }
@@ -11564,7 +11683,7 @@ app.get('/api/admin/community-code', authMiddleware, adminMiddleware, async (req
     const code = String((await getConfig('communityWelcomeCode', '')) || '');
     const amount = Math.max(0, Number(await getConfig('communityWelcomeBonusAmount', 0)) || 0);
     const bonusType = (await getConfig('communityWelcomeBonusType', 'next_charge')) === 'cash' ? 'cash' : 'next_charge';
-    const rolloverX = await getWelcomeCodeRolloverX();
+    const rolloverX = await applyGlobalRollover(await getWelcomeCodeRolloverX()); // #184 (lo que ve el cliente = lo que se acredita)
     const percent = Math.max(0, Math.round(Number(await getConfig('communityWelcomePercent', 100)) || 0));
     res.json({
       amount,
@@ -11818,42 +11937,13 @@ async function getFireRolloverMultiplier() {
 // Desde 2026-09-11 lo usa también el reembolso en vivo (ESPEC §4.4) con
 // label 'CASHBACK' — por eso el nombre genérico; `_creditFireReward` es alias.
 async function _creditGiftWithRollover(username, amount, desc, ref, mult, label = 'FIRE_REWARD') {
-  if (!(mult > 0)) {
-    return girox.creditUserBalance(username, amount, ref, { description: desc });
+  // #184: la lógica vive en giroxService.creditGift (mismo contrato que el gemelo):
+  // aplica el rollover GLOBAL si está encendido (pisa `mult`), guard de bono
+  // activo, prechecks contra GET /config y fallback a depósito con multiplier.
+  const r = await girox.creditGift(username, amount, { rolloverX: mult, reference: ref, description: desc });
+  if (r && r.success && r.via === 'deposit') {
+    logger.warn(`[${label}] ${username} $${amount} fue por DEPÓSITO con rollover x${r.rolloverApplied} (figura como Carga) — ${r.fallbackReason || 's/motivo'}`);
   }
-  let why = null;
-  try {
-    const cfg = await girox.getPlatformConfig();
-    const b = cfg.success && cfg.config && cfg.config.bonus;
-    if (!b || b.enabled === false || b.standalone_enabled === false) why = 'bono suelto deshabilitado en la plataforma';
-    else if (Array.isArray(b.multipliers) && b.multipliers.length && !b.multipliers.map(Number).includes(mult)) {
-      why = `x${mult} no está entre los multiplicadores de bono (${b.multipliers.join(', ')})`;
-    } else {
-      const min = Number(b.fixed_min) || 0;
-      const max = Number(b.fixed_max) || 0;
-      if ((min > 0 && amount < min) || (max > 0 && amount > max)) why = `monto $${amount} fuera de los límites del bono fijo (${min}-${max || '∞'})`;
-    }
-  } catch (e) { why = `config no disponible (${e.message})`; }
-  if (!why) {
-    // fresh:true — decisión de plata: no leer el cache corto.
-    const info = await girox.getUserInfoByName(username, { fresh: true });
-    if (!info) why = 'no se pudo leer el estado del jugador';
-    else if ((Number(info.bonusLocked) || 0) + (Number(info.claimableTotal) || 0) > 0) {
-      why = `el jugador ya tiene un bono activo (bloqueado $${info.bonusLocked || 0}, a reclamar $${info.claimableTotal || 0}) — otorgar otro lo pisaría`;
-    }
-  }
-  if (!why) {
-    const r = await girox.creditUserBalance(username, amount, ref, { multiplier: mult, description: desc });
-    if (r && r.success) { r.claimRequired = true; return r; }
-    if (r && (r.httpStatus === 422 || r.code === 'feature_disabled' || r.code === 'bonus_out_of_range' || r.code === 'player_not_found')) {
-      why = `la plataforma rechazó el bono (${r.code})`;
-    } else {
-      return r; // transitorio: no cambiar de vía (un timeout puede haber acreditado)
-    }
-  }
-  logger.warn(`[${label}] ${username} $${amount} va por DEPÓSITO con rollover x${mult} (figura como Carga) — ${why}`);
-  const r = await girox.depositToUser(username, amount, desc, ref, { multiplier: mult });
-  if (r && r.success) r.creditedAs = 'deposit';
   return r;
 }
 const _creditFireReward = _creditGiftWithRollover;
@@ -11937,7 +12027,7 @@ app.get('/api/fire/status', authMiddleware, async (req, res) => {
       nextReward: (FIRE_MILESTONES.find(m => m.day > currentStreak) || {}).reward || 0,
       // x del rollover con que se acreditan los premios (0 = libres). El front lo
       // usa para avisar "para retirarlo apostá X×" antes de que el cliente reclame.
-      rolloverMultiplier: await getFireRolloverMultiplier()
+      rolloverMultiplier: await applyGlobalRollover(await getFireRolloverMultiplier()) // #184
     });
   } catch (error) {
     console.error('Error obteniendo estado del fueguito:', error);
@@ -12111,7 +12201,7 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
     // directo (bono 0). Si el jugador YA tiene un bono activo, el bono suelto lo
     // PISARÍA → cae al depósito con multiplier de antes (mismo candado, figura
     // como Carga). La reference es la MISMA en todas las ramas → idempotencia.
-    const _fireMult = await getFireRolloverMultiplier();
+    const _fireMult = await applyGlobalRollover(await getFireRolloverMultiplier()); // #184
     const bonusResult = await _creditFireReward(username, rewardAmount, rewardDesc, _fireRef, _fireMult);
 
     if (!bonusResult.success) {
@@ -12266,7 +12356,7 @@ app.get('/api/admin/fire-milestones', authMiddleware, adminMiddleware, async (re
     const milestones = await getFireMilestones();
     res.json({
       success: true, milestones, defaults: FIRE_MILESTONES_DEFAULT,
-      rolloverMultiplier: await getFireRolloverMultiplier()
+      rolloverMultiplier: await applyGlobalRollover(await getFireRolloverMultiplier()) // #184
     });
   } catch (e) {
     logger.warn(`[fire-milestones] GET falló: ${e.message}`);
@@ -14773,6 +14863,48 @@ app.get('/api/admin/users/:userId/fraud-check', authMiddleware, adminMiddleware,
       if (others.length) reasons.push({ type: 'phone', label: 'el mismo teléfono', strong: true, count: others.length, accounts: pick(others) });
     }
 
+    // #184 Identidad BANCARIA compartida: el mismo CBU/titular de origen (movimientos
+    // hgcash matcheados) ya fondeó a OTRA cuenta — señal fuerte (confirmada por el banco).
+    try {
+      const myMovs = await BankMovement.find({ matchedUserId: user.id, matchStatus: { $in: BANK_IDENTITY_STATES } })
+        .select('fromCBU fromKey fromName').limit(50).lean();
+      const myCbus = Array.from(new Set(myMovs.map(m => m.fromCBU).filter(Boolean)));
+      const myKeys = Array.from(new Set(myMovs.map(m => m.fromKey).filter(Boolean)));
+      const orB = [];
+      if (myCbus.length) orB.push({ fromCBU: { $in: myCbus } });
+      if (myKeys.length) orB.push({ fromKey: { $in: myKeys } });
+      if (orB.length) {
+        const otherMovs = await BankMovement.find({ $or: orB, matchedUserId: { $exists: true, $nin: [null, user.id] }, matchStatus: { $in: BANK_IDENTITY_STATES } })
+          .select('matchedUserId matchedUsername').limit(100).lean();
+        if (otherMovs.length) {
+          const byUser = new Map();
+          for (const m of otherMovs) byUser.set(m.matchedUserId, { id: m.matchedUserId, username: m.matchedUsername || '?', isBlocked: false });
+          reasons.push({ type: 'bank', strong: true, count: byUser.size,
+            label: 'la MISMA cuenta bancaria de origen (' + ((myMovs[0] && myMovs[0].fromName) || myCbus[0] || myKeys[0]) + ') — señal confirmada por el banco',
+            accounts: Array.from(byUser.values()).slice(0, SAMPLE) });
+        }
+      }
+    } catch (eBk) { logger.warn(`[fraud-check] señal bancaria falló: ${eBk.message}`); }
+
+    // #184 TITULAR de los comprobantes compartido: la IA leyó el mismo nombre de
+    // origen en comprobantes de OTRA cuenta (sirve aunque el banco no tenga API).
+    try {
+      const myComps = await Comprobante.find({ userId: user.id, isComprobante: true, originHolderKey: { $ne: null } })
+        .select('originHolderKey originHolder').limit(50).lean();
+      const myHolderKeys = Array.from(new Set(myComps.map(c => c.originHolderKey).filter(Boolean)));
+      if (myHolderKeys.length) {
+        const otherComps = await Comprobante.find({ originHolderKey: { $in: myHolderKeys }, userId: { $ne: user.id }, isComprobante: true })
+          .select('userId username').limit(100).lean();
+        if (otherComps.length) {
+          const byUser = new Map();
+          for (const c of otherComps) byUser.set(c.userId, { id: c.userId, username: c.username || '?', isBlocked: false });
+          reasons.push({ type: 'receipt_holder', strong: true, count: byUser.size,
+            label: 'el MISMO titular en los comprobantes (' + ((myComps[0] && myComps[0].originHolder) || myHolderKeys[0]) + ') — leído por la IA',
+            accounts: Array.from(byUser.values()).slice(0, SAMPLE) });
+        }
+      }
+    } catch (eRh) { logger.warn(`[fraud-check] señal titular comprobante falló: ${eRh.message}`); }
+
     // IP de registro compartida — señal débil (mismo wifi/datos del celu).
     if (user.registrationIp) {
       const others = await User.find({
@@ -16926,7 +17058,7 @@ app.post('/api/admin/payouts/:id/cancel', authMiddleware, withdrawerMiddleware, 
         if (r && r.success) { chipsOk = true; await mkRefundTx(chipsPart, 'chips', r.data); }
       }
       if (bonusPart > 0) {
-        const r = await girox.creditUserBalance(payout.username, bonusPart, `vip-payoutref-bonus-${payout.id}`);
+        const r = await girox.creditUserBalance(payout.username, bonusPart, `vip-payoutref-bonus-${payout.id}`, { ignoreGlobalRollover: true }); // #184: devolución, no es bono
         if (r && r.success) { bonusOk = true; await mkRefundTx(bonusPart, 'bonus', r.data); }
       }
     } catch (e) {
@@ -19252,6 +19384,7 @@ function _emitNotifBatchSecurityAlert(uDoc, detalle) {
 async function _creditNotifBatchGift(uDoc, batch) {
   const username = uDoc.username;
   const amount = Number(batch.amount);
+  const _batchRoll = await applyGlobalRollover(batch.rolloverX); // #184
 
   // 0. ¿Ya hay ledger de este regalo (lote+usuario)?
   let intent = null;
@@ -19335,7 +19468,7 @@ async function _creditNotifBatchGift(uDoc, batch) {
   //    pagan dos veces (la plataforma responde duplicate:true).
   const ref = `vip-nbatch-${batch.id}-${uDoc.id}`.slice(0, 100);
   const credit = await girox.creditUserBalance(username, amount, ref, {
-    multiplier: Number(batch.rolloverX) || 0,
+    multiplier: _batchRoll, // #184: global si está encendido (creditUserBalance lo aplica igual; acá se fija para los mensajes)
     description: `Regalo de fichas — lote de notificaciones${batch.name ? ` "${batch.name}"` : ''}`
   });
   if (!credit.success) {
@@ -19365,7 +19498,7 @@ async function _creditNotifBatchGift(uDoc, batch) {
     } }
   ).catch((e) => logger.error(`[notif-batch] crédito OK pero no se pudo completar el ledger ${intent.id} de ${username}: ${e.message}`));
 
-  logger.info(`[notif-batch] $${amount} acreditados a ${username} (lote ${batch.id}${batch.rolloverX > 0 ? `, rollover x${batch.rolloverX}` : ''}${credit.duplicate ? ', duplicate: ya estaba pago' : ''})`);
+  logger.info(`[notif-batch] $${amount} acreditados a ${username} (lote ${batch.id}${_batchRoll > 0 ? `, rollover x${_batchRoll}` : ''}${credit.duplicate ? ', duplicate: ya estaba pago' : ''})`);
   return { ok: true, txId: intent.id };
 }
 
@@ -19381,8 +19514,8 @@ async function _nbChatText(batch, opts = {}) {
   if (batch.giftType === 'percent') {
     giftLine = `+${batch.amount}% EXTRA en tu PRÓXIMA CARGA`;
   } else {
-    const roll = Number(batch.rolloverX) > 0
-      ? ` (para retirarlo apostá $${(batch.amount * batch.rolloverX).toLocaleString('es-AR')} — rollover x${batch.rolloverX})`
+    const roll = _batchRoll > 0
+      ? ` (para retirarlo apostá $${(batch.amount * _batchRoll).toLocaleString('es-AR')} — rollover x${_batchRoll})`
       : '';
     giftLine = `$${Number(batch.amount).toLocaleString('es-AR')} en fichas${roll}`;
   }
@@ -19743,8 +19876,9 @@ async function _tryClaimNotifBatchCode(reqUser, attempt) {
       { id: batch.id, recipients: { $elemMatch: { userId: uDoc.id } } },
       { $set: { 'recipients.$.creditedAt': new Date(), 'recipients.$.creditTxId': r.txId, 'recipients.$.creditError': null } }
     ).catch(() => {});
-    const rollNote = Number(batch.rolloverX) > 0
-      ? `\n\n🎯 Para poder retirarlo: apostá $${(batch.amount * batch.rolloverX).toLocaleString('es-AR')} (rollover x${batch.rolloverX}).`
+    const _batchRollC = await applyGlobalRollover(batch.rolloverX); // #184
+    const rollNote = _batchRollC > 0
+      ? `\n\n🎯 Para poder retirarlo: apostá $${(batch.amount * _batchRollC).toLocaleString('es-AR')} (rollover x${_batchRollC}).`
       : '';
     // Editable desde COMANDOS (/sys_lote_canje_cash); vacío = no se envía.
     const contentCash = await renderSystemCommand('/sys_lote_canje_cash',
@@ -19758,7 +19892,7 @@ async function _tryClaimNotifBatchCode(reqUser, attempt) {
     }).catch(() => {});
     await _emitAdminOnlyChatNote(
       uDoc.id, uDoc.username,
-      `💰 REGALO DE LOTE ACREDITADO AUTOMÁTICAMENTE ($${montoFmt}${Number(batch.rolloverX) > 0 ? `, rollover x${batch.rolloverX}` : ''}) — canjeó el código ${codeUp}${batch.name ? ` del lote "${batch.name}"` : ''}. No hay que hacer nada: la plata ya está en su cuenta.`
+      `💰 REGALO DE LOTE ACREDITADO AUTOMÁTICAMENTE ($${montoFmt}${_batchRollC > 0 ? `, rollover x${_batchRollC}` : ''}) — canjeó el código ${codeUp}${batch.name ? ` del lote "${batch.name}"` : ''}. No hay que hacer nada: la plata ya está en su cuenta.`
     ).catch(() => {});
     logger.info(`[notif-batch] ${uDoc.username} canjeó ${codeUp} — $${batch.amount} acreditados`);
     return { http: 200, body: {

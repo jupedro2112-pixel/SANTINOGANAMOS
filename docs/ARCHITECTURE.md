@@ -5,7 +5,11 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-09-11 (2ª tanda)** — 🏦 BANDEJA DEL BANCO en tiempo real,
+> Última actualización: **2026-09-16** — ROLLOVER GLOBAL de bonos (§4.5, §4.1 `creditGift`,
+> §6 card, §9) + MULTICUENTA por TITULAR del comprobante (§2 Comprobante.originHolderKey,
+> §5 comprobantes/auto-carga, §6 fraud-check, §9). Espec en
+> `docs/ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md`.
+> Antes: 2026-09-11 (2ª tanda) — 🏦 BANDEJA DEL BANCO en tiempo real,
 > carga manual anclada, bajadas y cierre diario (réplica del #155 del gemelo; §2 modelos
 > BankSweep/DailyClose/CashierSnapshot + campos de BankMovement, §4.8 envs TELEGRAM_*,
 > §5 auto-carga/bajadas/cierre, §6 panel, §7 cron, §9 trampas).
@@ -132,6 +136,9 @@ modelos); sus migraciones corren únicamente si algo llamara a ese connectDB.
   pending→claiming→shadow_matched|auto_charged|manual_charged|needs_review|duplicate|
   error|ignored. Dedupe por `movementId` único.
 - **Comprobante** — cada imagen que la IA (Claude vision) clasificó como comprobante.
+  `originHolderKey` (#184) = titular de origen normalizado (`src/utils/holderKey.js`,
+  ≥2 palabras y ≥8 letras) para cruzar multicuenta entre usuarios aunque el banco no
+  tenga API.
   `dedupeKey` (N° operación normalizado, descartando CBU/CUIT) + `imageHash` (SHA-256)
   para detectar reutilización. `bankMatchStatus` para la auto-carga.
 - **BankMovement** — cada movimiento que hgcash notifica por webhook (ver arriba).
@@ -258,7 +265,7 @@ Quedan sólo para poder revertir; se borran más adelante. **No los uses para na
 
 | Módulo | Usa | Para qué |
 |---|---|---|
-| `src/services/giroxService.js` | server.js (`girox.*`), migración | **Cliente ÚNICO de la Partner API.** Altas (`createPlatformUser`, `syncUserToPlatform`), consulta (`getUserInfoByName`, `getUserBalance(WithRetry)`), credenciales (`validateCredentials`, `changeUserPassword`), SSO (`createSession`) y plata (`depositToUser`, `withdrawFromUser`, `creditUserBalance`). Auth por header `X-Api-Key`. Rate limit + reintentos propios. |
+| `src/services/giroxService.js` | server.js (`girox.*`), migración | **Cliente ÚNICO de la Partner API.** Altas (`createPlatformUser`, `syncUserToPlatform`), consulta (`getUserInfoByName`, `getUserBalance(WithRetry)`), credenciales (`validateCredentials`, `changeUserPassword`), SSO (`createSession`) y plata (`depositToUser`, `withdrawFromUser`, `creditUserBalance`, `creditGift`). Auth por header `X-Api-Key`. Rate limit + reintentos propios. **Rollover GLOBAL (#184):** `setRolloverResolver(fn)` inyectado desde server.js; se aplica en los 3 puntos por donde pasa todo bono (`creditGift`, `creditUserBalance` con multiplier, `bonus_multiplier` de `depositToUser`) salvo `ignoreGlobalRollover:true`. |
 | `src/services/giroxReportsService.js` | reembolsos, referidos (`giroxReports.*`) | **Netwin (GGR) por jugador y rango.** ⚠️ NO es la Partner API: habla con el PANEL `admin.1girox.com`. `getPlayerNetwinForDateRange`, `findPlayerIdByUsername`, `getPlayerInfoById`. |
 | `src/services/giroxUserLinkService.js` | reembolsos, referidos | `resolveGiroxUserId(userId, username)` — lee `User.giroxUserId` y, si falta, lo backfillea al vuelo contra el panel (match EXACTO del nombre, doble verificación). |
 | `src/services/giroxPublisherKeys.js` | publisher_admin create-user, panel | Alta de jugadores con la **API key de la campaña** (`Campaign.giroxApiKey`). `createUserAsPublisher`, `testKey`. `invalidateSession()` quedó como **no-op** (no hay sesiones que tirar). |
@@ -414,6 +421,23 @@ reintento manda la misma reference y la plataforma responde `duplicate:true`.
   🪦 Entre la v1.7 (2026-07-31) y la v1.10 (2026-08-03) el bono 0 SÍ quedaba "a
   reclamar"; por eso hasta el 2026-09-07 todos los regalos iban por `/deposit` y
   figuraban como "Carga" (reclamo del owner con captura del panel).
+- **ROLLOVER GLOBAL de bonos (2026-09-16, #184, espec §A):** `Config[
+  'bonusRolloverGlobal'] = { enabled, x }` (default ENCENDIDO x3; opciones 0/2/3/5/10;
+  card "🎯 Rollover GLOBAL de bonos" del panel, solo admin general). Mientras está
+  encendido, TODOS los bonos/regalos salen con ese rollover y los individuales de cada
+  flujo se ignoran (bonus del agente, Bonificación, código de bienvenida, lotes,
+  fueguito, reembolso en vivo, reembolsos, rakeback, nivel VIP, ruleta). Apagado =
+  cada flujo con el suyo (sin migración). `getGlobalBonusRollover()` valida `x`
+  contra `bonus.multipliers` de la cuenta y usa el permitido más cercano hacia ARRIBA
+  (`effective`, `snapped`) — en la cuenta del owner [0,2,5,10,20,40] → x3 sale como x5.
+  Se aplica en el CLIENTE (`giroxService`, resolver inyectado), no en los endpoints:
+  `creditGift` (regalo como bono con rollover; con x0 = bono 0 de siempre; guard de
+  bono activo > $50 y fallback a depósito con multiplier), `creditUserBalance` con
+  `multiplier` y `depositToUser` cuando lleva `bonus_amount/bonus_percent`.
+  **Excluidos:** comisiones de referidos y devolución de retiro rechazado
+  (`ignoreGlobalRollover:true`). Lo que se le DICE al cliente (fueguito, reembolso en
+  vivo, código de bienvenida, lotes) usa `applyGlobalRollover(valorDelFlujo)` para
+  coincidir con lo acreditado; el cliente además devuelve `rolloverApplied`.
 - **`opts.multiplier` EXPLÍCITO** (incluido 0) = `/bonus` ESTRICTO, sin fallback: un
   `bonus_out_of_range` se devuelve como error (botón Bonificación del panel, welcome
   code cash, lotes con regalo). Con multiplier >0 el bono queda bloqueado hasta
@@ -642,6 +666,15 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
 - **Bienvenida**: `POST /api/messages/welcome` — mensajes de SISTEMA + upsert de
   ChatStatus. Throttle 24h server-side. Guard `_isStaleClientWelcome` descarta
   bienvenidas-fantasma de PWA cacheadas viejas.
+- **Multicuenta por TITULAR del comprobante (2026-09-16, #184, espec §B):**
+  `_findHolderConflict(userId, holderName)` cruza el titular que leyó la IA contra
+  comprobantes verificados de OTRAS cuentas (`originHolderKey` o nombre exacto para
+  filas viejas) y movimientos bancarios de OTRAS cuentas (`fromKey`/`fromName`). Se
+  usa (1) al verificar el comprobante → nota admin-only "🚨 MULTICUENTA POR TITULAR";
+  (2) en `hgcashAutoCarga` tras el cruce de identidad bancaria (`_bankIdentityOr`) →
+  la carga entra igual + alerta (acá la auto-carga no aplica bonos automáticos);
+  (3) en el fraud-check del panel (señales `bank` 🏦 y `receipt_holder` 🧾). No
+  bloquea a nadie solo (homónimos, cuentas familiares): avisa. Fail-open.
 - **Chat**: HTTP `POST /api/messages/send` + socket `send_message` (misma lógica
   duplicada: validaciones, comandos `/`, SLA, comprobantes). Imagen de cliente →
   `analyzeComprobanteFromMessage` (IA, fire-and-forget) → aviso adminOnly
@@ -942,6 +975,10 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   `metadata.source:'instant_cashback'`, separado de Bonificaciones en el resumen y
   en el filtro); etiquetas en `getTransactionTypeLabel` / `_txIsCashback` (tipo
   nuevo ⇒ sumar etiqueta + botón + case del resumen).
+- **Config → "🎯 Rollover GLOBAL de bonos"** (solo admin general, #184): switch + botones
+  x0/x2/x3/x5/x10 (los no permitidos por la plataforma en gris con ⚠️), hint con el
+  efectivo y aviso de `snapped`. Banner "POSIBLE MULTICUENTA" del chat: señales 📱 ☎️
+  🏦 🧾 🌐.
 - **Config → "📉 Reembolso en vivo"** (solo admin general): on/off, %, rollover
   (validado contra `bonus.multipliers`), mínimo y tope diario. En la PWA el cliente
   lo ve como botón en el modal 🎁 Reembolsos y como recuadro en el perfil
@@ -954,7 +991,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   Funciones globales con los MISMOS nombres que el gemelo (bankSetTab, loadBankTray,
   openBankAssign, bankAssignConfirm, bankLink, bankResolve, bankReopen, openSweepModal,
   submitSweep, openBankClose, bankCloseResolve, getDepositOrigin…).
-- `admin-sw.js` (v38, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
+- `admin-sw.js` (v39, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
   network-first no-store para el shell.
 - Servido por handlers propios con cache en memoria (`readFileCached`) + ADMIN_HOST
   check opcional; el catch-all bloquea todo otro path bajo /adminprivado2026/.
@@ -1036,6 +1073,13 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   'deposit_bonus'` (si no, se contaría dos veces). `User.cashbackCarryNet` puede
   ser negativo a propósito. No cambiar `CASHBACK_STATS_EPOCH` (2026-07-31) ni el
   orden del plegado sin releer §3.4.
+- **Rollover GLOBAL (#184):** un flujo de bono NUEVO no tiene que resolver el rollover
+  a mano — pasa por `creditGift`/`creditUserBalance`/`depositToUser` y el cliente lo
+  aplica. Lo único a decidir es si es un BONO (global) o plata del cliente
+  (`ignoreGlobalRollover:true`, como referidos y devoluciones). Un rollover que se
+  muestre al cliente sale de `applyGlobalRollover(...)`, nunca del valor crudo del
+  flujo. Un regalo NUEVO tiene que seguir escribiendo Transaction con tipo de regalo
+  (base del reembolso en vivo). Test en frío: `node scripts/test-rollover-multicuenta.js`.
 - **Regalos = bono 0 "regalo directo", NO depósito** (2026-09-07, §4.5): reembolsos,
   ruleta, rakeback, bono VIP y comisiones van por `creditUserBalance` SIN multiplier
   → `/bonus` con `multiplier: 0` (figuran como Bono en el panel de 1girox), con

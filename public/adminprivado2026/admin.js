@@ -4675,7 +4675,7 @@ async function renderFraudBanner(userId) {
         if (userId !== activeConversationId) return;
         if (!data || !data.suspicious || !Array.isArray(data.reasons) || !data.reasons.length) return;
 
-        const iconFor = (t) => t === 'device' ? '📱' : (t === 'phone' ? '☎️' : '🌐');
+        const iconFor = (t) => t === 'device' ? '📱' : (t === 'phone' ? '☎️' : (t === 'bank' ? '🏦' : (t === 'receipt_holder' ? '🧾' : '🌐')));
         const rows = data.reasons.map(r => {
             const accs = Array.isArray(r.accounts) ? r.accounts : [];
             const names = accs.map(a => escapeHtml(a.username) + (a.isBlocked ? ' 🚫' : '')).join(', ');
@@ -5661,6 +5661,8 @@ async function loadCBUConfig() {
     loadRefundTiers();
     // Cargar la config del reembolso en vivo (solo admin general)
     loadInstantCashbackCfg();
+    // #184 Rollover GLOBAL de bonos (solo admin general)
+    loadBonusRolloverCfg();
     // Cargar el estado de los niveles VIP (solo admin general)
     loadVipLevelsConfig();
     // Cargar los premios del fueguito (solo admin general)
@@ -5739,6 +5741,72 @@ async function toggleVipLevels() {
         _renderVipLevelsState();
     }
 }
+
+// ---- Rollover GLOBAL de bonos (#184) ----
+// Radios x0/x2/x3/x5/x10. Los que la plataforma NO permite (bonus.multipliers
+// de 1girox) se muestran deshabilitados con el aviso; si el elegido no está
+// permitido, el server usa el permitido más cercano hacia arriba (`effective`).
+let _brSelected = 3;
+let _brAllowed = null;
+function _brRender(cfg) {
+    const box = document.getElementById('brOptions');
+    const hint = document.getElementById('brHint');
+    if (!box) return;
+    const allowed = Array.isArray(cfg.allowed) ? cfg.allowed.map(Number) : null;
+    _brSelected = Number(cfg.x);
+    box.innerHTML = (cfg.options || [0, 2, 3, 5, 10]).map(function(n) {
+        const ok = !allowed || allowed.includes(n);
+        const sel = n === _brSelected;
+        return '<button type="button" class="btn ' + (sel ? 'btn-primary' : 'btn-secondary') + '" ' +
+            'onclick="brPick(' + n + ')" style="min-width:64px;' + (ok ? '' : 'opacity:.45;') + '" ' +
+            'title="' + (ok ? '' : 'La plataforma no permite x' + n + ' — si lo elegís se usa el permitido más cercano hacia arriba') + '">' +
+            (n === 0 ? 'x0 (sin)' : 'x' + n) + (ok ? '' : ' ⚠️') + '</button>';
+    }).join('');
+    if (hint) {
+        let t = cfg.enabled ? ('Activo: todos los bonos salen con rollover <b>x' + cfg.effective + '</b>.') : 'Apagado: cada flujo usa su propio rollover.';
+        if (cfg.snapped) t += ' ⚠️ Elegiste x' + cfg.x + ' pero 1girox no lo permite en tu cuenta → se está usando <b>x' + cfg.effective + '</b>. Pedile a soporte de 1girox que habilite x' + cfg.x + '.';
+        if (allowed) t += ' <span style="color:#777">Permitidos por la plataforma: ' + allowed.map(function(n) { return 'x' + n; }).join(', ') + '.</span>';
+        hint.innerHTML = t;
+    }
+}
+function brPick(n) {
+    const allowed = _brAllowed;
+    let effective = n;
+    if (allowed && !allowed.includes(n)) { const up = allowed.find(function(a) { return a > n; }); effective = up != null ? up : allowed[allowed.length - 1]; }
+    _brSelected = n;
+    _brRender({ x: n, enabled: document.getElementById('brEnabled').checked, allowed: allowed, options: [0, 2, 3, 5, 10], effective: effective, snapped: effective !== n });
+}
+async function loadBonusRolloverCfg() {
+    const form = document.getElementById('bonusRolloverForm');
+    const header = document.getElementById('bonusRolloverHeader');
+    try {
+        const r = await authFetch('/api/admin/bonus-rollover');
+        if (!r.ok) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; return; }
+        const cfg = await r.json();
+        if (form) form.style.display = '';
+        if (header) header.style.display = '';
+        _brAllowed = Array.isArray(cfg.allowed) ? cfg.allowed.map(Number) : null;
+        const en = document.getElementById('brEnabled');
+        if (en) { en.checked = cfg.enabled !== false; if (!en._wired) { en._wired = true; en.addEventListener('change', function() { brPick(_brSelected); }); } }
+        _brRender(cfg);
+    } catch (e) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; }
+}
+async function saveBonusRollover() {
+    try {
+        const r = await authFetch('/api/admin/bonus-rollover', {
+            method: 'POST',
+            body: JSON.stringify({ enabled: document.getElementById('brEnabled').checked, x: _brSelected })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'No se pudo guardar', 'error'); return; }
+        _brAllowed = Array.isArray(j.allowed) ? j.allowed.map(Number) : null;
+        _brRender(j);
+        showToast(j.enabled ? ('Rollover global x' + j.effective + ' activado') : 'Rollover global apagado', j.snapped ? 'warning' : 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+window.brPick = brPick;
+window.saveBonusRollover = saveBonusRollover;
+window.loadBonusRolloverCfg = loadBonusRolloverCfg;
 
 // ====== Reembolso EN VIVO acumulativo (ESPEC-REEMBOLSO-1GIROX.md, solo admin general) ======
 async function loadInstantCashbackCfg() {

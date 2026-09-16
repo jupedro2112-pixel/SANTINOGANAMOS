@@ -117,6 +117,15 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `Transaction type:'roulette'`**; tipo de Transaction nuevo ⇒ etiqueta + filtro +
   case del resumen en el panel (§6 de ARCHITECTURE). La devolución de retiro
   rechazado sigue como depósito (no es regalo).
+- **ROLLOVER GLOBAL de bonos (2026-09-16):** espec en
+  `docs/ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md`. Se aplica en el CLIENTE
+  (`giroxService`: `creditGift`, `creditUserBalance` con multiplier, `bonus_multiplier`
+  de `depositToUser`) con un resolver inyectado desde server.js; default ENCENDIDO x3
+  (la cuenta del owner no permite x3 → efectivo x5). Un bono nuevo no resuelve el
+  rollover a mano; solo referidos y devoluciones pasan `ignoreGlobalRollover:true`.
+  Test en frío: `node scripts/test-rollover-multicuenta.js`. La misma espec (§B)
+  cruza el TITULAR del comprobante (`Comprobante.originHolderKey`) contra otras
+  cuentas: avisa, no bloquea.
 - **Ninguna push puede mencionar la RULETA** (2026-09-07): la ruleta diaria no está
   activa; `notificationService.isRouletteText` bloquea el envío en las 5 funciones
   (`blocked:'roulette'`) y el seed del boot migra reglas/plantillas guardadas.

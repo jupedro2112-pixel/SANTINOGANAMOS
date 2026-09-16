@@ -4,7 +4,90 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-09-11**
+> **Última actualización: 2026-09-16**
+
+## Sesión 2026-09-16 — Rollover GLOBAL de bonos + multicuenta por TITULAR del comprobante
+
+### 184. (A) ROLLOVER GLOBAL de bonos (x0/x2/x3/x5/x10, default x3) + (B) MULTICUENTA por TITULAR del comprobante (ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md, tal cual)
+- **Pedido del owner:** implementar A y B de la espec (copiada a `docs/`, viene del
+  gemelo PAUTANUEVAsantino #278/#279), mostrando antes dónde están acá los 3
+  puntos del cliente de la API y la verificación del comprobante, y validando
+  con las tablas A.6 y B.6.
+- **Dónde estaba cada cosa en ESTA repo (diagnóstico):** (1) `giroxService.
+  creditUserBalance` rama con `multiplier` explícito (`/bonus` estricto: botón
+  Bonificación, welcome code cash, lotes); (2) rama SIN multiplier = bono 0
+  "regalo directo" (reembolsos, ruleta, rakeback, VIP, referidos, devolución);
+  (3) `depositToUser` con `wagering.bonusAmount/bonusPercent/bonusMultiplier`
+  (carga con bonus del agente); y el helper `_creditGiftWithRollover` de
+  server.js (fueguito, reembolso en vivo) que hacía a mano lo que el gemelo
+  tiene en `creditGift`. La verificación del comprobante:
+  `analyzeComprobanteFromMessage` (server.js), que guarda `originHolder` pero no
+  lo cruzaba con nadie; el fraud-check del panel solo miraba dispositivo,
+  teléfono e IP.
+- **A — cliente de la API (`giroxService`):** `setRolloverResolver(fn)` +
+  `_globalRollover()` (server.js inyecta el efectivo o null). Los 3 puntos:
+  **`creditGift(username, amount, {rolloverX, reference, description,
+  ignoreGlobalRollover})`** NUEVO (mismo nombre/contrato que el gemelo): resuelve
+  el global (pisa `rolloverX`), con x0 va por el bono 0 "regalo directo" de
+  siempre (`_creditDirectGift`, extraída sin cambios), con x>0 hace los
+  prechecks contra GET /config, el guard de bono activo (> $50 bloqueado o a
+  reclamar → no pisar) y `/bonus`; si no puede, depósito CON multiplier; devuelve
+  `via`, `creditedAs`, `rolloverApplied`, `claimRequired`, `fallbackReason`.
+  **`creditUserBalance`** con `multiplier` aplica el global salvo
+  `ignoreGlobalRollover` (+ `rolloverApplied`); sin multiplier delega en
+  `creditGift` propagando `ignoreGlobalRollover`. **`depositToUser`** aplica el
+  global a `bonus_multiplier` solo cuando la carga lleva `bonus_amount`/
+  `bonus_percent` (un `multiplier` suelto no se toca). `_creditGiftWithRollover`
+  (server.js) quedó como wrapper de `girox.creditGift` (alias `_creditFireReward`
+  intacto). **Excluidos:** comisión de referidos (`referralPayoutService`,
+  `ignoreGlobalRollover:true`) y la parte bono de la devolución de retiro
+  rechazado (`vip-payoutref-bonus-*`); la parte fichas ya iba por depósito sin
+  wagering.
+- **A — server/panel:** `src/utils/bonusRollover.js` (parte PURA:
+  `resolveGlobalRollover(rawCfg, allowed)` → `{enabled, x, effective, allowed,
+  snapped, options}` con snap al permitido más cercano hacia ARRIBA;
+  `pickRollover`). `getGlobalBonusRollover()` (Config['bonusRolloverGlobal'] +
+  `bonus.multipliers` de GET /config, sin cache) y `applyGlobalRollover(flow)`.
+  `getGiroxBonusMultiplier` devuelve el global si está encendido (carga con
+  bonus + Bonificación). A.4 coherencia: fueguito (status ×2 + claim), reembolso
+  en vivo (status → claim), código de bienvenida (status + cash), lotes (crédito
+  + mensajes al cliente/agente) usan `applyGlobalRollover`. Endpoints `GET/POST
+  /api/admin/bonus-rollover` (POST solo admin general; 400 si x ∉ opciones).
+  Card "🎯 Rollover GLOBAL de bonos" en Config (switch + botones x0/x2/x3/x5/
+  x10, los no permitidos en gris con ⚠️ y tooltip, hint con el efectivo y aviso
+  de `snapped`). ⚠️ En la cuenta del owner `bonus.multipliers` = [0,2,5,10,20,40]
+  → el default x3 sale como **x5** hasta que soporte habilite x3 (el panel lo
+  dice). Default ENCENDIDO x3: al deployar, TODOS los regalos que hoy salían como
+  bono 0 (reembolsos, ruleta, rakeback, VIP) pasan a tener rollover; si el owner
+  no quiere eso, apagar el switch o elegir x0.
+- **B — multicuenta por titular:** `src/utils/holderKey.js` (`holderKey`: sin
+  acentos/puntuación, mayúsculas, ≥2 palabras y ≥8 letras), campo
+  `Comprobante.originHolderKey` (index; se guarda al crear el comprobante),
+  `_findHolderConflict(userId, holderName)`: comprobantes verificados
+  (unique/no_key) de OTRAS cuentas por key nueva O nombre exacto
+  case-insensitive (filas viejas), y movimientos bancarios de OTRAS cuentas por
+  `fromKey` o `fromName`. Usado en 3 lugares: (1) al verificar el comprobante →
+  nota admin-only "🚨 MULTICUENTA POR TITULAR: … YA cargó en @otro (comprobante
+  anterior | transferencia confirmada por el banco). Si se carga a mano, SIN
+  bonos automáticos" + log WARN; (2) `hgcashAutoCarga`: cruce de identidad
+  bancaria (`_bankIdentityOr` sobre BankMovement, BANK_IDENTITY_STATES) y, si no
+  dio, el titular → la carga entra igual + alerta "MULTICUENTA CONFIRMADA POR
+  BANCO" (en esta repo la auto-carga no aplica bonos automáticos, así que no hay
+  nada que apagar); (3) fraud-check del panel: señales nuevas `bank` (🏦, mismo
+  CBU/titular de origen en movimientos matcheados) y `receipt_holder` (🧾, mismo
+  titular en comprobantes leído por la IA), ambas fuertes. Fail-open en los 3.
+- **Validado:** `node --check` OK (server.js, giroxService.js,
+  referralPayoutService.js, Comprobante.js, bonusRollover.js, holderKey.js,
+  admin.js, admin-sw.js); `node scripts/test-rollover-multicuenta.js` ✅ (tablas
+  A.6 y B.6 completas: la aritmética en frío + chequeos estáticos de los 3
+  puntos, exclusiones y los 3 usos del cruce); scan TDZ 0; HTML del panel
+  664/664 divs, 26/26 sections, ids únicos. admin-sw **v39**. **Back necesita
+  redeploy; panel, recargar.** PROBAR: Config → card Rollover global muestra x3
+  en gris con ⚠️ y "se está usando x5"; carga manual con bonus 20% → en 1girox
+  `bonus_multiplier` 5; reclamar fueguito → mensaje y bono con x5; apagar el
+  switch → fueguito vuelve a su x5 propio y reembolsos a bono 0; comisión de
+  referidos y devolución de retiro → sin rollover; comprobante de un titular que
+  ya cargó en otra cuenta → nota 🚨 en el chat y señal 🧾 en el banner amarillo.
 
 ## Sesión 2026-09-11 — Reembolso EN VIVO acumulativo sobre plata real (ESPEC-REEMBOLSO-1GIROX.md) + 🏦 Banco
 

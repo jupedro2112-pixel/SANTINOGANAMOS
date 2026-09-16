@@ -379,7 +379,8 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         referrer.username,
         totalAmount,
         payoutReference,
-        { description }
+        // #184: la comisión es plata del referidor, NO un bono → sin rollover global.
+        { description, ignoreGlobalRollover: true }
       );
 
       if (!creditResult.success) {

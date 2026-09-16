@@ -28,6 +28,9 @@ const comprobanteSchema = new mongoose.Schema({
   operationNumber: { type: String, default: null, trim: true },
   amount: { type: Number, default: null },
   originHolder: { type: String, default: null, trim: true }, // titular / origen
+  // #184 titular normalizado (sin acentos/puntuación, ≥2 palabras) para cruzar
+  // multicuenta entre usuarios aunque el banco no tenga API. Ver src/utils/holderKey.js.
+  originHolderKey: { type: String, default: null, index: true },
   originCbu: { type: String, default: null, trim: true },    // CBU/CVU/alias origen
   destHolder: { type: String, default: null, trim: true },   // titular / destino (quién recibe)
   destCbu: { type: String, default: null, trim: true },      // CBU/CVU/alias destino (a quién se envió)
