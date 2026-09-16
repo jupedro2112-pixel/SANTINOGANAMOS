@@ -55,11 +55,13 @@
   /api/admin/bonus-rollover` (POST solo admin general; 400 si x ∉ opciones).
   Card "🎯 Rollover GLOBAL de bonos" en Config (switch + botones x0/x2/x3/x5/
   x10, los no permitidos en gris con ⚠️ y tooltip, hint con el efectivo y aviso
-  de `snapped`). ⚠️ En la cuenta del owner `bonus.multipliers` = [0,2,5,10,20,40]
-  → el default x3 sale como **x5** hasta que soporte habilite x3 (el panel lo
-  dice). Default ENCENDIDO x3: al deployar, TODOS los regalos que hoy salían como
-  bono 0 (reembolsos, ruleta, rakeback, VIP) pasan a tener rollover; si el owner
-  no quiere eso, apagar el switch o elegir x0.
+  de `snapped`). **Decisión del owner (2026-09-16): TODO con rollover x3, y ya
+  pidió a 1girox que habilite x3 en `bonus.multipliers` de la cuenta** → el
+  efectivo es x3 sin aviso (si el GET /config cacheado 10 min todavía trae la
+  lista vieja, el snap a x5 dura hasta el redeploy o hasta que venza el cache).
+  Default ENCENDIDO x3: al deployar, TODOS los regalos que hasta hoy salían como
+  bono 0 (reembolsos, ruleta, rakeback, VIP) pasan a tener rollover x3 — es lo
+  pedido. Verificar post-deploy: la card muestra x3 en color normal, sin ⚠️.
 - **B — multicuenta por titular:** `src/utils/holderKey.js` (`holderKey`: sin
   acentos/puntuación, mayúsculas, ≥2 palabras y ≥8 letras), campo
   `Comprobante.originHolderKey` (index; se guarda al crear el comprobante),
@@ -83,8 +85,9 @@
   puntos, exclusiones y los 3 usos del cruce); scan TDZ 0; HTML del panel
   664/664 divs, 26/26 sections, ids únicos. admin-sw **v39**. **Back necesita
   redeploy; panel, recargar.** PROBAR: Config → card Rollover global muestra x3
-  en gris con ⚠️ y "se está usando x5"; carga manual con bonus 20% → en 1girox
-  `bonus_multiplier` 5; reclamar fueguito → mensaje y bono con x5; apagar el
+  seleccionado SIN ⚠️ ("Activo: todos los bonos salen con rollover x3"); carga
+  manual con bonus 20% → en 1girox `bonus_multiplier` 3; reclamar fueguito →
+  mensaje y bono con x3; reembolso semanal → Bono con x3; apagar el
   switch → fueguito vuelve a su x5 propio y reembolsos a bono 0; comisión de
   referidos y devolución de retiro → sin rollover; comprobante de un titular que
   ya cargó en otra cuenta → nota 🚨 en el chat y señal 🧾 en el banner amarillo.

@@ -121,7 +121,8 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `docs/ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md`. Se aplica en el CLIENTE
   (`giroxService`: `creditGift`, `creditUserBalance` con multiplier, `bonus_multiplier`
   de `depositToUser`) con un resolver inyectado desde server.js; default ENCENDIDO x3
-  (la cuenta del owner no permite x3 → efectivo x5). Un bono nuevo no resuelve el
+  (decisión del owner 2026-09-16: TODO con x3; x3 habilitado en la cuenta). Un bono
+  nuevo no resuelve el
   rollover a mano; solo referidos y devoluciones pasan `ignoreGlobalRollover:true`.
   Test en frío: `node scripts/test-rollover-multicuenta.js`. La misma espec (§B)
   cruza el TITULAR del comprobante (`Comprobante.originHolderKey`) contra otras

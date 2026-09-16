@@ -429,7 +429,8 @@ reintento manda la misma reference y la plataforma responde `duplicate:true`.
   fueguito, reembolso en vivo, reembolsos, rakeback, nivel VIP, ruleta). Apagado =
   cada flujo con el suyo (sin migración). `getGlobalBonusRollover()` valida `x`
   contra `bonus.multipliers` de la cuenta y usa el permitido más cercano hacia ARRIBA
-  (`effective`, `snapped`) — en la cuenta del owner [0,2,5,10,20,40] → x3 sale como x5.
+  (`effective`, `snapped`). El owner pidió x3 habilitado en la cuenta (2026-09-16), así
+  que el efectivo es x3; si alguna vez la plataforma lo quita, el panel avisa y usa x5.
   Se aplica en el CLIENTE (`giroxService`, resolver inyectado), no en los endpoints:
   `creditGift` (regalo como bono con rollover; con x0 = bono 0 de siempre; guard de
   bono activo > $50 y fallback a depósito con multiplier), `creditUserBalance` con
