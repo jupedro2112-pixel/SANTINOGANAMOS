@@ -501,6 +501,20 @@ girox.setRolloverResolver(async () => {
   const g = await getGlobalBonusRollover();
   return g.enabled ? g.effective : null;
 });
+// #186 Nota del ROLLOVER para los mensajes automáticos al cliente cuando se le
+// acredita un bono (carga con bonus, Bonificación, reembolsos, rakeback, nivel
+// VIP, código de bienvenida, lotes, fueguito, reembolso en vivo, ruleta).
+// `x` = el rollover REALMENTE aplicado (r.rolloverApplied del cliente de la API,
+// o applyGlobalRollover(valorDelFlujo)). Con x0 no se agrega nada. Variable
+// `{rollover}` en los comandos /sys_* (vacía = sin nota).
+function _rolloverNoteText(x, opts = {}) {
+  const n = Math.max(0, Math.round(Number(x) || 0));
+  if (!n) return '';
+  const ej = `recibís $1.000 → apostás $${(1000 * n).toLocaleString('es-AR')}`;
+  if (opts.short) return ` 🎯 Rollover x${n}: para retirarlo apostalo ${n} veces (${ej}). Las apuestas en DEPORTES no suman.`;
+  return `\n\n🎯 Este bono tiene ROLLOVER x${n}: ya podés jugarlo, y para poder RETIRARLO tenés que apostarlo ${n} veces (${ej}). El rollover se completa jugando slots y casino — las apuestas en DEPORTES NO suman.`;
+}
+async function _rolloverNote(flowValue, opts) { return _rolloverNoteText(await applyGlobalRollover(flowValue), opts); }
 // Etiqueta del proyecto para Telegram (un solo grupo recibe varios proyectos).
 function _projectLabel() {
   try { return new URL(String(process.env.PUBLIC_BASE_URL || '')).hostname.replace(/^www\./, ''); } catch (_) { return 'proyecto'; }
@@ -7711,7 +7725,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
 
       res.json({
         success: true,
-        message: `¡Reembolso diario de $${refundAmount} acreditado!`,
+        message: `¡Reembolso diario de $${refundAmount} acreditado!${_rolloverNoteText(depositResult.rolloverApplied, { short: true })}`, // #186
         amount: refundAmount,
         percentage: dailyPct,
         netAmount: netLoss,
@@ -7879,7 +7893,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
 
       res.json({
         success: true,
-        message: `¡Reembolso semanal de $${refundAmount} acreditado!`,
+        message: `¡Reembolso semanal de $${refundAmount} acreditado!${_rolloverNoteText(depositResult.rolloverApplied, { short: true })}`, // #186
         amount: refundAmount,
         percentage: weeklyPct,
         netAmount: netLoss,
@@ -8047,7 +8061,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
 
       res.json({
         success: true,
-        message: `¡Reembolso mensual de $${refundAmount} acreditado!`,
+        message: `¡Reembolso mensual de $${refundAmount} acreditado!${_rolloverNoteText(depositResult.rolloverApplied, { short: true })}`, // #186
         amount: refundAmount,
         percentage: monthlyPct,
         netAmount: netLoss,
@@ -8240,7 +8254,7 @@ app.post('/api/vip/rakeback/claim', authMiddleware, async (req, res) => {
 
       res.json({
         success: true,
-        message: `¡Rakeback semanal de $${amount.toLocaleString('es-AR')} acreditado! (${pct}% de lo que apostaste)`,
+        message: `¡Rakeback semanal de $${amount.toLocaleString('es-AR')} acreditado! (${pct}% de lo que apostaste)${_rolloverNoteText(depositResult.rolloverApplied, { short: true })}`, // #186
         amount,
         pct,
         wagered
@@ -8800,13 +8814,16 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       // El agente recibe un aviso aparte (más abajo) cuando el bonus falla
       // para que lo aplique manualmente.
       const includeBonusInMessage = bonusRequested && bonusActuallyApplied;
+      // #186: nota del rollover del bono (el que se mandó a la plataforma).
+      const _depRolloverNote = includeBonusInMessage ? await _rolloverNote(await getGiroxBonusMultiplier()) : '';
       if (depositCmd && depositCmd.response) {
         messageContent = depositCmd.response
           .replace(/\{amount\}/g, amount)
           .replace(/\{bonus\}/g, includeBonusInMessage ? bonus : 0)
-          .replace(/\{balance\}/g, newBalance !== null ? newBalance : 'actualizándose');
+          .replace(/\{balance\}/g, newBalance !== null ? newBalance : 'actualizándose')
+          .replace(/\{rollover\}/g, _depRolloverNote);
       } else if (includeBonusInMessage) {
-        messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balanceStr} 💸\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+        messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balanceStr} 💸${_depRolloverNote}\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
       } else {
         messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balanceStr} 💸\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
       }
@@ -9400,12 +9417,15 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
           const bonusCmd = await Command.findOne({ name: '/sys_bonus', isActive: true });
           const bonusDisabled = bonusCmd && (!bonusCmd.response || !String(bonusCmd.response).trim());
           let bonusMsg;
+          // #186: el rollover realmente aplicado (lo devuelve el cliente de la API).
+          const _bonusRolloverNote = _rolloverNoteText(depositResult.rolloverApplied != null ? depositResult.rolloverApplied : await getGiroxBonusMultiplier());
           if (bonusCmd && bonusCmd.response) {
             bonusMsg = bonusCmd.response
               .replace(/\$\{amount\}/g, bonusAmount)
-              .replace(/\$\{balance\}/g, newBalance !== null ? newBalance : '—');
+              .replace(/\$\{balance\}/g, newBalance !== null ? newBalance : '—')
+              .replace(/\{rollover\}/g, _bonusRolloverNote);
           } else {
-            bonusMsg = `🎁 ¡Bonificación de $${bonusAmount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es $${newBalance !== null ? newBalance : '—'} 💸\n\nPuedes verificarlo en: https://1girox.com`;
+            bonusMsg = `🎁 ¡Bonificación de $${bonusAmount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es $${newBalance !== null ? newBalance : '—'} 💸${_bonusRolloverNote}\n\nPuedes verificarlo en: https://1girox.com`;
           }
           if (!bonusDisabled) await Message.create({ // null = comando vaciado a propósito → no enviar
             id: uuidv4(),
@@ -10571,15 +10591,15 @@ async function initializeData() {
     },
     {
       name: '/sys_deposit_bonus',
-      description: 'Mensaje automático al realizar un depósito con bonus. Variables disponibles: ${amount}, ${bonus}, ${balance}',
+      description: 'Mensaje automático al realizar un depósito con bonus. Variables disponibles: ${amount}, ${bonus}, ${balance}, {rollover} (nota del rollover del bono, vacía si es x0)',
       type: 'message',
-      response: '🔒💰 Depósito de ${amount} (incluye ${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥'
+      response: '🔒💰 Depósito de ${amount} (incluye ${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸{rollover}\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥'
     },
     {
       name: '/sys_bonus',
-      description: 'Mensaje automático al aplicar una bonificación. Variables disponibles: ${amount}, ${balance}',
+      description: 'Mensaje automático al aplicar una bonificación. Variables disponibles: ${amount}, ${balance}, {rollover} (nota del rollover, vacía si es x0)',
       type: 'message',
-      response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸\n\nPuedes verificarlo en: https://1girox.com'
+      response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸\n\nPuedes verificarlo en: https://1girox.com{rollover}'
     },
     {
       name: '/sys_withdrawal',
@@ -10652,9 +10672,9 @@ async function initializeData() {
     },
     {
       name: '/sys_vip_levelup',
-      description: 'Mensaje automático cuando el cliente alcanza un nivel VIP (por apostado acumulado) y se le acredita el bono del nivel. Variables: {username}, {level} (nombre del nivel), {emoji}, ${bonus}. Si lo dejás vacío, no se envía.',
+      description: 'Mensaje automático cuando el cliente alcanza un nivel VIP (por apostado acumulado) y se le acredita el bono del nivel. Variables: {username}, {level} (nombre del nivel), {emoji}, ${bonus}, {rollover} (nota del rollover, vacía si es x0). Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '🎉 ¡FELICITACIONES {username}!\n\nAlcanzaste el nivel VIP {emoji} {level} por todo lo que jugaste.\n\n💰 Ya te acreditamos tu bono de ${bonus} en la plataforma.\n\nCuanto más jugás, más alto llegás: cada nivel te da un bono mayor y más rakeback semanal. Tocá tu perfil en la app para ver cuánto te falta para el próximo nivel. 🚀'
+      response: '🎉 ¡FELICITACIONES {username}!\n\nAlcanzaste el nivel VIP {emoji} {level} por todo lo que jugaste.\n\n💰 Ya te acreditamos tu bono de ${bonus} en la plataforma.{rollover}\n\nCuanto más jugás, más alto llegás: cada nivel te da un bono mayor y más rakeback semanal. Tocá tu perfil en la app para ver cuánto te falta para el próximo nivel. 🚀'
     },
     {
       name: '/sys_welcome_code',
@@ -10664,9 +10684,9 @@ async function initializeData() {
     },
     {
       name: '/sys_welcome_code_cash',
-      description: 'Mensaje automático cuando el cliente canjea el código de bienvenida y el bono es MONTO SORPRESA (se acredita solo). Variables: {username}, ${amount}. Si lo dejás vacío, no se envía.',
+      description: 'Mensaje automático cuando el cliente canjea el código de bienvenida y el bono es MONTO SORPRESA (se acredita solo). Variables: {username}, ${amount}, {rollover} (nota del rollover, vacía si es x0). Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '🎉 ¡Código de bienvenida canjeado, {username}!\n\n💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰\n\n⚠️ Es por única vez.',
+      response: '🎉 ¡Código de bienvenida canjeado, {username}!\n\n💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰{rollover}\n\n⚠️ Es por única vez.',
     },
     {
       name: '/sys_lote_aviso_codigo',
@@ -10682,9 +10702,9 @@ async function initializeData() {
     },
     {
       name: '/sys_lote_aviso_cash',
-      description: 'Bloque automático al final del mensaje de un LOTE de FICHAS POR TIEMPO (ya acreditadas solas). Variables: {gift}. Si lo dejás vacío, se manda solo el mensaje del lote.',
+      description: 'Bloque automático al final del mensaje de un LOTE de FICHAS POR TIEMPO (ya acreditadas solas). Variables: {gift}. Si lo dejás vacío, se manda solo el mensaje del lote. {rollover} = nota del rollover (vacía si es x0).',
       type: 'message',
-      response: '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰'
+      response: '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰{rollover}'
     },
     {
       name: '/sys_lote_canje_cash',
@@ -10752,6 +10772,22 @@ async function initializeData() {
     if (r.modifiedCount) console.log('✅ /sys_install_bonus con "${amount}" viejo → texto vigente (100% próxima carga)');
   } catch (e) {
     console.warn(`⚠️ Migración /sys_install_bonus: ${e.message}`);
+  }
+
+  // #186 Los mensajes de bono guardados en la base tienen que mostrar el
+  // rollover: si el texto guardado NO tiene la variable {rollover} se le
+  // APPENDEA al final (idempotente: tras agregarla deja de matchear; un comando
+  // vaciado a propósito no se toca). Lo que se ve es la nota "Este bono tiene
+  // ROLLOVER xN…" con el x vigente del panel; con x0 la variable queda vacía.
+  try {
+    const r = await Command.updateMany(
+      { name: { $in: ['/sys_deposit_bonus', '/sys_bonus', '/sys_vip_levelup', '/sys_welcome_code_cash', '/sys_lote_aviso_cash'] },
+        response: { $regex: /\S/, $not: /\{rollover\}/ } },
+      [{ $set: { response: { $concat: ['$response', '{rollover}'] } } }]
+    );
+    if (r.modifiedCount) console.log(`✅ {rollover} agregado a ${r.modifiedCount} comando(s) de bono guardados`);
+  } catch (e) {
+    console.warn(`⚠️ Migración {rollover} en comandos: ${e.message}`);
   }
 
   console.log('✅ Datos inicializados correctamente');
@@ -11563,9 +11599,9 @@ app.post('/api/community-code/claim', authMiddleware, authLimiter, async (req, r
       const contentCash = await renderSystemCommand(
         '/sys_welcome_code_cash',
         '🎉 ¡Código de bienvenida canjeado, {username}!\n\n' +
-        '💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰\n\n' +
+        '💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰{rollover}\n\n' +
         '⚠️ Es por única vez.',
-        { username: user.username, amount: montoFmt }
+        { username: user.username, amount: montoFmt, rollover: _rolloverNoteText(credit.rolloverApplied != null ? credit.rolloverApplied : _welcomeRolloverX) } // #186
       );
       if (contentCash) await Message.create({
         id: uuidv4(), senderId: 'system', senderUsername: 'Sistema', senderRole: 'admin',
@@ -12260,7 +12296,7 @@ app.post('/api/fire/claim-reward', authMiddleware, async (req, res) => {
     logger.info(`[FIRE_REWARD] claim-reward OK userId=${userId} username=${username} amount=${rewardAmount}`);
 
     const _rolloverMsg = _fireMult > 0
-      ? ` Para poder RETIRARLOS tenés que apostar $${Math.round(rewardAmount * _fireMult).toLocaleString('es-AR')} (rollover x${_fireMult}). ¡Ya podés jugarlos!` +
+      ? ` Para poder RETIRARLOS tenés que apostar $${Math.round(rewardAmount * _fireMult).toLocaleString('es-AR')} (rollover x${_fireMult}). ¡Ya podés jugarlos! Las apuestas en DEPORTES no suman para el rollover.` +
         (bonusResult.claimRequired ? ' Cuando completes el objetivo, tocá el regalito 🎁 en el casino para liberarlos.' : '')
       : '';
     res.json({
@@ -17754,7 +17790,8 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
         status: spin.status,
         spunAt: spin.spunAt,
         creditedAt: spin.creditedAt,
-        creditTxId: spin.creditTxId
+        creditTxId: spin.creditTxId,
+        rolloverX: await applyGlobalRollover(0) // #186 (la ruleta no tiene rollover propio: solo el global)
       } : null
     });
   } catch (err) {
@@ -18191,7 +18228,8 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
       success: true,
       prize: {
         prizeARS, prizeLabel: pick.label, emoji: pick.emoji,
-        status: 'credited', transactionId: txId
+        status: 'credited', transactionId: txId,
+        rolloverX: credit && credit.rolloverApplied != null ? credit.rolloverApplied : await applyGlobalRollover(0) // #186
       }
     });
   } catch (err) {
@@ -18492,12 +18530,13 @@ setInterval(function () { _pollPayingPayouts(); }, 45 * 1000);
 async function _notifyVipLevelUp(userLean, level) {
   const content = await renderSystemCommand(
     '/sys_vip_levelup',
-    `🎉 ¡FELICITACIONES {username}!\n\nAlcanzaste el nivel VIP {emoji} {level} por todo lo que jugaste.\n\n💰 Ya te acreditamos tu bono de $\{bonus\} en la plataforma.\n\nCuanto más jugás, más alto llegás: cada nivel te da un bono mayor y más rakeback semanal. Tocá tu perfil en la app para ver cuánto te falta para el próximo nivel. 🚀`,
+    `🎉 ¡FELICITACIONES {username}!\n\nAlcanzaste el nivel VIP {emoji} {level} por todo lo que jugaste.\n\n💰 Ya te acreditamos tu bono de $\{bonus\} en la plataforma.{rollover}\n\nCuanto más jugás, más alto llegás: cada nivel te da un bono mayor y más rakeback semanal. Tocá tu perfil en la app para ver cuánto te falta para el próximo nivel. 🚀`,
     {
       username: userLean.username,
       level: level.name,
       emoji: level.emoji,
-      bonus: level.levelUpBonusArs.toLocaleString('es-AR')
+      bonus: level.levelUpBonusArs.toLocaleString('es-AR'),
+      rollover: await _rolloverNote(0) // #186 (el bono VIP no tiene rollover propio: solo el global)
     }
   );
   if (!content) return; // comando vaciado a propósito desde el panel
@@ -19517,6 +19556,7 @@ async function _creditNotifBatchGift(uDoc, batch) {
 async function _nbChatText(batch, opts = {}) {
   const base = String(batch.message || '').trim();
   const fecha = _nbFechaART(batch.expiresAt);
+  const _batchRoll = await applyGlobalRollover(batch.rolloverX); // #184/#186 (global si está encendido)
   let giftLine;
   if (batch.giftType === 'percent') {
     giftLine = `+${batch.amount}% EXTRA en tu PRÓXIMA CARGA`;
@@ -19526,7 +19566,7 @@ async function _nbChatText(batch, opts = {}) {
       : '';
     giftLine = `$${Number(batch.amount).toLocaleString('es-AR')} en fichas${roll}`;
   }
-  const vars = { gift: giftLine, code: batch.code || '', fecha };
+  const vars = { gift: giftLine, code: batch.code || '', fecha, rollover: opts.credited ? _rolloverNoteText(_batchRoll) : '' }; // #186
   let tail;
   if (batch.mode === 'code') {
     tail = await renderSystemCommand('/sys_lote_aviso_codigo',
@@ -19539,7 +19579,7 @@ async function _nbChatText(batch, opts = {}) {
       '⏰ Válido hasta {fecha}.', vars);
   } else if (opts.credited) {
     tail = await renderSystemCommand('/sys_lote_aviso_cash',
-      '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰', vars);
+      '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰{rollover}', vars);
   } else {
     tail = `🎁 Tu regalo: ${giftLine}.`;
   }

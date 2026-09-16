@@ -1033,6 +1033,10 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   sembrar el comando en `systemCmds` de `initializeData()`. Respuesta VACÍA en el panel
   = "no enviar" (null). Variables: montos como `${amount}` en el template y se
   reemplaza `{amount}` (el `$` queda como signo); texto como `{username}` sin `$`.
+  **Todo mensaje que avise un BONO acreditado lleva la nota del rollover (#186):**
+  variable `{rollover}` = `_rolloverNoteText(x)` con `x` = `r.rolloverApplied` del
+  cliente de la API (o `applyGlobalRollover(flow)`); vacía con x0. Los mensajes
+  armados en código usan la versión corta (`{ short: true }`) en toasts.
 - **Identidad**: `user.id` (uuid), no `_id`. Username case-insensitive →
   `findUserByUsernameCI` (indexado + fallback), NUNCA regex nuevo.
 - **periodKey**: `YYYY-MM` (referidos y VipWagerMonth); RefundClaim usa

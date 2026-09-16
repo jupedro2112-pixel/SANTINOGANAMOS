@@ -178,7 +178,7 @@ VIP.refunds = (function () {
             if (!response.ok || !data.success) {
                 if (VIP.ui && VIP.ui.showToast) VIP.ui.showToast(data.error || 'No se pudo reclamar. Probá de nuevo.', 'error');
             } else {
-                if (VIP.ui && VIP.ui.showToast) VIP.ui.showToast(`💸 ¡Reembolso de ${money(data.amount)} acreditado en tu saldo!`, 'success');
+                if (VIP.ui && VIP.ui.showToast) VIP.ui.showToast(`💸 ¡Reembolso de ${money(data.amount)} acreditado en tu saldo!` + (Number(data.rolloverX) > 0 ? ` 🎯 Rollover x${data.rolloverX}: apostalo ${data.rolloverX} veces para retirarlo (deportes no suma).` : ''), 'success');
                 if (VIP.ui && VIP.ui.syncBalance) { try { VIP.ui.syncBalance(); } catch (e) {} }
             }
         } catch (error) {

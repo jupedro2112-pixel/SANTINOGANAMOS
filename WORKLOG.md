@@ -8,6 +8,37 @@
 
 ## Sesión 2026-09-16 — Rollover GLOBAL de bonos + multicuenta por TITULAR del comprobante
 
+### 186. Mensajes automáticos de bono con la nota "Este bono tiene ROLLOVER xN" (+ fix del lote)
+- **Pedido del owner:** que todos los mensajes automáticos al cliente cuando se le
+  da un bono (carga con bonus, Bonificación, reembolsos, etc.) digan que el bono
+  incluye rollover "x" (el configurado en el panel).
+- **Helper `_rolloverNoteText(x, {short})` / `_rolloverNote(flowValue)`** (server.js,
+  junto a `applyGlobalRollover`): "🎯 Este bono tiene ROLLOVER xN: ya podés
+  jugarlo, y para poder RETIRARLO tenés que apostarlo N veces (recibís $1.000 →
+  apostás $N.000). El rollover se completa jugando slots y casino — las apuestas
+  en DEPORTES NO suman." (versión corta para toasts). Con x0 devuelve '' (sin
+  nota). `x` = `r.rolloverApplied` del cliente de la API cuando está a mano (lo
+  REALMENTE acreditado), si no `applyGlobalRollover(valorDelFlujo)`.
+- **Variable nueva `{rollover}`** en los comandos `/sys_deposit_bonus`, `/sys_bonus`,
+  `/sys_vip_levelup`, `/sys_welcome_code_cash` y `/sys_lote_aviso_cash` (seeds,
+  fallbacks y descripciones actualizados). **Migración idempotente en
+  `initializeData`:** a los comandos guardados con texto que NO tengan
+  `{rollover}` se les appendea al final (pipeline `$concat`); vaciados a
+  propósito no se tocan. `/sys_lote_canje_cash` ya tenía `{rollover}`.
+- **Mensajes armados en código:** reembolso diario/semanal/mensual y rakeback
+  (toast: nota corta), fueguito (suma "las apuestas en DEPORTES no suman"),
+  reembolso en vivo (toast de la PWA con `rolloverX`), ruleta (`rolloverX` en el
+  giro y en el status → línea 🎯 en el recuadro "¡GANASTE!").
+- **FIX de #184:** `_nbChatText` (aviso del lote al cliente) usaba `_batchRoll`,
+  variable local de `_creditNotifBatchGift` → ReferenceError al avisar un lote.
+  Ahora resuelve el suyo con `applyGlobalRollover(batch.rolloverX)`. (`node
+  --check` no lo detectaba.)
+- **Validado:** `node --check` OK (server.js, refunds.js, roulette.js, SW v107).
+  Back necesita redeploy (corre la migración de comandos al arrancar y loguea
+  "✅ {rollover} agregado a N comando(s)"). PROBAR: carga con bonus → el mensaje
+  al cliente termina con la nota x3; Bonificación → ídem; reclamar reembolso →
+  toast con "Rollover x3"; COMANDOS → los 5 comandos muestran `{rollover}`.
+
 ### 185. PWA: "todos los bonos tienen rollover xN" en Información del Servicio + modal "¿Qué es el rollover?"
 - **Pedido del owner (captura):** en la tarjeta "Bonos en tus cargas" del modal
   Información del Servicio, decir que TODOS los bonos tienen rollover "x" (el
