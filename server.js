@@ -459,6 +459,12 @@ function validatePassword(password) {
 // Partner API REST/JSON, auth por X-Api-Key. Cliente único: reemplaza a los 4
 // clientes de JUGAYGANA. Montos en PESOS (sin ×100) e idempotencia por `reference`.
 const girox = require('./src/services/giroxService');
+// #184 Rollover GLOBAL de bonos (parte pura) + identidad del titular del comprobante.
+// ⚠️ TIENEN que ir ANTES del bloque del rollover global de abajo (lo usa a nivel
+// superior): el 2026-09-16 estaban más abajo y el server no arrancaba
+// ("Cannot access 'bonusRollover' before initialization"). scripts/check-tdz.js lo vigila.
+const bonusRollover = require('./src/utils/bonusRollover');
+const { holderKey: _holderKey } = require('./src/utils/holderKey');
 // #183: cada operación de plata exitosa contra 1girox reporta el saldo del CAJERO
 // → CashierSnapshot (cruce sistema ↔ 1girox del cierre diario). Best-effort.
 // ⚠️ Hoy la Partner API NO informa el saldo del agente: el hook queda cableado y
@@ -569,9 +575,6 @@ const periodRanges = require('./src/utils/periodRanges');
 const refundTiers = require('./src/utils/refundTiers');
 // Fórmula PURA del reembolso acumulativo de por vida (ESPEC-REEMBOLSO-1GIROX.md §3).
 const cashbackFormula = require('./src/utils/cashbackFormula');
-// #184 Rollover GLOBAL de bonos (parte pura) + identidad del titular del comprobante.
-const bonusRollover = require('./src/utils/bonusRollover');
-const { holderKey: _holderKey } = require('./src/utils/holderKey');
 // Niveles VIP por apostado acumulado (réplica de Stake) + su motor de sync.
 const vipLevels = require('./src/utils/vipLevels');
 const vipLevelService = require('./src/services/vipLevelService');

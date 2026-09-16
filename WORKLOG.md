@@ -8,6 +8,32 @@
 
 ## Sesión 2026-09-16 — Rollover GLOBAL de bonos + multicuenta por TITULAR del comprobante
 
+### 187. HOTFIX deploy caído: `Cannot access 'bonusRollover' before initialization` (TDZ) + chequeo `scripts/check-tdz.js`
+- **Incidente (owner, 2026-09-16 17:01 UTC, logs de las 2 instancias):** al subir
+  la versión con #184–#186 el server no arrancaba en ninguna instancia (502 Bad
+  Gateway, "Impaired services on all instances"); el owner volvió a la versión
+  anterior a las 17:05 y quedó OK. Causa: en #184 puse el bloque del rollover
+  global (`const BONUS_ROLLOVER_OPTIONS = bonusRollover.BONUS_ROLLOVER_OPTIONS`,
+  L482) justo después del `require` de girox, pero el `require` de
+  `src/utils/bonusRollover` quedó en L573 → ReferenceError a nivel superior al
+  cargar el módulo. `node --check` no lo detecta (es runtime). El otro error del
+  log (`ValidationError: options.validate.keyGeneratorIpFallback`) es el aviso
+  conocido de express-rate-limit (#123), no fatal. Como crasheó ANTES de
+  `initializeData`, no corrió ninguna migración: la base quedó intacta.
+- **Fix:** los requires de `bonusRollover` y `holderKey` se movieron arriba, justo
+  después de `const girox = require(...)` y antes del bloque que los usa (con
+  comentario ⚠️).
+- **`scripts/check-tdz.js` (nuevo):** para cada `const X = require(...)` de nivel
+  superior busca usos de `X` a nivel superior en líneas anteriores, y rutas
+  `app.*` con middleware antes de `const authMiddleware`. Verificado: con el
+  código roto reporta exactamente `L482 usa bonusRollover … require en L573`; con
+  el fix pasa. Agregado al flujo de trabajo en CLAUDE.md (correrlo siempre que se
+  toque server.js).
+- **Validado:** `node --check` OK, `node scripts/check-tdz.js` ✅ (81 requires,
+  authMiddleware L2929), `node scripts/test-rollover-multicuenta.js` ✅. **Volver a
+  deployar esta versión** (incluye #184, #185, #186 + este fix). Al arrancar tiene
+  que loguear "✅ {rollover} agregado a N comando(s)" y "Server started".
+
 ### 186. Mensajes automáticos de bono con la nota "Este bono tiene ROLLOVER xN" (+ fix del lote)
 - **Pedido del owner:** que todos los mensajes automáticos al cliente cuando se le
   da un bono (carga con bonus, Bonificación, reembolsos, etc.) digan que el bono

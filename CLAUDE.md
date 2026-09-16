@@ -174,7 +174,10 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 ## Flujo de trabajo del asistente
 
 1. Leer `WORKLOG.md` al iniciar.
-2. Hacer el cambio. Validar sintaxis (`node --check` en archivos tocados — no hay
+2. Hacer el cambio. Validar sintaxis (`node --check` en archivos tocados) **y, si se
+   tocó `server.js`, correr `node scripts/check-tdz.js`** (detecta usos de nivel
+   superior antes de su `require` y rutas antes de `const authMiddleware`: `node
+   --check` NO los ve y tumban el server al arrancar — pasó el 2026-09-16). No hay
    node_modules local, así que no se puede correr el server; sólo syntax check).
 3. Actualizar `WORKLOG.md`.
 4. Commitear y pushear a `main` cuando el owner lo pida (o si pidió "todo seguido").
