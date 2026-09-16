@@ -8,6 +8,31 @@
 
 ## Sesión 2026-09-16 — Rollover GLOBAL de bonos + multicuenta por TITULAR del comprobante
 
+### 185. PWA: "todos los bonos tienen rollover xN" en Información del Servicio + modal "¿Qué es el rollover?"
+- **Pedido del owner (captura):** en la tarjeta "Bonos en tus cargas" del modal
+  Información del Servicio, decir que TODOS los bonos tienen rollover "x" (el
+  configurado en el panel), con un botón de info que explique cómo funciona el
+  rollover y que deportes no cuenta — al estilo del bloque "INFORMACIÓN —
+  Reembolso y Rollover" del gemelo.
+- **Backend:** `GET /api/refunds/status` suma `bonusRollover: { enabled, x }` con
+  el EFECTIVO de `getGlobalBonusRollover()` (validado contra la plataforma = lo
+  que se acredita). Apagado → `{enabled:false, x:0}`.
+- **PWA (index.html + refunds.js, SW v106):** línea dorada "🎯 Todos los bonos y
+  regalos tienen rollover xN" + botón "ℹ️ ¿Qué es el rollover?" en la tarjeta
+  "Bonos en tus cargas" del infoModal, y la misma línea a lo ancho (con botón
+  "¿Qué es?") al final del grid del adServiceModal (los dos modales van a la
+  par). Modal nuevo `rolloverInfoModal`: qué bonos lo tienen, entra YA al saldo,
+  qué es el rollover con ejemplo "recibís $1.000 → apostás $N.000", se completa
+  jugando SLOTS y CASINO, DEPORTES NO suma (ni para el rollover ni para el
+  reembolso), la plata está en el saldo y solo afecta el retiro.
+  `updateRolloverLabels(br)` (llamada desde `updateRefundLabels`) completa el xN
+  y el ejemplo; con el global apagado oculta la línea. `VIP.refunds.
+  showRolloverInfo()` abre el modal.
+- **Validado:** `node --check` OK (server.js, refunds.js, SW); index.html 415/415
+  divs, ids únicos. Back necesita redeploy (campo nuevo del status); la PWA lo
+  toma en la próxima carga. PROBAR: menú → Información del Servicio → tarjeta
+  Bonos con "rollover x3" → botón → modal con el ejemplo $1.000 → $3.000.
+
 ### 184. (A) ROLLOVER GLOBAL de bonos (x0/x2/x3/x5/x10, default x3) + (B) MULTICUENTA por TITULAR del comprobante (ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md, tal cual)
 - **Pedido del owner:** implementar A y B de la espec (copiada a `docs/`, viene del
   gemelo PAUTANUEVAsantino #278/#279), mostrando antes dónde están acá los 3

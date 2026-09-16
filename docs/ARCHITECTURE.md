@@ -921,6 +921,11 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   chat. El watchdog del iframe se cancela en su `load`. El access-link con
   `ir=casino` (alta por landing, §4.10) abre el casino directo tras loguear.
   Poll de saldo: 90s (era 30s; parte del fix del lag, §4.3).
+- **Información del Servicio** (#185): la tarjeta "Bonos en tus cargas" (infoModal) y el
+  pie del grid del adServiceModal muestran "Todos los bonos y regalos tienen rollover xN"
+  (N = `bonusRollover.x` de `/api/refunds/status`, el efectivo del panel; oculto si el
+  global está apagado) + botón que abre `rolloverInfoModal` (explicación del rollover,
+  deportes no suma). `VIP.refunds.updateRolloverLabels` / `showRolloverInfo`.
 - Duplicados front/back a mantener sincronizados: mínimo retiro $4.999, bono $5.000,
   `VIP.config.PLATFORM_URL` = `https://1girox.com` (respaldo del SSO; también aparece
   hardcodeada en los mensajes `/sys_deposit*`, `/sys_bonus` y `/sys_welcome` sembrados

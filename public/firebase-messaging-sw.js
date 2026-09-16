@@ -34,7 +34,7 @@ try {
 // ============================================
 // CONFIGURACIÓN DE CACHÉ
 // ============================================
-const CACHE_VERSION = 'v105'; // v105: reembolso EN VIVO acumulativo (botón en Reembolsos + recuadro en el perfil)
+const CACHE_VERSION = 'v106'; // v106: rollover xN de todos los bonos en Información del Servicio + modal ¿Qué es el rollover? (#185)
 const CACHE_NAME = 'sala-juegos-fcm-' + CACHE_VERSION;
 
 // Logs por-fetch del SW (corren en CADA request). Apagados por default;

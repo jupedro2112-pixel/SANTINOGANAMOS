@@ -7512,12 +7512,19 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
       next: c.tier.next
     });
 
+    // #185 Rollover GLOBAL de bonos para la PWA (Información del Servicio: "todos
+    // los bonos tienen rollover xN" + explicación). `x` = el EFECTIVO (validado
+    // contra la plataforma), que es lo que se acredita de verdad.
+    let _bonusRollover = { enabled: false, x: 0 };
+    try { const g = await getGlobalBonusRollover(); _bonusRollover = { enabled: !!g.enabled, x: g.enabled ? g.effective : 0 }; } catch (_) {}
+
     res.json({
       user: {
         username,
         currentBalance,
         jugayganaLinked: !!userInfo
       },
+      bonusRollover: _bonusRollover,
       // Tablas de rangos, para la pantalla de perfil (así el front no las hardcodea).
       // `tiers` (la del diario) queda por compat con PWAs cacheadas viejas que
       // mostraban UNA sola escalera; el front nuevo usa `tiersByPeriod`.

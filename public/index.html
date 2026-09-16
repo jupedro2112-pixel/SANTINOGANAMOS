@@ -1778,6 +1778,10 @@
                     <div class="info-card-icon">🎁</div>
                     <div class="info-card-title">Bonos en tus cargas</div>
                     <div class="info-card-desc">Promos con hasta 30% extra en tus cargas. Atención por chat 24/7 y retiros por transferencia.</div>
+                    <!-- #185 rollover global: el xN lo completa refunds.js (updateRefundLabels) con el valor del panel -->
+                    <div class="info-card-desc" id="infoRolloverLine" style="margin-top:6px;color:#ffd479;font-weight:700;">🎯 Todos los bonos y regalos tienen rollover <span id="infoRolloverX">x3</span>.</div>
+                    <button type="button" onclick="VIP.refunds.showRolloverInfo()"
+                        style="margin-top:8px;background:rgba(77,208,255,0.14);color:#4dd0ff;border:1px solid rgba(77,208,255,0.55);border-radius:14px;padding:6px 10px;font-size:11px;font-weight:800;cursor:pointer;">ℹ️ ¿Qué es el rollover?</button>
                 </div>
             </div>
             <!-- Test de app + notificaciones. Render desde js/apptest.js -->
@@ -1786,6 +1790,30 @@
             <div id="infoReviewsSection"></div>
             <div class="modal-actions" style="margin-top: 20px;">
                 <button id="closeInfoModal" class="btn btn-primary" style="width: 100%;">Entendido</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- #185 Explicación del ROLLOVER (se abre desde Información del Servicio). El xN
+         y el ejemplo los completa refunds.js con el rollover global vigente del panel. -->
+    <div id="rolloverInfoModal" class="modal hidden" onclick="if(event.target === this) hideModal('rolloverInfoModal')">
+        <div class="modal-content" style="max-width:420px;position:relative;" onclick="event.stopPropagation()">
+            <button onclick="hideModal('rolloverInfoModal')" style="position:absolute;top:12px;right:12px;background:none;border:none;color:#888;font-size:22px;cursor:pointer;z-index:10;line-height:1;">✕</button>
+            <div class="modal-header">
+                <h2 style="font-size:17px;">ℹ️ INFORMACIÓN — Bonos y Rollover</h2>
+            </div>
+            <div style="font-size:12.5px;color:#cfd6de;line-height:1.55;">
+                <div style="font-size:11px;font-weight:900;color:#ffd700;letter-spacing:0.5px;margin:6px 0 8px;">🎁 TUS BONOS</div>
+                <div style="display:flex;gap:8px;margin-bottom:8px;"><span style="flex:none;">🎯</span><span><b style="color:#fff;">Todos</b> los bonos y regalos (bonos en tus cargas, reembolsos, ruleta, fueguito, rakeback, nivel VIP, códigos y lotes) entran a tu saldo como <b style="color:#fff;">BONUS con rollover <span class="rolloverInfoX">x3</span></b>.</span></div>
+                <div style="display:flex;gap:8px;margin-bottom:8px;"><span style="flex:none;">⚡</span><span>El bonus entra <b style="color:#fff;">YA</b> a tu saldo y podés jugarlo al instante.</span></div>
+                <div style="font-size:11px;font-weight:900;color:#ffd700;letter-spacing:0.5px;margin:12px 0 8px;">🔒 ¿QUÉ ES EL ROLLOVER?</div>
+                <div style="display:flex;gap:8px;margin-bottom:8px;"><span style="flex:none;">🎯</span><span>Para <b style="color:#fff;">RETIRAR</b> un bonus, primero tenés que <b style="color:#fff;">apostarlo la cantidad de veces que indica</b>. Acá es <b style="color:#ffd700;" class="rolloverInfoX">x3</b>: <span id="rolloverInfoExample">recibís $1.000 → apostás $3.000</span> y lo retirás sin problema.</span></div>
+                <div style="display:flex;gap:8px;margin-bottom:8px;"><span style="flex:none;">🎰</span><span>El rollover se completa jugando <b style="color:#26e07f;">SLOTS y CASINO</b> — las apuestas en <b style="color:#ff8a80;">DEPORTES NO suman</b> para el rollover.</span></div>
+                <div style="display:flex;gap:8px;margin-bottom:8px;"><span style="flex:none;">💡</span><span>Mientras completás el rollover, la plata está en tu saldo y jugás normal. Solo afecta el momento de retirar: tu disponible para retirar aparece en tu perfil.</span></div>
+                <div style="display:flex;gap:8px;margin-bottom:8px;"><span style="flex:none;">⚽</span><span><b style="color:#ff8a80;">DEPORTES tampoco genera reembolso</b>: para los reembolsos solo cuenta lo que jugás en slots y casino.</span></div>
+            </div>
+            <div class="modal-actions" style="margin-top:14px;">
+                <button onclick="hideModal('rolloverInfoModal')" class="btn btn-primary" style="width:100%;">Entendido</button>
             </div>
         </div>
     </div>
@@ -1828,6 +1856,11 @@
                     <div style="font-size:22px; line-height:1;">🤝</div>
                     <div style="color:#00ff88; font-weight:700; font-size:11px; margin:3px 0 2px;">Referidos: 8% mensual</div>
                     <div style="color:#b0b0b0; font-size:9.5px; line-height:1.3;">Invitá amigos y cobrá todos los meses, de por vida.</div>
+                </div>
+                <div style="grid-column:1 / -1; background:linear-gradient(135deg,rgba(77,208,255,0.10),rgba(77,208,255,0.04)); border:1px solid rgba(77,208,255,0.55); border-radius:9px; padding:8px 6px; text-align:center;">
+                    <div style="color:#ffd479; font-weight:700; font-size:10.5px;" id="adRolloverLine">🎯 Todos los bonos y regalos tienen rollover <span id="adRolloverX">x3</span>
+                        <button type="button" onclick="VIP.refunds.showRolloverInfo()" style="margin-left:6px;background:none;color:#4dd0ff;border:1px solid rgba(77,208,255,0.55);border-radius:10px;padding:2px 7px;font-size:9.5px;font-weight:800;cursor:pointer;">ℹ️ ¿Qué es?</button>
+                    </div>
                 </div>
                 <div style="background:linear-gradient(135deg,rgba(0,255,136,0.10),rgba(0,204,106,0.10)); border:1px solid rgba(0,255,136,0.55); border-radius:9px; padding:8px 6px; text-align:center;">
                     <div style="font-size:22px; line-height:1;">🎁</div>

@@ -270,6 +270,34 @@ VIP.refunds = (function () {
 
     // Actualiza los % visibles (tooltips de los botones del dashboard y los spans
     // del modal unificado) con el valor real configurado en el panel.
+    // #185 Rollover GLOBAL (Información del Servicio + modal "¿Qué es el rollover?"):
+    // el xN viene del backend (`bonusRollover` en /api/refunds/status = el que está
+    // configurado en el panel y validado contra la plataforma). Si el global está
+    // apagado, la línea se oculta (cada bono tiene el suyo).
+    function updateRolloverLabels(br) {
+        const on = !!(br && br.enabled && Number(br.x) > 0);
+        const x = on ? Number(br.x) : 0;
+        ['infoRolloverLine', 'adRolloverLine'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = on ? '' : 'none';
+        });
+        if (!on) return;
+        ['infoRolloverX', 'adRolloverX'].forEach((id) => {
+            const el = document.getElementById(id);
+            if (el) el.textContent = 'x' + x;
+        });
+        document.querySelectorAll('.rolloverInfoX').forEach((el) => { el.textContent = 'x' + x; });
+        const ex = document.getElementById('rolloverInfoExample');
+        if (ex) ex.textContent = `recibís $1.000 → apostás $${(1000 * x).toLocaleString('es-AR')}`;
+    }
+
+    function showRolloverInfo() {
+        if (VIP.state.refundStatus) updateRolloverLabels(VIP.state.refundStatus.bonusRollover);
+        else loadRefundStatus().catch(() => {});
+        if (VIP.ui && VIP.ui.showModal) VIP.ui.showModal('rolloverInfoModal');
+        else { const m = document.getElementById('rolloverInfoModal'); if (m) m.classList.remove('hidden'); }
+    }
+
     function updateRefundLabels() {
         const s = VIP.state.refundStatus;
         if (!s) return;
@@ -287,6 +315,7 @@ VIP.refunds = (function () {
         pctSpan('unifiedDailyPct', 'daily');
         pctSpan('unifiedWeeklyPct', 'weekly');
         pctSpan('unifiedMonthlyPct', 'monthly');
+        updateRolloverLabels(s.bonusRollover);
 
         // "Información del servicio": el tope de reembolso ya no va hardcodeado
         // en el HTML (los rangos se editan desde el panel) — acá se completa con
@@ -855,6 +884,8 @@ VIP.refunds = (function () {
         showUnifiedRefundModal,
         showProfileModal,
         closeProfileModal,
+        showRolloverInfo,
+        updateRolloverLabels,
         loadCashbackStatus,
         showCashbackModal,
         closeCashbackModal,
