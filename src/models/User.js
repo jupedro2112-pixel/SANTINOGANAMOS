@@ -552,6 +552,15 @@ const userSchema = new mongoose.Schema({
   //                     (status pasa a 'credited'; reference vip-welcome-{userId})
   //   - 'next_charge' → bono extra en la PRÓXIMA CARGA, lo aplica el agente a
   //                     mano (pending → used, mismo mecanismo que el bono 100%).
+  // #188 RULETA DIARIA — premio "bonificación %" pendiente para la PRÓXIMA CARGA
+  // (tipo 'percent' de los premios editables). Lo aplica el agente en la carga
+  // (el modal Depositar lo sugiere solo) y se consume automáticamente; un premio
+  // % nuevo PISA al pendiente anterior.
+  dailyRoulettePendingPct: { type: Number, default: 0 },
+  dailyRoulettePendingLabel: { type: String, default: null },
+  dailyRoulettePendingSpinId: { type: String, default: null },
+  dailyRoulettePendingAt: { type: Date, default: null },
+
   welcomeCodeBonusStatus: {
     type: String,
     // 'credited' = plata ya acreditada automáticamente (tipo cash).

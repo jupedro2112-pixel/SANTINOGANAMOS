@@ -8703,6 +8703,25 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       // NO se reintenta el depósito (duplicaría por reference) — se avisa al
       // agente más abajo para que aplique el bono a mano.
       const bonusActuallyApplied = bonusRequested && !result.bonusFailed;
+      // #188 Bonos PENDIENTES que el agente aplicó en ESTA carga (con bonus > 0):
+      // el 100% por instalar la app y el % de la ruleta diaria quedan marcados
+      // como usados solos (antes había que tocar "Marcar como usado" a mano).
+      if (bonusActuallyApplied) {
+        try {
+          const usedIb = await User.findOneAndUpdate(
+            { id: user.id, firstChargeBonusStatus: 'pending' },
+            { $set: { firstChargeBonusStatus: 'used', firstChargeBonusUsedAt: new Date(), firstChargeBonusUsedBy: req.user.username } },
+            { new: true }
+          ).select('id').lean();
+          if (usedIb) {
+            const _ib = await getInstallBonusConfig();
+            await _emitAdminOnlyChatNote(user.id, user.username,
+              `✅ BONO ${_ib.pct}% (instalar app) USADO — aplicado por ${req.user.username} en la carga de $${Number(amount).toLocaleString('es-AR')} con $${Number(bonus).toLocaleString('es-AR')} de bono (regla: ${_ib.pct}% hasta $${_ib.capArs.toLocaleString('es-AR')} + ${_ib.excessPct}% del resto → correspondían $${computeInstallBonus(amount, _ib).toLocaleString('es-AR')}). Este cliente ya no tiene bono pendiente.`).catch(() => {});
+            logger.info(`[bono-100] ${user.username} — marcado USADO automáticamente por la carga con bonus de ${req.user.username}`);
+          }
+        } catch (e) { logger.warn(`[deposit] no se pudo marcar el bono de instalación: ${e.message}`); }
+        try { await _consumeRoulettePercent(user.id, req.user.username, { amount: Number(amount), bonus: Number(bonus) }); } catch (e) { logger.warn(`[deposit] no se pudo consumir el % de ruleta: ${e.message}`); }
+      }
 
       // claim_required=true en la config del owner: el bono adjunto puede quedar
       // "a reclamar" en el casino → se libera acá para que el cliente lo vea en
@@ -10645,9 +10664,9 @@ async function initializeData() {
     },
     {
       name: '/sys_install_bonus',
-      description: 'Mensaje cuando el usuario reclama el bono por instalar la app (100% en su PRÓXIMA carga — no se acredita monto, lo aplica el agente). Variables: {username}',
+      description: 'Mensaje cuando el usuario reclama el bono por instalar la app (% en su PRÓXIMA carga — no se acredita monto, lo aplica el agente). Variables: {username}, {pct} (% del bono), {tope} (tope de carga al que aplica el %), {excedente} (% sobre lo que cargue de más), {regla} (la regla completa en una frase, sale de Config → Bono por instalar la app)',
       type: 'message',
-      response: '🎁 ¡Listo {username}! Tenés un *100% de bono en tu próxima carga*.\n\nCuando vayas a cargar, avisale al agente que tenés el bono del 100% por instalar la app y te lo aplica en el momento. 🥳\n\n⚠️ Es por única vez.'
+      response: '🎁 ¡Listo {username}! Tenés un *{pct}% de bono en tu próxima carga*.\n\nCuando vayas a cargar, avisale al agente que tenés el bono del {pct}% por instalar la app y te lo aplica en el momento. 🥳\n\n{regla}\n\n⚠️ Es por única vez.'
     },
     {
       name: '/sys_payout_paid',
@@ -10775,6 +10794,17 @@ async function initializeData() {
     if (r.modifiedCount) console.log('✅ /sys_install_bonus con "${amount}" viejo → texto vigente (100% próxima carga)');
   } catch (e) {
     console.warn(`⚠️ Migración /sys_install_bonus: ${e.message}`);
+  }
+  // #188: el mensaje guardado tiene que explicar el TOPE y el excedente para que
+  // no haya quejas → si no tiene la variable {regla}, se le appendea (idempotente).
+  try {
+    const r = await Command.updateOne(
+      { name: '/sys_install_bonus', response: { $regex: /\S/, $not: /\{regla\}/ } },
+      [{ $set: { response: { $concat: ['$response', '\n\n{regla}'] } } }]
+    );
+    if (r.modifiedCount) console.log('✅ /sys_install_bonus: agregada la variable {regla} (tope + excedente del bono)');
+  } catch (e) {
+    console.warn(`⚠️ Migración {regla} en /sys_install_bonus: ${e.message}`);
   }
 
   // #186 Los mensajes de bono guardados en la base tienen que mostrar el
@@ -11182,6 +11212,40 @@ app.post('/api/withdrawal/request', authMiddleware, async (req, res) => {
 // ============================================
 const INSTALL_BONUS_AMOUNT = 5000;
 
+// #188 REGLA del bono por instalar la app (owner 2026-09-18): el 100% aplica
+// HASTA un tope de carga ($5.000) y sobre el EXCEDENTE se da otro % (20%).
+// Ej.: carga $10.000 → $5.000 al 100% + $5.000 al 20% = $6.000 de bono.
+// Config['installBonus'] = { pct, capArs, excessPct }, editable desde el panel
+// (Config → "📲 Bono por instalar la app"). Sin cache (multi-instancia).
+const INSTALL_BONUS_RULE_DEFAULT = { pct: 100, capArs: 5000, excessPct: 20 };
+async function getInstallBonusConfig() {
+  const d = INSTALL_BONUS_RULE_DEFAULT;
+  try {
+    const raw = await getConfig('installBonus', null);
+    if (raw && typeof raw === 'object') {
+      const n = (v, def, max) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= max ? x : def; };
+      return { pct: n(raw.pct, d.pct, 500), capArs: n(raw.capArs, d.capArs, 100000000), excessPct: n(raw.excessPct, d.excessPct, 500) };
+    }
+  } catch (_) {}
+  return { ...d };
+}
+// Bono que corresponde a una carga con la regla: pct% hasta capArs + excessPct% del resto.
+function computeInstallBonus(amount, cfg) {
+  const a = Math.max(0, Number(amount) || 0);
+  const c = cfg || INSTALL_BONUS_RULE_DEFAULT;
+  const cap = c.capArs > 0 ? c.capArs : a;
+  const base = Math.min(a, cap);
+  const excess = Math.max(0, a - cap);
+  return Math.floor(base * (c.pct / 100) + excess * (c.excessPct / 100));
+}
+// Texto de la regla para mensajes/comandos: variable {regla} de /sys_install_bonus.
+function installBonusRuleText(cfg) {
+  const c = cfg || INSTALL_BONUS_RULE_DEFAULT;
+  const money = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-AR');
+  if (!(c.capArs > 0)) return `El ${c.pct}% se aplica sobre toda la carga.`;
+  return `El ${c.pct}% aplica hasta ${money(c.capArs)} de carga; sobre lo que cargues de más te damos el ${c.excessPct}%. Ejemplo: cargás ${money(c.capArs * 2)} → ${money(computeInstallBonus(c.capArs * 2, c))} de bono.`;
+}
+
 // Estado del bono: si ya lo reclamó (para mostrar/ocultar el cartel del chat).
 app.get('/api/install-bonus/status', authMiddleware, async (req, res) => {
   try {
@@ -11194,7 +11258,9 @@ app.get('/api/install-bonus/status', authMiddleware, async (req, res) => {
       bonusType: 'first_charge_100',
       // Se mantiene por compatibilidad con versiones cacheadas de la PWA que
       // todavía leen `amount` para armar el cartel. Ya no se acredita.
-      amount: INSTALL_BONUS_AMOUNT
+      amount: INSTALL_BONUS_AMOUNT,
+      // #188 regla vigente (tope + excedente) para los textos de la app.
+      rule: Object.assign(await getInstallBonusConfig(), { text: installBonusRuleText(await getInstallBonusConfig()) })
     });
   } catch (error) {
     logger.error(`Error en install-bonus/status: ${error.message}`);
@@ -11299,13 +11365,15 @@ app.post('/api/install-bonus/claim', authMiddleware, async (req, res) => {
     }
 
     // Mensaje al cliente en el chat (editable desde COMANDOS /sys_install_bonus).
+    // #188: {pct} {tope} {excedente} {regla} salen de la config del panel.
+    const _ibCfg = await getInstallBonusConfig();
     const installBonusContent = await renderSystemCommand(
       '/sys_install_bonus',
-      '🎁 ¡Listo {username}! Tenés un *100% de bono en tu próxima carga*.\n\n' +
-      'Cuando vayas a cargar, avisale al agente que tenés el bono del 100% por instalar la app ' +
-      'y te lo aplica en el momento. 🥳\n\n' +
+      '🎁 ¡Listo {username}! Tenés un *{pct}% de bono en tu próxima carga*.\n\n' +
+      'Cuando vayas a cargar, avisale al agente que tenés el bono del {pct}% por instalar la app ' +
+      'y te lo aplica en el momento. 🥳\n\n{regla}\n\n' +
       '⚠️ Es por única vez.',
-      { username: user.username }
+      { username: user.username, pct: _ibCfg.pct, tope: _ibCfg.capArs.toLocaleString('es-AR'), excedente: _ibCfg.excessPct, regla: installBonusRuleText(_ibCfg) }
     );
     if (installBonusContent) await Message.create({ // null = /sys_install_bonus vaciado → no enviar
       id: uuidv4(),
@@ -11326,9 +11394,9 @@ app.post('/api/install-bonus/claim', authMiddleware, async (req, res) => {
     await _emitAdminOnlyChatNote(
       user.id,
       user.username,
-      '🎁 BONO 100% PENDIENTE — este cliente reclamó el 100% por instalar la app.\n' +
-      '👉 En su PRÓXIMA CARGA, duplicale el monto y después marcalo como usado ' +
-      'desde el botón del chat. Es por única vez.'
+      `🎁 BONO ${_ibCfg.pct}% PENDIENTE — este cliente reclamó el bono por instalar la app.\n` +
+      `👉 En su PRÓXIMA CARGA: ${installBonusRuleText(_ibCfg)}\n` +
+      'El modal Depositar te sugiere el bono solo y al cargar con bono queda marcado como usado automáticamente. Es por única vez.'
     ).catch(() => {});
 
     res.json({
@@ -11346,6 +11414,36 @@ app.post('/api/install-bonus/claim', authMiddleware, async (req, res) => {
 // ============================================
 // BONO 100% — el agente lo marca como usado
 // ============================================
+// #188 Config de la regla del bono por instalar (GET cualquier staff; POST solo admin general).
+app.get('/api/admin/install-bonus', authMiddleware, adminMiddleware, async (req, res) => {
+  try { const cfg = await getInstallBonusConfig(); res.json({ ...cfg, text: installBonusRuleText(cfg), example: { amount: cfg.capArs * 2, bonus: computeInstallBonus(cfg.capArs * 2, cfg) } }); }
+  catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.post('/api/admin/install-bonus', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin general' });
+    const b = req.body || {};
+    const pct = Math.round(Number(b.pct)), capArs = Math.round(Number(b.capArs)), excessPct = Math.round(Number(b.excessPct));
+    if (!Number.isFinite(pct) || pct < 0 || pct > 500) return res.status(400).json({ error: 'El % del bono tiene que estar entre 0 y 500.' });
+    if (!Number.isFinite(capArs) || capArs < 0) return res.status(400).json({ error: 'El tope tiene que ser un monto ≥ 0 (0 = sin tope).' });
+    if (!Number.isFinite(excessPct) || excessPct < 0 || excessPct > 500) return res.status(400).json({ error: 'El % del excedente tiene que estar entre 0 y 500.' });
+    await Config.set('installBonus', { pct, capArs, excessPct }, req.user.username);
+    logger.info(`[install-bonus] regla → ${pct}% hasta $${capArs} + ${excessPct}% del resto (por ${req.user.username})`);
+    const cfg = await getInstallBonusConfig();
+    res.json({ success: true, ...cfg, text: installBonusRuleText(cfg) });
+  } catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// #188 Marcar como APLICADO el % de la ruleta diaria pendiente (el agente ya lo sumó en una carga).
+app.post('/api/admin/users/:userId/roulette-percent/use', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const userId = String(req.params.userId);
+    const r = await _consumeRoulettePercent(userId, req.user.username, null);
+    if (!r) return res.status(400).json({ error: 'Este cliente no tiene un % de ruleta pendiente.' });
+    res.json({ success: true, pct: r.pct });
+  } catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+
 // POST /api/admin/users/:userId/first-charge-bonus/use
 // Lo llama el agente desde el chat, DESPUÉS de haberle duplicado la carga al cliente.
 // Es de una sola vez por usuario: una vez marcado, no se puede volver a reclamar
@@ -15900,6 +15998,8 @@ app.get('/api/users/:userId', authMiddleware, async (req, res) => {
         user.fireNextLoadBonus = !!(fs && fs.pendingNextLoadBonus);
         user.fireStreak = fs ? (fs.streak || 0) : 0;
       } catch (e) { /* no bloquear el perfil por esto */ }
+      // #188 regla del bono por instalar (para la sugerencia del modal Depositar).
+      try { const c = await getInstallBonusConfig(); user.installBonusRule = Object.assign(c, { text: installBonusRuleText(c) }); } catch (_) {}
     }
 
     // Nivel VIP resuelto (nombre/emoji) para el header del chat del panel.
@@ -17701,14 +17801,93 @@ function _rouletteDateKeyART(now) {
   return formatter.format(d); // "YYYY-MM-DD"
 }
 
-function _rouletteWeightedPick() {
-  const total = ROULETTE_PRIZES.reduce((s, p) => s + p.weight, 0);
+function _rouletteWeightedPick(prizes) {
+  const list = Array.isArray(prizes) && prizes.length ? prizes : ROULETTE_PRIZES;
+  const total = list.reduce((s, p) => s + (Number(p.weight) || 0), 0);
   let r = Math.random() * total;
-  for (const p of ROULETTE_PRIZES) {
-    r -= p.weight;
+  for (const p of list) {
+    r -= (Number(p.weight) || 0);
     if (r <= 0) return p;
   }
-  return ROULETTE_PRIZES[ROULETTE_PRIZES.length - 1];
+  return list[list.length - 1];
+}
+
+// #188 PREMIOS Y ELEGIBILIDAD EDITABLES desde el panel (owner 2026-09-18).
+// Config['dailyRoulette'] = { prizes: [{ label, emoji, type, value, rolloverX,
+// weight }], minCargas30d, requireApp }.
+//   type 'cash'    → fichas (value = $). Se acreditan como BONO con `rolloverX`
+//                    (si el rollover GLOBAL está encendido, lo pisa el global).
+//   type 'percent' → bonificación: +value% EXTRA en la PRÓXIMA CARGA (queda
+//                    pendiente en el usuario; el modal Depositar lo sugiere y se
+//                    consume solo al cargar con bono). Un % nuevo pisa al anterior.
+//   type 'none'    → sin premio.
+// weight = peso relativo; la probabilidad es weight / Σweights. Sin config
+// guardada rigen ROULETTE_PRIZES (la pirámide histórica) y 10 cargas / app requerida.
+const ROULETTE_CFG_KEY = 'dailyRoulette';
+function _rouletteDefaultConfig() {
+  return {
+    prizes: ROULETTE_PRIZES.map(p => ({ label: p.label, emoji: p.emoji, type: Number(p.value) > 0 ? 'cash' : 'none', value: Number(p.value) || 0, rolloverX: 0, weight: p.weight })),
+    minCargas30d: ROULETTE_MIN_CARGAS_30D,
+    requireApp: true
+  };
+}
+function _rouletteNormalizePrizes(raw) {
+  if (!Array.isArray(raw) || !raw.length) throw new Error('Tiene que haber al menos 1 premio.');
+  if (raw.length > 12) throw new Error('Máximo 12 premios.');
+  const out = raw.map((p, i) => {
+    const type = ['cash', 'percent', 'none'].includes(p && p.type) ? p.type : (Number(p && p.value) > 0 ? 'cash' : 'none');
+    let value = Math.round(Number(p && p.value) || 0);
+    if (type === 'none') value = 0;
+    if (type === 'cash' && !(value > 0)) throw new Error(`Premio ${i + 1}: un premio en dinero tiene que tener un monto mayor a 0.`);
+    if (type === 'percent' && (!(value > 0) || value > 500)) throw new Error(`Premio ${i + 1}: la bonificación tiene que ser un % entre 1 y 500.`);
+    const weight = Number(p && p.weight);
+    if (!Number.isFinite(weight) || weight <= 0) throw new Error(`Premio ${i + 1}: el peso/probabilidad tiene que ser mayor a 0.`);
+    const rolloverX = type === 'cash' ? Math.max(0, Math.min(50, Math.round(Number(p && p.rolloverX) || 0))) : 0;
+    const emoji = String((p && p.emoji) || (type === 'none' ? '😔' : (type === 'percent' ? '🎁' : '💰'))).slice(0, 8);
+    const label = String((p && p.label) || '').trim().slice(0, 30) ||
+      (type === 'none' ? 'SIN PREMIO' : (type === 'percent' ? `+${value}% EXTRA` : '$' + value.toLocaleString('es-AR')));
+    return { label, emoji, type, value, rolloverX, weight: Math.round(weight * 100) / 100 };
+  });
+  return out;
+}
+async function getDailyRouletteConfig() {
+  const d = _rouletteDefaultConfig();
+  try {
+    const raw = await getConfig(ROULETTE_CFG_KEY, null);
+    if (raw && typeof raw === 'object') {
+      let prizes = d.prizes;
+      try { prizes = _rouletteNormalizePrizes(raw.prizes); } catch (e) { logger.warn(`[roulette] config de premios inválida, se usa la default: ${e.message}`); }
+      const mc = Math.round(Number(raw.minCargas30d));
+      return {
+        prizes,
+        minCargas30d: Number.isFinite(mc) && mc >= 0 && mc <= 1000 ? mc : d.minCargas30d,
+        requireApp: raw.requireApp !== false
+      };
+    }
+  } catch (_) {}
+  return d;
+}
+// Proyección pública (PWA/panel): agrega la probabilidad en % de cada premio.
+function _roulettePublicPrizes(cfg) {
+  const total = cfg.prizes.reduce((s, p) => s + p.weight, 0) || 1;
+  return cfg.prizes.map(p => ({ ...p, pct: Math.round((p.weight / total) * 1000) / 10 }));
+}
+// Consume el % de ruleta pendiente de un usuario (aplicado por un agente en una
+// carga, o marcado a mano). Devuelve { pct } o null si no había nada pendiente.
+async function _consumeRoulettePercent(userId, agent, ctx) {
+  const u = await User.findOneAndUpdate(
+    { id: userId, dailyRoulettePendingPct: { $gt: 0 } },
+    { $set: { dailyRoulettePendingPct: 0, dailyRoulettePendingLabel: null, dailyRoulettePendingSpinId: null, dailyRoulettePendingAt: null } },
+    { new: false }
+  ).select('id username dailyRoulettePendingPct dailyRoulettePendingSpinId').lean();
+  if (!u || !(u.dailyRoulettePendingPct > 0)) return null;
+  if (u.dailyRoulettePendingSpinId) {
+    DailyRouletteSpin.updateOne({ id: u.dailyRoulettePendingSpinId }, { $set: { status: 'percent_used', creditedAt: new Date() } }).catch(() => {});
+  }
+  await _emitAdminOnlyChatNote(u.id, u.username,
+    `✅ RULETA: el +${u.dailyRoulettePendingPct}% EXTRA quedó APLICADO por ${agent}${ctx ? ` en la carga de $${Number(ctx.amount).toLocaleString('es-AR')} (bono $${Number(ctx.bonus).toLocaleString('es-AR')})` : ''}. Este cliente ya no tiene % de ruleta pendiente.`).catch(() => {});
+  logger.info(`[ROULETTE] ${u.username} — +${u.dailyRoulettePendingPct}% consumido por ${agent}`);
+  return { pct: u.dailyRoulettePendingPct };
 }
 
 // La ruleta diaria es exclusiva para usuarios con la PWA instalada: detecta
@@ -17728,7 +17907,7 @@ function _rouletteHasAppInstalled(u) {
 // (deposits, sin contar regalos/devoluciones) en los últimos 30 días. Devuelve
 // { active, count }. Ante error de lectura NO bloquea (no castiga por un fallo de DB).
 const ROULETTE_MIN_CARGAS_30D = 10; // "más de" esto → activo (11+)
-async function _rouletteIsActiveClient(userId, username) {
+async function _rouletteIsActiveClient(userId, username, minCargas = ROULETTE_MIN_CARGAS_30D) {
   try {
     const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
     const count = await Transaction.countDocuments({
@@ -17737,7 +17916,7 @@ async function _rouletteIsActiveClient(userId, username) {
       'metadata.source': { $nin: ['install_bonus', 'welcome_gift', 'payout_refund'] },
       timestamp: { $gte: since }
     });
-    return { active: count > ROULETTE_MIN_CARGAS_30D, count };
+    return { active: count > minCargas, count, minCargas };
   } catch (e) {
     logger.warn(`[roulette] chequeo cliente activo falló: ${e.message}`);
     return { active: true, count: null }; // fail-open: no bloquear por un error de DB
@@ -17772,10 +17951,12 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
     const userId = req.user.userId;
     const username = req.user.username;
     const dateKey = _rouletteDateKeyART();
-    // Gate: PWA instalada (token FCM standalone) Y cliente ACTIVO (>10 cargas/30d).
-    const u = await User.findOne({ id: userId }, { fcmTokenContext: 1, fcmTokens: 1 }).lean();
-    const appOk = _rouletteHasAppInstalled(u);
-    const act = await _rouletteIsActiveClient(userId, username);
+    // Gate: PWA instalada (token FCM standalone, si la config lo exige) Y cliente
+    // ACTIVO (más de N cargas reales en 30 días; N editable en el panel, #188).
+    const rcfg = await getDailyRouletteConfig();
+    const u = await User.findOne({ id: userId }, { fcmTokenContext: 1, fcmTokens: 1, dailyRoulettePendingPct: 1, dailyRoulettePendingLabel: 1 }).lean();
+    const appOk = !rcfg.requireApp || _rouletteHasAppInstalled(u);
+    const act = await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d);
     const eligible = appOk && act.active;
     const spin = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
     res.json({
@@ -17783,18 +17964,24 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
       eligible,
       needsAppNotifs: !appOk,
       needsActive: appOk && !act.active, // app OK pero no llega a las cargas mínimas
-      minCargas: ROULETTE_MIN_CARGAS_30D,
+      minCargas: rcfg.minCargas30d,
+      cargas30d: act.count,
+      requireApp: rcfg.requireApp,
       dateKey,
-      prizes: ROULETTE_PRIZES,
+      prizes: _roulettePublicPrizes(rcfg),
+      pendingPct: (u && u.dailyRoulettePendingPct) || 0,
+      pendingLabel: (u && u.dailyRoulettePendingLabel) || null,
       alreadySpun: !!spin,
       spin: spin ? {
         prizeARS: spin.prizeARS,
+        prizeType: spin.prizeType || (spin.prizeARS > 0 ? 'cash' : 'none'),
+        prizePct: spin.prizePct || 0,
         prizeLabel: spin.prizeLabel,
         status: spin.status,
         spunAt: spin.spunAt,
         creditedAt: spin.creditedAt,
         creditTxId: spin.creditTxId,
-        rolloverX: await applyGlobalRollover(0) // #186 (la ruleta no tiene rollover propio: solo el global)
+        rolloverX: await applyGlobalRollover(spin.rolloverX || 0) // #186/#188: el del premio, pisado por el global si está encendido
       } : null
     });
   } catch (err) {
@@ -17857,6 +18044,31 @@ app.put('/api/admin/roulette/budget', authMiddleware, adminMiddleware, async (re
 // todos los que ya giraron puedan volver a girar. Lo usa el owner cuando
 // quiere reabrir la ruleta en el día. Los premios ya acreditados quedan
 // (la plata ya está en JUGAYGANA); solo se borran los registros de hoy.
+// #188 GET/PUT /api/admin/roulette/config — premios (tipo, valor, rollover, peso) y elegibilidad.
+app.get('/api/admin/roulette/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const cfg = await getDailyRouletteConfig();
+    let globalRollover = null;
+    try { const g = await getGlobalBonusRollover(); globalRollover = g.enabled ? g.effective : null; } catch (_) {}
+    res.json({ success: true, prizes: _roulettePublicPrizes(cfg), minCargas30d: cfg.minCargas30d, requireApp: cfg.requireApp, globalRollover, defaults: _rouletteDefaultConfig() });
+  } catch (err) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.put('/api/admin/roulette/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el administrador general puede hacer esto.' });
+    const b = req.body || {};
+    let prizes;
+    try { prizes = _rouletteNormalizePrizes(b.prizes); } catch (e) { return res.status(400).json({ error: e.message }); }
+    const mc = Math.round(Number(b.minCargas30d));
+    if (!Number.isFinite(mc) || mc < 0 || mc > 1000) return res.status(400).json({ error: 'Cargas mínimas: un número entre 0 y 1000 (0 = todos los clientes).' });
+    const value = { prizes, minCargas30d: mc, requireApp: b.requireApp !== false };
+    await Config.set(ROULETTE_CFG_KEY, value, req.user.username);
+    logger.info(`[ROULETTE] config guardada por ${req.user.username}: ${prizes.length} premios, minCargas30d=${mc}, requireApp=${value.requireApp}`);
+    const cfg = await getDailyRouletteConfig();
+    res.json({ success: true, prizes: _roulettePublicPrizes(cfg), minCargas30d: cfg.minCargas30d, requireApp: cfg.requireApp });
+  } catch (err) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+
 app.post('/api/admin/roulette/reset-daily', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     // 🔒 SOLO ADMIN GENERAL (fix 2026-08-06): con adminMiddleware solo, un
@@ -17893,11 +18105,11 @@ app.get('/api/roulette/recent-winners', authMiddleware, async (req, res) => {
     const dateKey = _rouletteDateKeyART();
     const winners = await DailyRouletteSpin.find({
       dateKey,
-      prizeARS: { $gt: 0 }
+      $or: [{ prizeARS: { $gt: 0 } }, { prizeType: 'percent' }]
     })
       .sort({ spunAt: -1 })
       .limit(limit)
-      .select('username prizeARS spunAt')
+      .select('username prizeARS prizeType prizePct prizeLabel spunAt')
       .lean();
     // Tapa ~70% del username. Visible: últimas 2 letras del nombre + todos
     // los números finales. Ej: "lalodj777" → "****dj777", "atojoaquin" → "********in",
@@ -17922,6 +18134,9 @@ app.get('/api/roulette/recent-winners', authMiddleware, async (req, res) => {
       return {
         username: isMe ? w.username : _mask(w.username),
         prizeARS: w.prizeARS,
+        prizeType: w.prizeType || (w.prizeARS > 0 ? 'cash' : 'none'),
+        prizePct: w.prizePct || 0,
+        prizeLabel: w.prizeLabel || '',
         spunAt: w.spunAt,
         minutesAgo,
         isMe
@@ -18037,18 +18252,20 @@ app.post('/api/admin/roulette/test-spin', authMiddleware, adminMiddleware, async
     if (!u) {
       return res.status(404).json({ error: `Usuario "${username}" no encontrado` });
     }
-    const pick = _rouletteWeightedPick();
+    const rcfg = await getDailyRouletteConfig();
+    const pick = _rouletteWeightedPick(rcfg.prizes);
     res.json({
       success: true,
       simulation: true,
       username: u.username,
       prize: {
-        prizeARS: Number(pick.value) || 0,
+        prizeARS: pick.type === 'cash' ? (Number(pick.value) || 0) : 0,
+        prizeType: pick.type, prizePct: pick.type === 'percent' ? pick.value : 0,
         prizeLabel: pick.label,
         emoji: pick.emoji,
         weight: pick.weight
       },
-      prizes: ROULETTE_PRIZES,
+      prizes: _roulettePublicPrizes(rcfg),
       note: 'Esto es solo simulación — no se escribió nada ni se acreditó plata.'
     });
   } catch (err) {
@@ -18064,21 +18281,23 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
     const username = req.user.username;
     const dateKey = _rouletteDateKeyART();
 
-    // Gate: PWA instalada (token FCM en contexto standalone).
+    // Gate: PWA instalada (token FCM en contexto standalone), si la config lo exige.
+    const rcfg = await getDailyRouletteConfig();
     const u = await User.findOne({ id: userId }, { fcmTokenContext: 1, fcmTokens: 1 }).lean();
-    if (!_rouletteHasAppInstalled(u)) {
+    if (rcfg.requireApp && !_rouletteHasAppInstalled(u)) {
       return res.status(403).json({
         error: 'Solo podés girar si tenés la app instalada con notificaciones aceptadas.',
         needsAppNotifs: true
       });
     }
-    // Gate: solo clientes ACTIVOS (más de 10 cargas en los últimos 30 días).
-    const act = await _rouletteIsActiveClient(userId, username);
+    // Gate: solo clientes ACTIVOS (más de N cargas en los últimos 30 días; N del panel).
+    const act = await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d);
     if (!act.active) {
       return res.status(403).json({
-        error: `La ruleta es solo para clientes activos. Necesitás más de ${ROULETTE_MIN_CARGAS_30D} cargas en los últimos 30 días.`,
+        error: `La ruleta es solo para clientes activos. Necesitás más de ${rcfg.minCargas30d} cargas en los últimos 30 días (llevás ${act.count == null ? '?' : act.count}).`,
         needsActive: true,
-        minCargas: ROULETTE_MIN_CARGAS_30D
+        minCargas: rcfg.minCargas30d,
+        cargas30d: act.count
       });
     }
 
@@ -18097,9 +18316,10 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
       });
     }
 
-    // Pick + insert (status='won' o 'no_prize') con unique index protegiendo race.
-    let pick = _rouletteWeightedPick();
-    let prizeARS = Number(pick.value) || 0;
+    // Pick + insert (status='won' | 'percent_pending' | 'no_prize') con unique index protegiendo race.
+    let pick = _rouletteWeightedPick(rcfg.prizes);
+    let prizeARS = pick.type === 'cash' ? (Number(pick.value) || 0) : 0;
+    const prizePct = pick.type === 'percent' ? (Number(pick.value) || 0) : 0;
 
     // PACING DE BUDGET DIARIO: si la admin config tiene un budget, evitamos
     // gastar más de lo que toca a esta hora. Distribuimos el budget bien
@@ -18128,7 +18348,7 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
         if ((spentToday + prizeARS) > targetSpent) {
           logger.info(`[ROULETTE] BUDGET PACING — forzando SIN PREMIO para ${username} (gastado $${spentToday}+$${prizeARS} > target $${Math.round(targetSpent)} a las ${h}:${m})`);
           // Elegir el "SIN PREMIO" del pool — siempre es el value:0
-          const noPrize = ROULETTE_PRIZES.find(p => Number(p.value) === 0);
+          const noPrize = rcfg.prizes.find(p => p.type === 'none') || ROULETTE_PRIZES.find(p => Number(p.value) === 0);
           if (noPrize) {
             pick = noPrize;
             prizeARS = 0;
@@ -18139,7 +18359,7 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
       logger.warn(`[ROULETTE] budget-pacing falló (silencioso): ${e.message}`);
     }
 
-    const initialStatus = prizeARS > 0 ? 'won' : 'no_prize';
+    const initialStatus = prizeARS > 0 ? 'won' : (prizePct > 0 ? 'percent_pending' : 'no_prize');
     let spinDoc;
     try {
       spinDoc = await DailyRouletteSpin.create({
@@ -18149,6 +18369,9 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
         dateKey,
         spunAt: new Date(),
         prizeARS,
+        prizeType: prizeARS > 0 ? 'cash' : (prizePct > 0 ? 'percent' : 'none'),
+        prizePct,
+        rolloverX: prizeARS > 0 ? (Number(pick.rolloverX) || 0) : null,
         prizeLabel: pick.label,
         ipAddress: (req.ip || '').slice(0, 60),
         userAgent: String(req.headers['user-agent'] || '').slice(0, 200),
@@ -18172,11 +18395,27 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
     }
 
     // Si no hay premio, devolvemos el resultado y terminamos.
+    // #188 Premio "bonificación %": queda PENDIENTE en el usuario para su próxima
+    // carga (pisa un % anterior). El agente lo ve en el chat y el modal Depositar
+    // lo sugiere solo; se consume al cargar con bono.
+    if (prizePct > 0) {
+      await User.updateOne({ id: userId }, { $set: {
+        dailyRoulettePendingPct: prizePct, dailyRoulettePendingLabel: pick.label,
+        dailyRoulettePendingSpinId: spinDoc.id, dailyRoulettePendingAt: new Date()
+      } }).catch(() => {});
+      await _emitAdminOnlyChatNote(userId, username,
+        `🎡 RULETA DIARIA: ganó +${prizePct}% EXTRA en su PRÓXIMA CARGA (${pick.label}). Al cargarle, el modal Depositar te sugiere el bono con ese % y queda marcado como aplicado solo. Si no lo usás en la carga, marcalo a mano desde el chat.`).catch(() => {});
+      logger.info(`[ROULETTE] ${username} → +${prizePct}% en próxima carga (${dateKey})`);
+      return res.json({
+        success: true,
+        prize: { prizeARS: 0, prizeType: 'percent', prizePct, prizeLabel: pick.label, emoji: pick.emoji, status: 'percent_pending' }
+      });
+    }
     if (prizeARS === 0) {
       logger.info(`[ROULETTE] ${username} → SIN PREMIO (${dateKey})`);
       return res.json({
         success: true,
-        prize: { prizeARS: 0, prizeLabel: pick.label, emoji: pick.emoji, status: 'no_prize' }
+        prize: { prizeARS: 0, prizeType: 'none', prizeLabel: pick.label, emoji: pick.emoji, status: 'no_prize' }
       });
     }
 
@@ -18187,7 +18426,8 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
     // vuelve a pagarlo.
     let credit;
     try {
-      credit = await girox.creditUserBalance(username, prizeARS, `vip-roulette-${spinDoc.id}`);
+      // #188: BONO con el rollover del premio (el global lo pisa si está encendido).
+      credit = await girox.creditGift(username, prizeARS, { rolloverX: Number(pick.rolloverX) || 0, reference: `vip-roulette-${spinDoc.id}`, description: `Premio ruleta diaria ${pick.label}` });
     } catch (e) {
       credit = { success: false, error: e.message };
     }
@@ -18230,9 +18470,9 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
     return res.json({
       success: true,
       prize: {
-        prizeARS, prizeLabel: pick.label, emoji: pick.emoji,
+        prizeARS, prizeType: 'cash', prizeLabel: pick.label, emoji: pick.emoji,
         status: 'credited', transactionId: txId,
-        rolloverX: credit && credit.rolloverApplied != null ? credit.rolloverApplied : await applyGlobalRollover(0) // #186
+        rolloverX: credit && credit.rolloverApplied != null ? credit.rolloverApplied : await applyGlobalRollover(Number(pick.rolloverX) || 0) // #186/#188
       }
     });
   } catch (err) {
@@ -18253,7 +18493,7 @@ app.get('/api/admin/roulette/stats', authMiddleware, adminMiddleware, async (req
         { $group: {
           _id: '$dateKey',
           spins: { $sum: 1 },
-          winners: { $sum: { $cond: [{ $gt: ['$prizeARS', 0] }, 1, 0] } },
+          winners: { $sum: { $cond: [{ $or: [{ $gt: ['$prizeARS', 0] }, { $eq: ['$prizeType', 'percent'] }] }, 1, 0] } }, // #188 los % también son premio
           totalGiven: { $sum: { $cond: [{ $eq: ['$status', 'credited'] }, '$prizeARS', 0] } },
           totalPending: { $sum: { $cond: [{ $eq: ['$status', 'credit_failed'] }, '$prizeARS', 0] } }
         }},
@@ -18269,7 +18509,7 @@ app.get('/api/admin/roulette/stats', authMiddleware, adminMiddleware, async (req
         { $group: {
           _id: null,
           spinsTotal: { $sum: 1 },
-          winnersTotal: { $sum: { $cond: [{ $gt: ['$prizeARS', 0] }, 1, 0] } },
+          winnersTotal: { $sum: { $cond: [{ $or: [{ $gt: ['$prizeARS', 0] }, { $eq: ['$prizeType', 'percent'] }] }, 1, 0] } },
           givenTotal: { $sum: { $cond: [{ $eq: ['$status', 'credited'] }, '$prizeARS', 0] } },
           pendingTotal: { $sum: { $cond: [{ $eq: ['$status', 'credit_failed'] }, '$prizeARS', 0] } }
         }}
@@ -18328,7 +18568,7 @@ app.post('/api/admin/roulette/:id/retry-credit', authMiddleware, adminMiddleware
     try {
       // MISMA reference que el giro original: si el premio ya se había acreditado y
       // sólo falló el registro local, este reintento no lo paga de nuevo.
-      credit = await girox.creditUserBalance(spin.username, spin.prizeARS, `vip-roulette-${spin.id}`);
+      credit = await girox.creditGift(spin.username, spin.prizeARS, { rolloverX: Number(spin.rolloverX) || 0, reference: `vip-roulette-${spin.id}`, description: `Premio ruleta diaria ${spin.prizeLabel || ''}` }); // #188 misma reference, mismo rollover
     } catch (e) {
       credit = { success: false, error: e.message };
     }

@@ -26,6 +26,8 @@ VIP.installBonus = (function () {
             if (res.ok) {
                 const data = await res.json();
                 _claimed = data.claimed === true;
+                // #188 regla del bono (tope + excedente) → textos de la app.
+                if (data.rule) { VIP.state.installBonusRule = data.rule; _applyRuleTexts(data.rule); }
             }
         } catch (e) { /* si falla, dejamos el cartel oculto */ }
         banner.style.display = _claimed ? 'none' : '';
@@ -43,6 +45,27 @@ VIP.installBonus = (function () {
 
         VIP.ui.adjustLayout();
     }
+
+    // #188 Pinta la regla vigente (pct / tope / excedente) en todos los textos que
+    // hablan del bono: cartel del home, aviso, Información del Servicio y el
+    // modal de pauta. Así nunca queda un "100%" fijo que después genere quejas.
+    function _applyRuleTexts(r) {
+        const money = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+        const pct = Number(r.pct) || 100;
+        const cap = Number(r.capArs) || 0;
+        const ex = Number(r.excessPct) || 0;
+        const corto = pct + '% de bono' + (cap > 0 ? ' hasta ' + money(cap) : '');
+        const set = (id, txt) => { const el = _el(id); if (el) el.textContent = txt; };
+        set('installBonusTitle', '¡' + corto + ' en tu próxima carga!');
+        set('installBonusClaimBtn', '🎁 Reclamar mi ' + pct + '%');
+        set('installBonusRuleText', r.text || '');
+        set('infoInstallBonusDesc', 'Instalá la app, reclamá el bono y en tu próxima carga te damos el ' + pct + '%' + (cap > 0 ? ' (hasta ' + money(cap) + ' de carga' + (ex > 0 ? '; sobre el resto, el ' + ex + '%' : '') + ')' : '') + '. Por única vez.');
+        set('adInstallBonusTitle', 'Bono ' + pct + '% con la app');
+        set('adInstallBonusDesc', 'Instalá la app y tu próxima carga suma un ' + pct + '%' + (cap > 0 ? ' (hasta ' + money(cap) + (ex > 0 ? ' + ' + ex + '% del resto' : '') + ')' : '') + '.');
+        const notice = _el('installBonusDirectNotice');
+        if (notice) notice.innerHTML = '⚠️ Es por <strong>única vez</strong>. ' + (r.text ? _escHtml(r.text) + ' ' : '') + 'Cuando vayas a cargar, avisale al agente que tenés el bono por instalar la app y te lo aplica en el momento.';
+    }
+    function _escHtml(t) { const d = document.createElement('div'); d.textContent = String(t == null ? '' : t); return d.innerHTML; }
 
     async function claim() {
         const btn = _el('installBonusClaimBtn');
@@ -71,7 +94,7 @@ VIP.installBonus = (function () {
                 if (banner) banner.style.display = 'none';
                 localStorage.removeItem('installBonusFailedAttempts');
                 VIP.ui.adjustLayout();
-                VIP.ui.showToast('🎁 ¡Tenés un 100% de bono en tu próxima carga!', 'success');
+                VIP.ui.showToast('🎁 ¡Tenés un ' + ((VIP.state.installBonusRule && VIP.state.installBonusRule.pct) || 100) + '% de bono en tu próxima carga!', 'success');
                 setTimeout(() => VIP.ui.syncBalance(), 1000);
                 setTimeout(() => VIP.chat.loadMessages(), 800);
             } else if (data.code === 'NOT_STANDALONE') {
@@ -101,7 +124,7 @@ VIP.installBonus = (function () {
         } catch (e) {
             VIP.ui.showToast('Error de conexión', 'error');
         } finally {
-            if (btn) { btn.disabled = false; btn.textContent = '🎁 Reclamar mi 100%'; }
+            if (btn) { btn.disabled = false; btn.textContent = '🎁 Reclamar mi ' + ((VIP.state.installBonusRule && VIP.state.installBonusRule.pct) || 100) + '%'; }
         }
     }
 

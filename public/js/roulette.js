@@ -44,8 +44,20 @@
         const c = document.getElementById('rouletteHomeCard');
         if (!c) return;
         if (!_state || !_state.eligible) {
-            c.style.display = 'none';
-            c.innerHTML = '';
+            // #188: si le faltan cargas, se muestra la celda BLOQUEADA con lo que
+            // le falta (antes desaparecía y el cliente no sabía por qué).
+            if (_state && _state.needsActive && _state.minCargas > 0) {
+                const faltan = Math.max(1, (_state.minCargas + 1) - (Number(_state.cargas30d) || 0));
+                c.innerHTML = '<div class="dash-roulette" style="opacity:.55;" onclick="VIP.ui&&VIP.ui.showToast&&VIP.ui.showToast(\'🎰 La ruleta diaria es para clientes activos: necesitás más de ' + _state.minCargas + ' cargas en los últimos 30 días (llevás ' + (Number(_state.cargas30d) || 0) + ').\',\'info\')">'
+                    + '<span class="dash-roulette-avatar">🔒</span>'
+                    + '<span class="dash-roulette-label">RULETA</span>'
+                    + '<span class="dash-roulette-sub">Faltan ' + faltan + ' carga' + (faltan === 1 ? '' : 's') + '</span>'
+                    + '</div>';
+                c.style.display = '';
+            } else {
+                c.style.display = 'none';
+                c.innerHTML = '';
+            }
             // Ocultar tambien el card separado por si quedo de antes.
             const sep = document.getElementById('rouletteRecentWinnersCard');
             if (sep) sep.style.display = 'none';
@@ -58,7 +70,9 @@
         let subText;
         if (_state.alreadySpun && spin) {
             const won = Number(spin.prizeARS || 0) > 0;
-            if (won && spin.status === 'credited') {
+            if (spin.prizeType === 'percent' && Number(spin.prizePct) > 0) {
+                subText = '+' + spin.prizePct + '% próx. carga';
+            } else if (won && spin.status === 'credited') {
                 subText = 'Ganaste $' + _fmt(spin.prizeARS);
             } else if (won && spin.status === 'credit_failed') {
                 subText = 'Escribinos';
@@ -122,7 +136,7 @@
                     '<div style="display:flex;gap:10px;align-items:flex-start;margin-bottom:9px;"><div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;">' + b2 + '</div><div style="flex:1;font-size:12.5px;line-height:1.5;"><strong>Abrí la app desde el ícono</strong> nuevo de tu pantalla — no desde Chrome.</div></div>' +
                     '<div style="display:flex;gap:10px;align-items:flex-start;"><div style="flex-shrink:0;width:30px;height:30px;border-radius:50%;background:rgba(255,215,0,0.15);border:1.5px solid #ffd700;color:#ffd700;font-weight:900;display:flex;align-items:center;justify-content:center;">' + b3 + '</div><div style="flex:1;font-size:12.5px;line-height:1.5;"><strong>Aceptá las notificaciones</strong> cuando te lo pida la app. Después tocá GIRAR.</div></div>' +
                 '</div>' +
-                (!inApp ? '<div style="background:rgba(37,211,102,0.10);border:1px solid #25d366;border-radius:10px;padding:9px 11px;margin-bottom:12px;text-align:center;font-size:12px;color:#aaffaa;">🎁 <strong style="color:#ffd700;">Bonus:</strong> al instalar la app por primera vez te llevás <strong style="color:#ffd700;">$5.000 GRATIS</strong> de bienvenida.</div>' : '') +
+                (!inApp ? '<div style="background:rgba(37,211,102,0.10);border:1px solid #25d366;border-radius:10px;padding:9px 11px;margin-bottom:12px;text-align:center;font-size:12px;color:#aaffaa;">🎁 <strong style="color:#ffd700;">Bonus:</strong> al instalar la app te llevás un <strong style="color:#ffd700;">' + _esc(_installBonusShort()) + '</strong> en tu próxima carga.</div>' : '') +
                 '<button onclick="' + ctaAction + '" style="width:100%;background:linear-gradient(135deg,#ffd700,#ff8800);color:#000;border:none;padding:13px;border-radius:11px;font-weight:900;font-size:14px;cursor:pointer;letter-spacing:0.5px;margin-bottom:8px;box-shadow:0 4px 14px rgba(255,215,0,0.40);">' + ctaTxt + '</button>' +
                 '<button onclick="document.getElementById(\'rouletteNeedsAppModal\').remove();" style="width:100%;background:transparent;color:#aaa;border:1px solid rgba(255,255,255,0.20);padding:10px;border-radius:9px;font-weight:700;font-size:12px;cursor:pointer;">Cerrar</button>' +
             '</div>';
@@ -165,6 +179,13 @@
         return html;
     }
 
+    // #188 texto corto de la regla del bono por instalar (viene de installbonus.js).
+    function _installBonusShort() {
+        const r = (window.VIP && VIP.state && VIP.state.installBonusRule) || null;
+        if (!r) return '100% de bono';
+        return r.pct + '% de bono' + (r.capArs > 0 ? ' (hasta $' + _fmt(r.capArs) + (r.excessPct > 0 ? ', +' + r.excessPct + '% sobre el resto' : '') + ')' : '');
+    }
+
     function open() {
         const modal = document.getElementById('rouletteModal');
         if (!modal) return;
@@ -186,7 +207,7 @@
             return;
         }
         const spin = spinResult || _state.spin;
-        const alreadySpun = !!(spin && (spin.prizeARS != null));
+        const alreadySpun = !!(spin && (spin.prizeARS != null || spin.prizeType));
         let html = '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #ffd700;border-radius:16px;padding:20px 16px;color:#fff;max-width:560px;width:100%;margin:14px auto;position:relative;">';
         html += '<button onclick="VIP.roulette.close()" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.20);color:#fff;font-size:18px;cursor:pointer;line-height:1;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">✕</button>';
         html += '<h2 style="color:#ffd700;text-align:center;margin:0 0 4px;font-size:22px;font-weight:900;letter-spacing:1.5px;padding-right:36px;">🎰 RULETA DIARIA</h2>';
@@ -195,7 +216,19 @@
         if (alreadySpun) {
             // Estado: ya giró hoy.
             const won = Number(spin.prizeARS || 0) > 0;
-            if (won && spin.status === 'credited') {
+            if (spin.prizeType === 'percent' && Number(spin.prizePct) > 0) {
+                // #188 premio BONIFICACIÓN: +X% en la próxima carga (lo aplica el agente).
+                const used = spin.status === 'percent_used';
+                html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(255,215,0,0.12),rgba(102,255,102,0.08));border:2px solid #ffd700;border-radius:14px;padding:24px 16px;text-align:center;margin-bottom:12px;">';
+                html += '<div style="font-size:60px;line-height:1;margin-bottom:8px;">🎁</div>';
+                html += '<div style="color:#ffd700;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">¡GANASTE!</div>';
+                html += '<div style="color:#fff;font-size:30px;font-weight:900;margin-bottom:6px;">+' + _esc(spin.prizePct) + '% EXTRA</div>';
+                html += '<div style="color:#ffd479;font-size:13px;font-weight:800;">en tu PRÓXIMA CARGA</div>';
+                html += used
+                    ? '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:12.5px;font-weight:800;">✅ Ya se aplicó en una carga</div>'
+                    : '<div style="background:rgba(255,215,0,0.14);border:1px solid rgba(255,215,0,0.6);border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:12.5px;line-height:1.45;">Cuando vayas a cargar, avisale al agente: te suma el <strong>' + _esc(spin.prizePct) + '%</strong> de la carga como bono. Es para tu próxima carga.</div>';
+                html += '</div>';
+            } else if (won && spin.status === 'credited') {
                 html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(102,255,102,0.10),rgba(255,215,0,0.10));border:2px solid #66ff66;border-radius:14px;padding:24px 16px;text-align:center;margin-bottom:12px;">';
                 html += '<div style="font-size:60px;line-height:1;margin-bottom:8px;">🎉</div>';
                 html += '<div style="color:#66ff66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">¡GANASTE!</div>';
@@ -234,6 +267,16 @@
             html += '<div style="color:#fff;font-size:13px;margin-bottom:14px;opacity:0.92;">Tocá <strong>GIRAR</strong> y la suerte decide. Si ganás, se acredita solo a tu saldo.</div>';
             html += '<button id="rouletteSpinBtn" onclick="VIP.roulette.spin()" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:16px 40px;border-radius:12px;font-weight:900;font-size:18px;cursor:pointer;letter-spacing:2px;box-shadow:0 4px 16px rgba(255,215,0,0.50);">🎰 GIRAR</button>';
             html += '</div>';
+            // #188 premios y probabilidades vigentes (vienen del panel).
+            const prizes = Array.isArray(_state.prizes) ? _state.prizes.filter(p => p && p.type !== 'none') : [];
+            if (prizes.length) {
+                html += '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:10px;">';
+                for (const p of prizes) {
+                    const txt = p.type === 'percent' ? ('+' + _esc(p.value) + '% próx. carga') : ('$' + _fmt(p.value));
+                    html += '<span style="background:rgba(255,215,0,0.10);border:1px solid rgba(255,215,0,0.40);border-radius:14px;padding:4px 9px;font-size:11px;color:#fff;font-weight:800;">' + _esc(p.emoji || '') + ' ' + txt + (p.pct != null ? ' <span style="color:#aaa;font-weight:600;">' + _esc(p.pct) + '%</span>' : '') + '</span>';
+                }
+                html += '</div>';
+            }
             html += '<style>@keyframes rouletteIcon { 0%, 100% { transform: rotate(-10deg); } 50% { transform: rotate(10deg); } }</style>';
         }
 
@@ -310,6 +353,8 @@
             _state.alreadySpun = true;
             _state.spin = {
                 prizeARS: d.prize.prizeARS,
+                prizeType: d.prize.prizeType || null, // #188
+                prizePct: d.prize.prizePct || 0,
                 rolloverX: d.prize.rolloverX, // #186
                 prizeLabel: d.prize.prizeLabel,
                 status: d.prize.status,
@@ -350,7 +395,7 @@
             } catch (_) { hhmm = ''; }
             html += '<div class="winner-row' + (w.isMe ? ' is-me' : '') + '">';
             html += '<span class="winner-user">👤 ' + _esc(w.username) + '</span>';
-            html += '<span class="winner-prize">+$' + _fmt(w.prizeARS) + '</span>';
+            html += '<span class="winner-prize">' + (w.prizeType === 'percent' ? ('+' + _esc(w.prizePct) + '% próx. carga') : ('+$' + _fmt(w.prizeARS))) + '</span>';
             html += '<span class="winner-time">' + hhmm + '</span>';
             html += '</div>';
         }

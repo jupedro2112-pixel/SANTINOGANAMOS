@@ -267,6 +267,8 @@ function setupEventListeners() {
         showModal('depositModal');
         // #183 origen de la plata (transferencias pendientes de la bandeja)
         loadDepositOriginPicker();
+        // #188 bonos pendientes del cliente → sugerencia del bono
+        renderDepositPendingBonus();
     });
     if (elements.btnBonus) {
         elements.btnBonus.addEventListener('click', () => {
@@ -332,7 +334,7 @@ function setupEventListeners() {
     
     // Deposit amount change
     document.getElementById('depositAmount').addEventListener('input', calculateBonus);
-    document.getElementById('depositAmount').addEventListener('input', () => { if (typeof renderDepositOrigin === 'function') renderDepositOrigin(); });
+    document.getElementById('depositAmount').addEventListener('input', () => { if (typeof renderDepositOrigin === 'function') renderDepositOrigin(); if (typeof renderDepositPendingBonus === 'function') renderDepositPendingBonus(); });
     
     // Withdraw amount change - update total
     document.getElementById('withdrawAmount').addEventListener('input', updateWithdrawTotal);
@@ -2658,6 +2660,7 @@ async function loadUserInfo(userId) {
         if (userId !== activeConversationId) {
             return;
         }
+        window._chatUserInfo = user; // #188 lo usa el modal Depositar (bonos pendientes)
         
         elements.chatBalance.textContent = formatMoney(user.balance);
         elements.chatStatus.textContent = user.online ? 'En línea' : 'Desconectado';
@@ -2672,6 +2675,7 @@ async function loadUserInfo(userId) {
         // Bono del 100% en la próxima carga. Se dibuja con los datos que ya trajo
         // `user`, sin pedir nada extra al servidor.
         renderFirstChargeBonusBanner(user);
+        renderRoulettePercentBanner(user); // #188
 
         // Bono sorpresa del código de bienvenida (Comunidad Telegram) — ídem.
         renderWelcomeCodeBonusBanner(user);
@@ -4529,9 +4533,9 @@ function renderFirstChargeBonusBanner(user) {
             'padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
                 '<span style="font-size:20px;">🎁</span>' +
                 '<div style="flex:1;min-width:180px;">' +
-                    '<strong style="font-size:13px;display:block;">BONO 100% PENDIENTE</strong>' +
-                    '<span style="font-size:11.5px;opacity:.92;">En su próxima carga, duplicale el monto. ' +
-                    'Después marcalo como usado — es por única vez.</span>' +
+                    '<strong style="font-size:13px;display:block;">BONO ' + ((user.installBonusRule && user.installBonusRule.pct) || 100) + '% PENDIENTE (instalar app)</strong>' +
+                    '<span style="font-size:11.5px;opacity:.92;">' + escapeHtml((user.installBonusRule && user.installBonusRule.text) || 'En su próxima carga, duplicale el monto.') +
+                    ' El modal Depositar te sugiere el bono y al cargar con bono queda marcado como usado solo.</span>' +
                 '</div>' +
                 '<button onclick="markFirstChargeBonusUsed(\'' + escapeHtml(user.id) + '\')" ' +
                     'style="background:#0b3d1f;color:#7fffb0;border:1px solid rgba(255,255,255,0.3);' +
@@ -4557,6 +4561,80 @@ function renderFirstChargeBonusBanner(user) {
     banner.style.display = 'none';
     banner.innerHTML = '';
 }
+
+// #188 === % EXTRA de la RULETA DIARIA en la próxima carga ===
+function renderRoulettePercentBanner(user) {
+    let banner = document.getElementById('chatRoulettePctBanner');
+    const anchor = document.getElementById('chatBonusBanner');
+    if (!banner && anchor && anchor.parentNode) {
+        banner = document.createElement('div');
+        banner.id = 'chatRoulettePctBanner';
+        anchor.parentNode.insertBefore(banner, anchor.nextSibling);
+    }
+    if (!banner) return;
+    const pct = Number(user && user.dailyRoulettePendingPct) || 0;
+    if (!(pct > 0)) { banner.style.display = 'none'; banner.innerHTML = ''; return; }
+    banner.style.display = '';
+    banner.innerHTML =
+        '<div style="background:linear-gradient(135deg,#6a0dad,#9b30ff);color:#fff;border-radius:10px;padding:10px 12px;margin:6px 0;display:flex;align-items:center;gap:10px;flex-wrap:wrap;">' +
+            '<span style="font-size:20px;">🎡</span>' +
+            '<div style="flex:1;min-width:180px;">' +
+                '<strong style="font-size:13px;display:block;">RULETA: +' + pct + '% EXTRA en su PRÓXIMA CARGA</strong>' +
+                '<span style="font-size:11.5px;opacity:.92;">Ganó ' + escapeHtml(user.dailyRoulettePendingLabel || ('+' + pct + '%')) + ' en la ruleta diaria. El modal Depositar te sugiere el bono y queda aplicado solo al cargar con bono.</span>' +
+            '</div>' +
+            '<button onclick="markRoulettePercentUsed(\'' + escapeHtml(user.id) + '\')" style="background:#2d0052;color:#e9c8ff;border:1px solid rgba(255,255,255,0.3);border-radius:8px;padding:8px 14px;font-weight:800;font-size:12px;cursor:pointer;">✅ Marcar aplicado</button>' +
+        '</div>';
+}
+async function markRoulettePercentUsed(userId) {
+    if (!confirm('¿Ya le aplicaste el % de la ruleta en una carga? Al marcarlo se consume.')) return;
+    try {
+        const r = await authFetch('/api/admin/users/' + encodeURIComponent(userId) + '/roulette-percent/use', { method: 'POST', body: '{}' });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(j.error || 'No se pudo marcar', 'error'); return; }
+        showToast('✅ % de ruleta marcado como aplicado', 'success');
+        if (activeConversationId) loadUserInfo(activeConversationId);
+    } catch (_) { showToast('Error de conexión', 'error'); }
+}
+window.markRoulettePercentUsed = markRoulettePercentUsed;
+
+// #188 Sugerencia del bono en el modal Depositar según los bonos PENDIENTES del
+// cliente: 100% por instalar la app (con tope + excedente) y/o % de la ruleta.
+// Pre-carga el campo de bonificación; el agente puede pisarlo con los botones.
+let _depositSuggestedBonus = null;
+function renderDepositPendingBonus() {
+    const group = document.getElementById('depositPendingBonusGroup');
+    const hint = document.getElementById('depositPendingBonusHint');
+    if (!group || !hint) return;
+    const u = window._chatUserInfo;
+    if (!u || u.id !== selectedUserId) { group.style.display = 'none'; _depositSuggestedBonus = null; return; }
+    const amount = parseFloat((document.getElementById('depositAmount') || {}).value) || 0;
+    const money = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-AR');
+    const parts = [];
+    let suggested = 0;
+    if (u.firstChargeBonusStatus === 'pending') {
+        const r = u.installBonusRule || { pct: 100, capArs: 5000, excessPct: 20, text: '' };
+        const cap = r.capArs > 0 ? r.capArs : amount;
+        const base = Math.min(amount, cap), excess = Math.max(0, amount - cap);
+        const b = Math.floor(base * (r.pct / 100) + excess * (r.excessPct / 100));
+        suggested += b;
+        parts.push('🎁 <b>Bono ' + r.pct + '% por instalar la app</b> (pendiente): ' + escapeHtml(r.text || '') + (amount > 0 ? ' → para ' + money(amount) + ' corresponden <b>' + money(b) + '</b>' + (excess > 0 ? ' (' + money(base) + ' al ' + r.pct + '% + ' + money(excess) + ' al ' + r.excessPct + '%)' : '') : ''));
+    }
+    if (Number(u.dailyRoulettePendingPct) > 0) {
+        const b = Math.floor(amount * (Number(u.dailyRoulettePendingPct) / 100));
+        suggested += b;
+        parts.push('🎡 <b>+' + u.dailyRoulettePendingPct + '% de la ruleta diaria</b> (pendiente)' + (amount > 0 ? ' → <b>' + money(b) + '</b>' : ''));
+    }
+    if (!parts.length) { group.style.display = 'none'; _depositSuggestedBonus = null; return; }
+    group.style.display = '';
+    hint.innerHTML = parts.join('<br>') + (amount > 0 ? '<div style="margin-top:6px;color:#7fffb0;font-weight:800;">Bono sugerido: ' + money(suggested) + ' (ya cargado en "Monto de Bonificación"; al cargar con bono se marca como usado solo)</div>' : '<div style="margin-top:4px;color:#aaa;">Escribí el monto y te calculo el bono.</div>');
+    if (amount > 0 && _depositSuggestedBonus !== suggested) {
+        _depositSuggestedBonus = suggested;
+        document.querySelectorAll('.bonus-options button').forEach(b => b.classList.remove('active'));
+        const bonusInput = document.getElementById('depositBonus');
+        if (bonusInput) bonusInput.value = suggested;
+    }
+}
+window.renderDepositPendingBonus = renderDepositPendingBonus;
 
 // Marca el bono como usado. Confirma primero: es plata que regala el agente y la
 // acción no se puede deshacer desde el panel.
@@ -5663,6 +5741,8 @@ async function loadCBUConfig() {
     loadInstantCashbackCfg();
     // #184 Rollover GLOBAL de bonos (solo admin general)
     loadBonusRolloverCfg();
+    // #188 Regla del bono por instalar la app (solo admin general)
+    loadInstallBonusCfg();
     // Cargar el estado de los niveles VIP (solo admin general)
     loadVipLevelsConfig();
     // Cargar los premios del fueguito (solo admin general)
@@ -5741,6 +5821,46 @@ async function toggleVipLevels() {
         _renderVipLevelsState();
     }
 }
+
+// ---- Bono por instalar la app: regla tope + excedente (#188) ----
+function _ibPreview() {
+    const pct = Number((document.getElementById('ibPct') || {}).value) || 0;
+    const cap = Number((document.getElementById('ibCap') || {}).value) || 0;
+    const ex = Number((document.getElementById('ibExcess') || {}).value) || 0;
+    const el = document.getElementById('installBonusPreview');
+    if (!el) return;
+    const money = (n) => '$' + Math.round(n).toLocaleString('es-AR');
+    const calc = (a) => { const c = cap > 0 ? cap : a; return Math.floor(Math.min(a, c) * pct / 100 + Math.max(0, a - c) * ex / 100); };
+    const ej = cap > 0 ? cap * 2 : 10000;
+    el.textContent = 'Ejemplo: carga ' + money(ej) + ' → ' + money(calc(ej)) + ' de bono' + (cap > 0 ? ' (' + money(cap) + ' al ' + pct + '% + ' + money(Math.max(0, ej - cap)) + ' al ' + ex + '%)' : '') + '. Carga ' + money(cap > 0 ? cap / 2 : 3000) + ' → ' + money(calc(cap > 0 ? cap / 2 : 3000)) + '.';
+}
+async function loadInstallBonusCfg() {
+    const form = document.getElementById('installBonusForm');
+    const header = document.getElementById('installBonusHeader');
+    try {
+        const r = await authFetch('/api/admin/install-bonus');
+        if (!r.ok) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; return; }
+        const cfg = await r.json();
+        if (form) form.style.display = '';
+        if (header) header.style.display = '';
+        const set = (id, v) => { const el = document.getElementById(id); if (el && v != null) { el.value = v; if (!el._wired) { el._wired = true; el.addEventListener('input', _ibPreview); } } };
+        set('ibPct', cfg.pct); set('ibCap', cfg.capArs); set('ibExcess', cfg.excessPct);
+        _ibPreview();
+    } catch (_) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; }
+}
+async function saveInstallBonusCfg() {
+    try {
+        const r = await authFetch('/api/admin/install-bonus', { method: 'POST', body: JSON.stringify({
+            pct: Number(document.getElementById('ibPct').value), capArs: Number(document.getElementById('ibCap').value), excessPct: Number(document.getElementById('ibExcess').value)
+        }) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { showToast(j.error || 'No se pudo guardar', 'error'); return; }
+        showToast('Regla del bono guardada: ' + (j.text || ''), 'success');
+        _ibPreview();
+    } catch (_) { showToast('Error de conexión', 'error'); }
+}
+window.saveInstallBonusCfg = saveInstallBonusCfg;
+window.loadInstallBonusCfg = loadInstallBonusCfg;
 
 // ---- Rollover GLOBAL de bonos (#184) ----
 // Radios x0/x2/x3/x5/x10. Los que la plataforma NO permite (bonus.multipliers
@@ -10083,6 +10203,85 @@ async function rouletteTestSpin() {
     }
 }
 
+// #188 ===== Premios y elegibilidad de la ruleta (editables) =====
+let _rouletteGlobalRollover = null;
+function _rpRowHtml(p) {
+    p = p || { emoji: '💰', label: '', type: 'cash', value: 1000, rolloverX: 0, weight: 5 };
+    const v = (x) => escapeHtml(String(x == null ? '' : x));
+    const sel = (t) => (p.type === t ? ' selected' : '');
+    return '<tr class="rp-row">' +
+        '<td><input type="text" class="rp-emoji" value="' + v(p.emoji) + '" maxlength="8" style="width:52px;"></td>' +
+        '<td><input type="text" class="rp-label" value="' + v(p.label) + '" maxlength="30" placeholder="(auto)" style="width:130px;"></td>' +
+        '<td><select class="rp-type" onchange="roulettePrizesChanged()"><option value="cash"' + sel('cash') + '>💰 Dinero (fichas)</option><option value="percent"' + sel('percent') + '>🎁 Bonificación % próx. carga</option><option value="none"' + sel('none') + '>😔 Sin premio</option></select></td>' +
+        '<td><input type="number" class="rp-value" value="' + v(p.value) + '" min="0" style="width:90px;" oninput="roulettePrizesChanged()"></td>' +
+        '<td><input type="number" class="rp-roll" value="' + v(p.rolloverX || 0) + '" min="0" max="50" style="width:64px;" title="Solo para Dinero. Si el rollover global está activado, manda el global."></td>' +
+        '<td><input type="number" class="rp-weight" value="' + v(p.weight) + '" min="0.01" step="0.5" style="width:70px;" oninput="roulettePrizesChanged()"></td>' +
+        '<td class="rp-prob" style="font-weight:800;color:#ffd700;white-space:nowrap;">—</td>' +
+        '<td><button class="btn btn-sm" style="background:#dc3545;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;" onclick="this.closest(\'.rp-row\').remove();roulettePrizesChanged()">🗑️</button></td>' +
+        '</tr>';
+}
+function _rpRead() {
+    return Array.from(document.querySelectorAll('#roulettePrizesRows .rp-row')).map(r => ({
+        emoji: r.querySelector('.rp-emoji').value, label: r.querySelector('.rp-label').value, type: r.querySelector('.rp-type').value,
+        value: Number(r.querySelector('.rp-value').value) || 0, rolloverX: Number(r.querySelector('.rp-roll').value) || 0, weight: Number(r.querySelector('.rp-weight').value) || 0
+    }));
+}
+function roulettePrizesChanged() {
+    const rows = Array.from(document.querySelectorAll('#roulettePrizesRows .rp-row'));
+    const total = rows.reduce((s, r) => s + (Number(r.querySelector('.rp-weight').value) || 0), 0) || 1;
+    let ev = 0;
+    rows.forEach(r => {
+        const w = Number(r.querySelector('.rp-weight').value) || 0;
+        const t = r.querySelector('.rp-type').value;
+        const val = Number(r.querySelector('.rp-value').value) || 0;
+        const prob = w / total;
+        r.querySelector('.rp-prob').textContent = (Math.round(prob * 1000) / 10) + '%';
+        r.querySelector('.rp-value').disabled = t === 'none';
+        r.querySelector('.rp-roll').disabled = t !== 'cash' || _rouletteGlobalRollover != null;
+        r.querySelector('.rp-value').placeholder = t === 'percent' ? '% extra' : (t === 'cash' ? '$ fichas' : '');
+        if (t === 'cash') ev += prob * val;
+    });
+    const sum = document.getElementById('roulettePrizesSummary');
+    if (sum) sum.textContent = rows.length + ' premio(s) · valor esperado por giro (solo dinero): $' + Math.round(ev).toLocaleString('es-AR');
+}
+function addRoulettePrizeRow(p) {
+    const tb = document.getElementById('roulettePrizesRows');
+    if (!tb) return;
+    tb.insertAdjacentHTML('beforeend', _rpRowHtml(p));
+    roulettePrizesChanged();
+}
+async function loadRoulettePrizes() {
+    const tb = document.getElementById('roulettePrizesRows');
+    if (!tb) return;
+    try {
+        const r = await rouletteAuthFetch('/api/admin/roulette/config');
+        const d = await r.json();
+        if (!r.ok || !d.success) return;
+        _rouletteGlobalRollover = d.globalRollover;
+        const hint = document.getElementById('roulettePrizesGlobalHint');
+        if (hint) { hint.style.display = _rouletteGlobalRollover != null ? '' : 'none'; hint.textContent = _rouletteGlobalRollover != null ? ('⚠️ El rollover GLOBAL está activado (x' + _rouletteGlobalRollover + '): los premios en dinero salen con ese rollover y el de cada fila se ignora.') : ''; }
+        tb.innerHTML = '';
+        (d.prizes || []).forEach(p => tb.insertAdjacentHTML('beforeend', _rpRowHtml(p)));
+        const mc = document.getElementById('rouletteMinCargas'); if (mc) mc.value = d.minCargas30d;
+        const ra = document.getElementById('rouletteRequireApp'); if (ra) ra.checked = d.requireApp !== false;
+        roulettePrizesChanged();
+    } catch (_) {}
+}
+async function saveRoulettePrizes() {
+    const prizes = _rpRead();
+    if (!prizes.length) { showToast('Agregá al menos un premio', 'error'); return; }
+    if (!prizes.some(p => p.type === 'none')) { if (!confirm('No hay ningún "Sin premio": TODOS los giros van a ganar algo. ¿Guardar igual?')) return; }
+    const body = { prizes, minCargas30d: Number((document.getElementById('rouletteMinCargas') || {}).value) || 0, requireApp: !!(document.getElementById('rouletteRequireApp') || {}).checked };
+    try {
+        const r = await rouletteAuthFetch('/api/admin/roulette/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.success) { showToast(d.error || 'No se pudo guardar', 'error'); return; }
+        showToast('✅ Premios y elegibilidad guardados', 'success');
+        loadRoulettePrizes();
+    } catch (_) { showToast('Error al guardar', 'error'); }
+}
+window.addRoulettePrizeRow = addRoulettePrizeRow; window.roulettePrizesChanged = roulettePrizesChanged; window.saveRoulettePrizes = saveRoulettePrizes; window.loadRoulettePrizes = loadRoulettePrizes;
+
 async function loadRouletteAdmin() {
     const days = parseInt((document.getElementById('rouletteDays') || {}).value || '14', 10) || 14;
     const body = document.getElementById('rouletteAdminBody');
@@ -10090,6 +10289,7 @@ async function loadRouletteAdmin() {
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
     // Cargar budget en paralelo (no bloqueante).
     loadRouletteBudget();
+    loadRoulettePrizes(); // #188
     try {
         const [statsResp, historyResp] = await Promise.all([
             rouletteAuthFetch('/api/admin/roulette/stats?days=' + days),
@@ -10175,12 +10375,14 @@ async function loadRouletteAdmin() {
                     no_prize:      '<span style="background:rgba(136,136,136,0.15);color:#aaa;border:1px solid #888;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">SIN PREMIO</span>',
                     won:           '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid #ffaa66;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">⏳ PROCESANDO</span>',
                     credited:      '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">✅ ACREDITADO</span>',
-                    credit_failed: '<span style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid #ff8080;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">❌ FALLO</span>'
+                    credit_failed: '<span style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid #ff8080;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">❌ FALLO</span>',
+                    percent_pending: '<span style="background:rgba(217,166,255,0.15);color:#d9a6ff;border:1px solid #d9a6ff;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">🎁 % PENDIENTE</span>',
+                    percent_used:    '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">✅ % APLICADO</span>'
                 }[it.status] || it.status;
                 html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
                 html += '<td style="padding:7px 10px;color:#aaa;font-size:10.5px;white-space:nowrap;">' + escapeHtml(when) + '</td>';
                 html += '<td style="padding:7px 10px;color:#fff;font-weight:700;">' + escapeHtml(it.username || '?') + '</td>';
-                html += '<td style="padding:7px 10px;text-align:right;color:' + (it.prizeARS >= 10000 ? '#ffd700' : (it.prizeARS >= 1000 ? '#ff8c5a' : (it.prizeARS > 0 ? '#aaffaa' : '#888'))) + ';font-weight:800;">' + (it.prizeARS > 0 ? fmtMoney(it.prizeARS) : '—') + '</td>';
+                html += '<td style="padding:7px 10px;text-align:right;color:' + (it.prizeARS >= 10000 ? '#ffd700' : (it.prizeARS >= 1000 ? '#ff8c5a' : (it.prizeARS > 0 ? '#aaffaa' : '#888'))) + ';font-weight:800;">' + (it.prizeARS > 0 ? fmtMoney(it.prizeARS) : (it.prizeType === 'percent' ? '<span style="color:#d9a6ff;">+' + escapeHtml(String(it.prizePct || 0)) + '% próx. carga</span>' : '—')) + '</td>';
                 html += '<td style="padding:7px 10px;text-align:center;">' + statusBadge + '</td>';
                 html += '<td style="padding:7px 10px;color:#888;font-size:10px;font-family:monospace;">';
                 if (it.status === 'credited' && it.creditTxId) {

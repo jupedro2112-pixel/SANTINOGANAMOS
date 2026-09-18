@@ -27,6 +27,12 @@ const spinSchema = new mongoose.Schema({
   // Premio ganado: monto ARS. 0 = sin premio.
   prizeARS: { type: Number, required: true, default: 0, min: 0 },
   prizeLabel: { type: String, default: '' }, // ej. "$10.000", "SIN PREMIO"
+  // #188 premios editables desde el panel: 'cash' (fichas, con rollover propio si
+  // el global está apagado) | 'percent' (bonificación % en la PRÓXIMA carga, la
+  // aplica el agente) | 'none'. Los giros viejos no tienen el campo (= cash/none por prizeARS).
+  prizeType: { type: String, enum: ['cash', 'percent', 'none', null], default: null },
+  prizePct: { type: Number, default: 0 },
+  rolloverX: { type: Number, default: null },
 
   // Anti-fraude
   ipAddress: { type: String, default: null },
@@ -38,7 +44,9 @@ const spinSchema = new mongoose.Schema({
   // Si prizeARS=0, status='no_prize'.
   status: {
     type: String,
-    enum: ['no_prize', 'won', 'credited', 'credit_failed'],
+    // percent_pending: ganó un % en la próxima carga (lo aplica el agente);
+    // percent_used: ya se aplicó en una carga.
+    enum: ['no_prize', 'won', 'credited', 'credit_failed', 'percent_pending', 'percent_used'],
     default: 'won',
     index: true
   },

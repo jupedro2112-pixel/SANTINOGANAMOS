@@ -127,6 +127,14 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   Test en frío: `node scripts/test-rollover-multicuenta.js`. La misma espec (§B)
   cruza el TITULAR del comprobante (`Comprobante.originHolderKey`) contra otras
   cuentas: avisa, no bloquea.
+- **Ruleta diaria y bono por instalar (2026-09-18):** los premios de la ruleta
+  (tipo dinero/bonificación %, valor, rollover, peso) y la elegibilidad (cargas
+  mínimas en 30 días, app requerida) viven en `Config['dailyRoulette']`; la regla
+  del bono por instalar (% hasta un tope + % del excedente) en `Config['installBonus']`.
+  No hardcodear "100%", "$5.000" ni "10 cargas": salen de la config y de las variables
+  `{pct} {tope} {excedente} {regla}` de `/sys_install_bonus`. Un premio "%" de la
+  ruleta y el bono de instalación se consumen SOLOS al cargar con bono > 0 desde el
+  modal Depositar (que los sugiere).
 - **Ninguna push puede mencionar la RULETA** (2026-09-07): la ruleta diaria no está
   activa; `notificationService.isRouletteText` bloquea el envío en las 5 funciones
   (`blocked:'roulette'`) y el seed del boot migra reglas/plantillas guardadas.

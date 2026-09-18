@@ -5,7 +5,11 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-09-16** — ROLLOVER GLOBAL de bonos (§4.5, §4.1 `creditGift`,
+> Última actualización: **2026-09-18** — RULETA DIARIA con premios editables (dinero
+> con rollover / bonificación % en la próxima carga / peso) y elegibilidad editable;
+> BONO por instalar la app con tope y excedente; sugerencia automática del bono en
+> Depositar (§2 DailyRouletteSpin/User, §5 ruleta y bono instalación, §6 panel, §7).
+> Antes: 2026-09-16 — ROLLOVER GLOBAL de bonos (§4.5, §4.1 `creditGift`,
 > §6 card, §9) + MULTICUENTA por TITULAR del comprobante (§2 Comprobante.originHolderKey,
 > §5 comprobantes/auto-carga, §6 fraud-check, §9). Espec en
 > `docs/ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md`.
@@ -214,6 +218,9 @@ modelos); sus migraciones corren únicamente si algo llamara a ese connectDB.
   (la API de stats admite 92 días por consulta). Ver §5.
 - **DailyRouletteSpin** — 1 giro/día (índices únicos userId+dateKey y
   username+dateKey). Auto-crédito en 1girox; `credit_failed` → retry desde panel.
+  **#188:** `prizeType` (cash | percent | none), `prizePct`, `rolloverX`; estados
+  `percent_pending` / `percent_used` para los premios "% en la próxima carga", que
+  quedan pendientes en `User.dailyRoulettePendingPct/Label/SpinId/At`.
 - **Review** (1 por user, moderada), **OtpCode** (TTL 5 min, hash bcrypt, 3 intentos),
   **FbAdsWebhookQueue** (cola de reintentos al sistema externo fb-ads),
   **RefundClaim** (índice único userId+type+periodKey contra doble cobro),
@@ -847,18 +854,31 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   `vip-refcom-<payoutId>` reusando el documento de intentos fallidos). El revenue sale
   del netwin del panel × `GIROX_REFERRAL_COMMISSION_PCT` (8%) y sobre eso la tasa del
   referidor (7%). Ver §4.6.
-- **Ruleta diaria**: requiere PWA instalada (token FCM standalone) + cliente activo
-  (>10 cargas reales/30d). Pick ponderado + **budget pacing** (distribuye el
-  presupuesto diario por hora ART; si excede → fuerza SIN PREMIO). Auto-crédito como
-  bono 0 / regalo directo (`vip-roulette-<spinId>`, §4.5); `credit_failed` → retry
-  desde el panel con la MISMA reference. Escribe `Transaction type:'roulette'`
-  (idempotente por `metadata.spinId`, desde 2026-09-07).
+- **Ruleta diaria** (#188, premios y elegibilidad EDITABLES): `Config['dailyRoulette']`
+  = `{ prizes:[{label, emoji, type, value, rolloverX, weight}], minCargas30d,
+  requireApp }` (`getDailyRouletteConfig`; default = pirámide histórica + 10 cargas +
+  app). Elegible = (app instalada si `requireApp`) + MÁS de `minCargas30d` cargas
+  reales en 30 días; si no, la PWA muestra la celda bloqueada con las cargas que
+  faltan. Pick ponderado por `weight` + **budget pacing** (solo dinero). Premio
+  `cash` → `girox.creditGift` con el `rolloverX` de la fila (el global lo pisa),
+  reference `vip-roulette-<spinId>`; `credit_failed` → retry con la MISMA reference.
+  Premio `percent` → pendiente en el User (+X% en la PRÓXIMA carga; el modal Depositar
+  del panel lo sugiere y `_consumeRoulettePercent` lo marca usado al cargar con bono,
+  o a mano con `POST /api/admin/users/:id/roulette-percent/use`). Escribe
+  `Transaction type:'roulette'` (dinero; idempotente por `metadata.spinId`).
+  Admin: `GET/PUT /api/admin/roulette/config`.
 - **Fueguito**: reclamo diario sin requisitos; premios de hitos (editables en panel,
   Config['fireMilestones']) exigen actividad de cargas y expiran el mismo día. Crédito
   con depósito libre (`vip-fire-<userId>-d<día>-<fecha>`).
-- **Bono instalación $5.000**: exige standalone real (token FCM), teléfono verificado,
-  anti-multicuenta por token FCM compartido, reserva atómica. Crédito con depósito libre
-  (`vip-install-<userId>` — una sola vez en la vida del usuario).
+- **Bono por instalar la app** (#100: % en la PRÓXIMA carga, lo aplica el agente; ya no
+  acredita monto): exige standalone real (token FCM), teléfono verificado (salvo creado
+  por agente), anti-multicuenta por token, reserva atómica. **#188 regla con TOPE:**
+  `Config['installBonus'] = { pct, capArs, excessPct }` (default 100% hasta $5.000 +
+  20% del resto; `computeInstallBonus`, `installBonusRuleText`; `GET/POST /api/admin/
+  install-bonus`). Todos los textos la muestran (cartel, `/sys_install_bonus` con
+  `{pct} {tope} {excedente} {regla}`, Información del Servicio). El modal Depositar
+  sugiere el bono con la regla y al cargar con bono > 0 el server marca el bono como
+  usado solo (`firstChargeBonusStatus:'used'`), además del botón manual.
 - **Link de acceso de un solo uso** (2026-08-03): el admin general o un DEPOSITOR
   generan `?acceso=<token>` para un cliente (`POST /api/admin/users/:userId/access-link`,
   también desde el alta del panel; regenerar pisa el anterior). En `User` vive SOLO
@@ -981,6 +1001,12 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   `metadata.source:'instant_cashback'`, separado de Bonificaciones en el resumen y
   en el filtro); etiquetas en `getTransactionTypeLabel` / `_txIsCashback` (tipo
   nuevo ⇒ sumar etiqueta + botón + case del resumen).
+- **Ruleta diaria** (#188): card "🎁 PREMIOS Y PROBABILIDADES" (tabla editable + cargas
+  mínimas + exigir app; guardar solo admin general) sobre el budget diario. Chat: banner
+  violeta "RULETA: +X% EXTRA" con "Marcar aplicado". **Config → "📲 Bono por instalar la
+  app"**: pct / tope / % excedente con ejemplo. **Modal Depositar:** bloque de bonos
+  pendientes que pre-carga "Monto de Bonificación" (`renderDepositPendingBonus`, usa
+  `window._chatUserInfo` del chat abierto).
 - **Config → "🎯 Rollover GLOBAL de bonos"** (solo admin general, #184): switch + botones
   x0/x2/x3/x5/x10 (los no permitidos por la plataforma en gris con ⚠️), hint con el
   efectivo y aviso de `snapped`. Banner "POSIBLE MULTICUENTA" del chat: señales 📱 ☎️
@@ -997,7 +1023,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   Funciones globales con los MISMOS nombres que el gemelo (bankSetTab, loadBankTray,
   openBankAssign, bankAssignConfirm, bankLink, bankResolve, bankReopen, openSweepModal,
   submitSweep, openBankClose, bankCloseResolve, getDepositOrigin…).
-- `admin-sw.js` (v39, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
+- `admin-sw.js` (v40, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
   network-first no-store para el shell.
 - Servido por handlers propios con cache en memoria (`readFileCached`) + ADMIN_HOST
   check opcional; el catch-all bloquea todo otro path bajo /adminprivado2026/.

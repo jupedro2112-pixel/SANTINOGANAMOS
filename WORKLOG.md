@@ -4,7 +4,76 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-09-16**
+> **Última actualización: 2026-09-18**
+
+## Sesión 2026-09-18 — Ruleta diaria con premios editables + bono por instalar con tope y excedente
+
+### 188. RULETA DIARIA: premios editables (dinero con rollover / bonificación % / peso-probabilidad) + elegibilidad editable · BONO por instalar la app con TOPE ($5.000 al 100%) y EXCEDENTE (20%) · sugerencia automática del bono en Depositar
+- **Pregunta del owner ("hay veces que la ruleta no le aparece a gente"):** sí, es
+  por diseño (#71): la celda de la ruleta solo se muestra si el cliente tiene la
+  **app instalada** (token FCM en contexto standalone) **y** es **activo** (MÁS de
+  10 cargas reales en los últimos 30 días, sin contar regalos ni devoluciones). Si
+  no cumple, la celda directamente no se pintaba y el cliente no sabía por qué.
+  Ahora: los dos umbrales son editables desde el panel y la app muestra la celda
+  BLOQUEADA 🔒 con "Faltan N cargas" (toque → toast con el detalle).
+- **Ruleta — config `Config['dailyRoulette']`** = `{ prizes: [{ label, emoji, type,
+  value, rolloverX, weight }], minCargas30d, requireApp }` (`getDailyRouletteConfig`,
+  sin cache; sin config rige la pirámide histórica `ROULETTE_PRIZES` + 10 cargas +
+  app). Tipos: **`cash`** = fichas que se acreditan solas como BONO vía
+  `girox.creditGift` con el `rolloverX` de la fila (si el rollover GLOBAL está
+  encendido lo pisa el global; el panel lo avisa y deshabilita la columna);
+  **`percent`** = bonificación "+X% EXTRA en la PRÓXIMA CARGA": queda pendiente en
+  `User.dailyRoulettePendingPct/Label/SpinId/At` (un % nuevo pisa al anterior), el
+  spin queda `percent_pending`, nota admin-only en el chat, banner violeta en el
+  chat del panel con "Marcar aplicado" (`POST /api/admin/users/:id/roulette-
+  percent/use`), y se consume solo al cargar con bono (`_consumeRoulettePercent`
+  → spin `percent_used`); **`none`** = sin premio. `weight` = peso relativo; la
+  probabilidad real (`pct`) sale de weight / Σ y se muestra en el panel y en la
+  app (chips de premios bajo el botón GIRAR). El budget pacing aplica solo al
+  dinero. `DailyRouletteSpin` + `prizeType`, `prizePct`, `rolloverX` y estados
+  `percent_pending|percent_used`. Endpoints `GET/PUT /api/admin/roulette/config`
+  (PUT solo admin general, valida 1–12 premios, valor > 0 en dinero, 1–500 en %,
+  peso > 0). Status/spin/test-spin/recent-winners/history/stats/retry-credit usan
+  la config (test-spin y ganadores del día muestran los % también).
+- **Panel → Ruleta diaria:** card nueva "🎁 PREMIOS Y PROBABILIDADES": tabla
+  editable (emoji, etiqueta, tipo, valor, rollover, peso, Prob. calculada, 🗑️),
+  "➕ Agregar premio", valor esperado por giro, y abajo "Cargas mínimas en 30 días
+  (más de)" + "Exigir la app instalada" + GUARDAR. Historial con badges "% PENDIENTE
+  / % APLICADO" y la columna Premio muestra "+X% próx. carga".
+- **Bono por instalar la app — regla con TOPE (owner):** `Config['installBonus']
+  = { pct: 100, capArs: 5000, excessPct: 20 }` (`getInstallBonusConfig`,
+  `computeInstallBonus(amount)` = min(carga, tope)×pct% + resto×excessPct%,
+  `installBonusRuleText`). Ej.: carga $10.000 → $5.000 + $1.000 = $6.000 de bono.
+  Endpoints `GET/POST /api/admin/install-bonus` (POST solo admin general) + card
+  "📲 Bono por instalar la app (tope y excedente)" en Config con vista previa del
+  ejemplo. `/api/install-bonus/status` expone `rule` (con `text`); `GET /api/users/
+  :id` expone `installBonusRule` al staff. **Textos:** `/sys_install_bonus` con
+  variables nuevas `{pct}`, `{tope}`, `{excedente}` y **`{regla}`** (seed + fallback
+  actualizados; migración idempotente que appendea `{regla}` al texto guardado si
+  no lo tiene), nota admin-only del reclamo con la regla, cartel del home
+  (`installBonusTitle`, `installBonusRuleText`, aviso), botón "Reclamar mi N%",
+  Información del Servicio (`infoInstallBonusDesc`) y modal de pauta
+  (`adInstallBonusTitle/Desc`) — todos los completa `installbonus.js` con la
+  config (`VIP.state.installBonusRule`); el modal "para girar la ruleta" ya no
+  dice "$5.000 GRATIS" sino la regla vigente.
+- **Modal Depositar (panel):** bloque "bonos pendientes" (`depositPendingBonusGroup`):
+  si el cliente tiene el bono de instalación pendiente y/o un % de ruleta, al
+  escribir el monto muestra el cálculo (ej. "$5.000 al 100% + $5.000 al 20% →
+  $6.000") y **pre-carga "Monto de Bonificación"** con el sugerido (el agente puede
+  pisarlo con los botones de %). Al cargar con bono > 0, el server marca solos el
+  bono de instalación (`firstChargeBonusStatus:'used'` + nota con la regla y lo que
+  correspondía) y el % de ruleta. "Marcar como usado" a mano sigue existiendo.
+  `window._chatUserInfo` guarda el user del chat abierto para el modal.
+- **Validado:** `node --check` OK (server.js, User.js, DailyRouletteSpin.js,
+  roulette.js, installbonus.js, admin.js, SWs); `check-tdz` ✅; tests de cashback y
+  rollover ✅; HTML panel 681/681 divs, ids únicos; PWA 415/415. SW PWA **v108**,
+  admin-sw **v40**. **Back necesita redeploy** (corre la migración de `{regla}`).
+  PROBAR: Ruleta → editar premios (agregar "+20% próx. carga" con peso 10) →
+  guardar → en la app las chips muestran los % y al girar puede salir el % (banner
+  violeta en el chat del panel); bajar "cargas mínimas" a 0 → la ruleta le aparece
+  a todos; Config → regla del bono → cartel del cliente y `/sys_install_bonus`
+  muestran "hasta $5.000 … 20% del resto"; Depositar a un cliente con el 100%
+  pendiente por $10.000 → sugiere $6.000 y al cargar queda marcado usado solo.
 
 ## Sesión 2026-09-16 — Rollover GLOBAL de bonos + multicuenta por TITULAR del comprobante
 
