@@ -4535,7 +4535,7 @@ function renderFirstChargeBonusBanner(user) {
                 '<div style="flex:1;min-width:180px;">' +
                     '<strong style="font-size:13px;display:block;">BONO ' + ((user.installBonusRule && user.installBonusRule.pct) || 100) + '% PENDIENTE (instalar app)</strong>' +
                     '<span style="font-size:11.5px;opacity:.92;">' + escapeHtml((user.installBonusRule && user.installBonusRule.text) || 'En su próxima carga, duplicale el monto.') +
-                    ' El modal Depositar te sugiere el bono y al cargar con bono queda marcado como usado solo.</span>' +
+                    ' Lo aplica el SISTEMA solo en su próxima carga (hgcash o manual, aunque cargues sin bono) y queda marcado como usado.</span>' +
                 '</div>' +
                 '<button onclick="markFirstChargeBonusUsed(\'' + escapeHtml(user.id) + '\')" ' +
                     'style="background:#0b3d1f;color:#7fffb0;border:1px solid rgba(255,255,255,0.3);' +
@@ -4580,7 +4580,7 @@ function renderRoulettePercentBanner(user) {
             '<span style="font-size:20px;">🎡</span>' +
             '<div style="flex:1;min-width:180px;">' +
                 '<strong style="font-size:13px;display:block;">RULETA: +' + pct + '% EXTRA en su PRÓXIMA CARGA</strong>' +
-                '<span style="font-size:11.5px;opacity:.92;">Ganó ' + escapeHtml(user.dailyRoulettePendingLabel || ('+' + pct + '%')) + ' en la ruleta diaria. El modal Depositar te sugiere el bono y queda aplicado solo al cargar con bono.</span>' +
+                '<span style="font-size:11.5px;opacity:.92;">Ganó ' + escapeHtml(user.dailyRoulettePendingLabel || ('+' + pct + '%')) + ' en la ruleta diaria. Lo aplica el SISTEMA solo en su próxima carga (hgcash o manual) y queda marcado como aplicado.</span>' +
             '</div>' +
             '<button onclick="markRoulettePercentUsed(\'' + escapeHtml(user.id) + '\')" style="background:#2d0052;color:#e9c8ff;border:1px solid rgba(255,255,255,0.3);border-radius:8px;padding:8px 14px;font-weight:800;font-size:12px;cursor:pointer;">✅ Marcar aplicado</button>' +
         '</div>';
@@ -4626,7 +4626,7 @@ function renderDepositPendingBonus() {
     }
     if (!parts.length) { group.style.display = 'none'; _depositSuggestedBonus = null; return; }
     group.style.display = '';
-    hint.innerHTML = parts.join('<br>') + (amount > 0 ? '<div style="margin-top:6px;color:#7fffb0;font-weight:800;">Bono sugerido: ' + money(suggested) + ' (ya cargado en "Monto de Bonificación"; al cargar con bono se marca como usado solo)</div>' : '<div style="margin-top:4px;color:#aaa;">Escribí el monto y te calculo el bono.</div>');
+    hint.innerHTML = parts.join('<br>') + (amount > 0 ? '<div style="margin-top:6px;color:#7fffb0;font-weight:800;">Bono: ' + money(suggested) + ' — lo aplica el SISTEMA solo al cargar (aunque pongas otro bono o ninguno) y queda marcado como usado.</div>' : '<div style="margin-top:4px;color:#aaa;">Escribí el monto y te muestro el bono que va a aplicar el sistema.</div>');
     if (amount > 0 && _depositSuggestedBonus !== suggested) {
         _depositSuggestedBonus = suggested;
         document.querySelectorAll('.bonus-options button').forEach(b => b.classList.remove('active'));

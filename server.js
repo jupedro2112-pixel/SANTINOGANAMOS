@@ -2445,8 +2445,16 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     // garantía que ya daba `chargeKey` en nuestra base, ahora también del otro lado.
     // La carga ASIGNADA usa la MISMA reference: es la misma transferencia.
     const _ref = `vip-hg-${chargeKey || movement.movementId}`;
+    // #189 BONOS PENDIENTES (instalar app con tope/excedente, % de ruleta): la
+    // carga automática los aplica sola, en la MISMA operación (bonus nativo de
+    // 1girox con el rollover del panel). Nunca si es multicuenta (_dupBank).
+    let _hgPend = { total: 0, parts: [] };
+    try { if (!_dupBank) _hgPend = await _pendingBonusFor(user, amount); } catch (e) { logger.warn(`[hgcash] bonos pendientes no calculados (sigue sin bono): ${e.message}`); }
+    const _hgBonus = _hgPend.total > 0 ? _hgPend.total : 0;
     const result = await girox.depositToUser(user.username, Number(amount),
-      assign ? `Carga asignada desde bandeja (hgcash) por ${agentLabel}` : 'Carga automática (hgcash)', _ref);
+      assign ? `Carga asignada desde bandeja (hgcash) por ${agentLabel}` : 'Carga automática (hgcash)', _ref,
+      _hgBonus > 0 ? { bonusAmount: _hgBonus, bonusMultiplier: await getGiroxBonusMultiplier() } : null);
+    const _hgBonusApplied = _hgBonus > 0 && result.success && !result.bonusFailed ? _hgBonus : 0;
     if (!result.success) {
       if (chargeLocked) { try { await HgcashCharge.deleteOne({ chargeKey }); } catch (_) {} }
       await hgcashHandleChargeFailure(movClaim || movement, comprobante, result.error || 'fallo deposit', dataDesc, user);
@@ -2466,6 +2474,7 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     try { await recordUserActivity(user.id, 'deposit', Number(amount)); } catch (_) {}
     await Transaction.create({
       id: txId, type: 'deposit', amount: Number(amount),
+      bonus: _hgBonusApplied, // #189 bono pendiente aplicado en la misma carga
       username: user.username, userId: user.id,
       description: assign ? `Carga asignada desde bandeja hgcash (${opDesc})` : `Carga automática hgcash (${opDesc})`,
       adminUsername: agentLabel, adminRole: assign ? (assign.agentRole || 'depositor') : 'system',
@@ -2482,10 +2491,14 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
       if (balRes.success) newBalance = balRes.balance;
     } catch (_) {}
     const balStr = newBalance !== null ? `$${newBalance}` : 'actualizándose 🔄';
-    const depositCmd = await Command.findOne({ name: '/sys_deposit', isActive: true });
-    const depositTpl = resolveSysContent(depositCmd, `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸`);
+    // #189 con bono pendiente aplicado → mensaje de carga CON bonus (con la nota del rollover).
+    const depositCmd = await Command.findOne({ name: _hgBonusApplied > 0 ? '/sys_deposit_bonus' : '/sys_deposit', isActive: true });
+    const depositTpl = resolveSysContent(depositCmd, _hgBonusApplied > 0
+      ? `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} (incluye $${_hgBonusApplied.toLocaleString('es-AR')} de bonificación) acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸{rollover}`
+      : `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸`);
     if (depositTpl) { // null = comando vaciado a propósito → no enviar mensaje al cliente
-      const clientMsg = depositTpl.replace(/\{amount\}/g, Number(amount)).replace(/\{bonus\}/g, 0).replace(/\{balance\}/g, newBalance !== null ? newBalance : 'actualizándose');
+      const _hgRollNote = _hgBonusApplied > 0 ? await _rolloverNote(await getGiroxBonusMultiplier()) : '';
+      const clientMsg = depositTpl.replace(/\{amount\}/g, Number(amount)).replace(/\{bonus\}/g, _hgBonusApplied).replace(/\{balance\}/g, newBalance !== null ? newBalance : 'actualizándose').replace(/\{rollover\}/g, _hgRollNote);
       const sysMsg = await Message.create({
         id: uuidv4(), senderId: 'admin', senderUsername: 'Sistema', senderRole: 'admin',
         receiverId: user.id, receiverRole: 'user', content: clientMsg, type: 'system', timestamp: new Date(), read: false
@@ -2505,9 +2518,17 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     // Oferta de recuperación 100% (no se envía si está etiquetado comunidad/no comunidad).
     await maybeSendRecoveryMessage(user);
 
+    // #189 marcar usados los bonos pendientes que se aplicaron en esta carga.
+    let _hgBonusNote = '';
+    if (_hgBonusApplied > 0) {
+      await _settlePendingBonuses(user, assign ? agentLabel : 'auto-hgcash', { amount: Number(amount), bonus: _hgBonusApplied });
+      _hgBonusNote = ` 🤖 Con $${_hgBonusApplied.toLocaleString('es-AR')} de bono automático (${_hgPend.parts.map(p => (p.kind === 'install' ? 'bono instalar app ' + p.pct + '%' : 'ruleta +' + p.pct + '%') + ' = $' + p.amount.toLocaleString('es-AR')).join(' + ')}).`;
+    } else if (_hgBonus > 0 && result.bonusFailed) {
+      _hgBonusNote = ` ⚠️ El bono pendiente de $${_hgBonus.toLocaleString('es-AR')} NO entró (la plataforma lo rechazó): aplicalo a mano con Bonificación. El bono sigue PENDIENTE.`;
+    }
     await _emitAdminOnlyChatNote(user.id, user.username, assign
-      ? `🏦 ✅ CARGA ASIGNADA desde la bandeja del banco por ${agentLabel} — ${dataDesc}. Acreditado.`
-      : `🏦 ✅ CARGA AUTOMÁTICA hgcash — ${dataDesc}. Acreditado.`);
+      ? `🏦 ✅ CARGA ASIGNADA desde la bandeja del banco por ${agentLabel} — ${dataDesc}. Acreditado.${_hgBonusNote}`
+      : `🏦 ✅ CARGA AUTOMÁTICA hgcash — ${dataDesc}. Acreditado.${_hgBonusNote}`);
     _emitHgcashUpdate('cargado', movement.movementId);
     logger.info(`[hgcash] ${assign ? 'carga asignada por ' + agentLabel : 'auto-carga'} OK user=${user.username} amount=$${amount} movement=${movement.movementId}${result.duplicate ? ' (duplicate: la plataforma ya la tenía)' : ''}`);
     return { ok: true, txId };
@@ -8632,7 +8653,8 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
   let _bankMovementId = null;
   let _bankClaimed = null; // movimiento reclamado (estado previo) para liberarlo si la carga falla
   try {
-    const { userId, username, amount, bonus = 0, description } = req.body;
+    const { userId, username, amount, description } = req.body;
+    let bonus = req.body.bonus || 0; // #189: puede pisarse con los bonos PENDIENTES del cliente (abajo)
     _bankMovementId = req.body.movementId ? String(req.body.movementId).slice(0, 80) : null;
     const _bankOrigin = ['hgcash', 'otro_banco', 'sin_movimiento'].includes(req.body.origin) ? req.body.origin : (_bankMovementId ? 'hgcash' : null);
     const _bankOriginNote = String(req.body.originNote || '').trim().slice(0, 200);
@@ -8669,6 +8691,17 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
     // plataforma puede rechazar la operación COMPLETA → el agente ve el error
     // y reintenta con montos válidos (antes la carga entraba y el bono moría
     // en silencio contable).
+    // #189 BONOS PENDIENTES (instalar app con tope/excedente, % de ruleta): los
+    // aplica el SERVER, sin importar lo que haya puesto el agente (sin bono, o un
+    // bono mal calculado). Si el cliente no tiene nada pendiente, vale el del agente.
+    const _pend = await _pendingBonusFor(user, amount);
+    let _autoBonus = null;
+    if (_pend.total > 0) {
+      const _agentBonus = parseFloat(bonus) || 0;
+      _autoBonus = { total: _pend.total, parts: _pend.parts, agentBonus: _agentBonus, replaced: Math.abs(_agentBonus - _pend.total) >= 1 };
+      bonus = _pend.total;
+      if (_autoBonus.replaced) logger.info(`[deposit] bono PENDIENTE aplicado automáticamente a ${user.username}: $${_pend.total} (el agente había puesto $${_agentBonus}) — ${_pend.parts.map(p => p.kind + ' ' + p.pct + '%').join(' + ')}`);
+    }
     const bonusRequested = parseFloat(bonus) > 0;
     const _depTxId = uuidv4();
 
@@ -8703,24 +8736,14 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       // NO se reintenta el depósito (duplicaría por reference) — se avisa al
       // agente más abajo para que aplique el bono a mano.
       const bonusActuallyApplied = bonusRequested && !result.bonusFailed;
-      // #188 Bonos PENDIENTES que el agente aplicó en ESTA carga (con bonus > 0):
-      // el 100% por instalar la app y el % de la ruleta diaria quedan marcados
-      // como usados solos (antes había que tocar "Marcar como usado" a mano).
+      // #188/#189 Bonos PENDIENTES aplicados en ESTA carga → quedan marcados como
+      // usados solos (bono por instalar la app + % de la ruleta).
       if (bonusActuallyApplied) {
-        try {
-          const usedIb = await User.findOneAndUpdate(
-            { id: user.id, firstChargeBonusStatus: 'pending' },
-            { $set: { firstChargeBonusStatus: 'used', firstChargeBonusUsedAt: new Date(), firstChargeBonusUsedBy: req.user.username } },
-            { new: true }
-          ).select('id').lean();
-          if (usedIb) {
-            const _ib = await getInstallBonusConfig();
-            await _emitAdminOnlyChatNote(user.id, user.username,
-              `✅ BONO ${_ib.pct}% (instalar app) USADO — aplicado por ${req.user.username} en la carga de $${Number(amount).toLocaleString('es-AR')} con $${Number(bonus).toLocaleString('es-AR')} de bono (regla: ${_ib.pct}% hasta $${_ib.capArs.toLocaleString('es-AR')} + ${_ib.excessPct}% del resto → correspondían $${computeInstallBonus(amount, _ib).toLocaleString('es-AR')}). Este cliente ya no tiene bono pendiente.`).catch(() => {});
-            logger.info(`[bono-100] ${user.username} — marcado USADO automáticamente por la carga con bonus de ${req.user.username}`);
-          }
-        } catch (e) { logger.warn(`[deposit] no se pudo marcar el bono de instalación: ${e.message}`); }
-        try { await _consumeRoulettePercent(user.id, req.user.username, { amount: Number(amount), bonus: Number(bonus) }); } catch (e) { logger.warn(`[deposit] no se pudo consumir el % de ruleta: ${e.message}`); }
+        await _settlePendingBonuses(user, req.user.username, { amount: Number(amount), bonus: Number(bonus) });
+        if (_autoBonus && _autoBonus.replaced) {
+          await _emitAdminOnlyChatNote(user.id, user.username,
+            `🤖 BONO AUTOMÁTICO: la carga de $${Number(amount).toLocaleString('es-AR')} salió con $${Number(bonus).toLocaleString('es-AR')} de bono (${_autoBonus.parts.map(p => (p.kind === 'install' ? 'bono instalar app ' + p.pct + '%' : 'ruleta +' + p.pct + '%') + ' = $' + p.amount.toLocaleString('es-AR')).join(' + ')}) en vez de los $${Number(_autoBonus.agentBonus).toLocaleString('es-AR')} que había puesto ${req.user.username}. El bono pendiente lo calcula y aplica el sistema.`).catch(() => {});
+        }
       }
 
       // claim_required=true en la config del owner: el bono adjunto puede quedar
@@ -9126,6 +9149,7 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
         // Banderas explícitas para que el panel admin sepa exactamente qué pasó.
         bonusRequested: bonusRequested,
         bonusApplied: bonusActuallyApplied,
+        autoBonus: _autoBonus, // #189: bono pendiente aplicado por el sistema (null si no había)
         bonusError: bonusRequested && !bonusActuallyApplied ? bonusJgResult?.error : null
       });
     } else {
@@ -17871,6 +17895,48 @@ async function getDailyRouletteConfig() {
 function _roulettePublicPrizes(cfg) {
   const total = cfg.prizes.reduce((s, p) => s + p.weight, 0) || 1;
   return cfg.prizes.map(p => ({ ...p, pct: Math.round((p.weight / total) * 1000) / 10 }));
+}
+// #189 BONOS PENDIENTES que el SERVER aplica solo en la carga (owner 2026-09-18:
+// "que sea TODO automático, aunque el agente cargue sin bono o con un bono mal
+// calculado"): el bono por instalar la app (pct% hasta el tope + excessPct% del
+// resto) y el % de la ruleta diaria. Devuelve { total, parts[] }. `total` 0 = nada.
+async function _pendingBonusFor(user, amount) {
+  const out = { total: 0, parts: [] };
+  const a = Number(amount) || 0;
+  if (!user || !(a > 0)) return out;
+  if (user.firstChargeBonusStatus === 'pending') {
+    const cfg = await getInstallBonusConfig();
+    const b = computeInstallBonus(a, cfg);
+    if (b > 0) out.parts.push({ kind: 'install', pct: cfg.pct, amount: b, rule: installBonusRuleText(cfg) });
+    out.total += b;
+  }
+  const rp = Number(user.dailyRoulettePendingPct) || 0;
+  if (rp > 0) {
+    const b = Math.floor(a * rp / 100);
+    if (b > 0) out.parts.push({ kind: 'roulette', pct: rp, amount: b });
+    out.total += b;
+  }
+  return out;
+}
+// Marca como USADOS los bonos pendientes tras una carga con bono (manual o hgcash).
+async function _settlePendingBonuses(user, agent, ctx) {
+  const done = [];
+  try {
+    const usedIb = await User.findOneAndUpdate(
+      { id: user.id, firstChargeBonusStatus: 'pending' },
+      { $set: { firstChargeBonusStatus: 'used', firstChargeBonusUsedAt: new Date(), firstChargeBonusUsedBy: agent } },
+      { new: true }
+    ).select('id').lean();
+    if (usedIb) {
+      const _ib = await getInstallBonusConfig();
+      done.push('install');
+      await _emitAdminOnlyChatNote(user.id, user.username,
+        `✅ BONO ${_ib.pct}% (instalar app) USADO — aplicado ${agent === 'auto-hgcash' ? 'AUTOMÁTICAMENTE' : 'por ' + agent} en la carga de $${Number(ctx.amount).toLocaleString('es-AR')} con $${Number(ctx.bonus).toLocaleString('es-AR')} de bono (regla: ${_ib.pct}% hasta $${_ib.capArs.toLocaleString('es-AR')} + ${_ib.excessPct}% del resto). Este cliente ya no tiene bono pendiente.`).catch(() => {});
+      logger.info(`[bono-100] ${user.username} — marcado USADO por la carga con bono (${agent})`);
+    }
+  } catch (e) { logger.warn(`[deposit] no se pudo marcar el bono de instalación: ${e.message}`); }
+  try { const r = await _consumeRoulettePercent(user.id, agent, ctx); if (r) done.push('roulette'); } catch (e) { logger.warn(`[deposit] no se pudo consumir el % de ruleta: ${e.message}`); }
+  return done;
 }
 // Consume el % de ruleta pendiente de un usuario (aplicado por un agente en una
 // carga, o marcado a mano). Devuelve { pct } o null si no había nada pendiente.

@@ -133,8 +133,10 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   del bono por instalar (% hasta un tope + % del excedente) en `Config['installBonus']`.
   No hardcodear "100%", "$5.000" ni "10 cargas": salen de la config y de las variables
   `{pct} {tope} {excedente} {regla}` de `/sys_install_bonus`. Un premio "%" de la
-  ruleta y el bono de instalación se consumen SOLOS al cargar con bono > 0 desde el
-  modal Depositar (que los sugiere).
+  ruleta y el bono de instalación los APLICA EL SERVER solo en la carga (hgcash y
+  manual, pisando el bono del agente si hay pendientes; nunca en multicuenta) vía
+  `_pendingBonusFor` + `_settlePendingBonuses`. Un flujo de carga nuevo tiene que
+  pasar por ahí.
 - **Ninguna push puede mencionar la RULETA** (2026-09-07): la ruleta diaria no está
   activa; `notificationService.isRouletteText` bloquea el envío en las 5 funciones
   (`blocked:'roulette'`) y el seed del boot migra reglas/plantillas guardadas.

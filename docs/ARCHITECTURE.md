@@ -876,9 +876,12 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   `Config['installBonus'] = { pct, capArs, excessPct }` (default 100% hasta $5.000 +
   20% del resto; `computeInstallBonus`, `installBonusRuleText`; `GET/POST /api/admin/
   install-bonus`). Todos los textos la muestran (cartel, `/sys_install_bonus` con
-  `{pct} {tope} {excedente} {regla}`, Información del Servicio). El modal Depositar
-  sugiere el bono con la regla y al cargar con bono > 0 el server marca el bono como
-  usado solo (`firstChargeBonusStatus:'used'`), además del botón manual.
+  `{pct} {tope} {excedente} {regla}`, Información del Servicio). **#189: lo aplica el
+  SERVER solo** — `_pendingBonusFor(user, amount)` (bono instalación + % de ruleta) se
+  usa en `/api/admin/deposit` (reemplaza el bono del agente si hay pendientes) y en
+  `hgcashAutoCarga` (bonus nativo en la misma operación, salvo multicuenta); al éxito
+  `_settlePendingBonuses` marca `firstChargeBonusStatus:'used'` y consume el % de
+  ruleta. El botón manual "Marcar como usado" sigue para casos raros.
 - **Link de acceso de un solo uso** (2026-08-03): el admin general o un DEPOSITOR
   generan `?acceso=<token>` para un cliente (`POST /api/admin/users/:userId/access-link`,
   también desde el alta del panel; regenerar pisa el anterior). En `User` vive SOLO
@@ -1023,7 +1026,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   Funciones globales con los MISMOS nombres que el gemelo (bankSetTab, loadBankTray,
   openBankAssign, bankAssignConfirm, bankLink, bankResolve, bankReopen, openSweepModal,
   submitSweep, openBankClose, bankCloseResolve, getDepositOrigin…).
-- `admin-sw.js` (v40, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
+- `admin-sw.js` (v41, scope /adminprivado2026/ — vive en `public/admin-sw.js`):
   network-first no-store para el shell.
 - Servido por handlers propios con cache en memoria (`readFileCached`) + ADMIN_HOST
   check opcional; el catch-all bloquea todo otro path bajo /adminprivado2026/.

@@ -8,6 +8,39 @@
 
 ## Sesión 2026-09-18 — Ruleta diaria con premios editables + bono por instalar con tope y excedente
 
+### 189. Bonos PENDIENTES 100% automáticos: los aplica el server en la carga (hgcash y manual), pise lo que pise el agente, y los marca usados
+- **Pedido del owner:** que el bono del 100% (con tope/excedente) y el % de la
+  ruleta sean TODO automáticos: en la carga por hgcash se aplican solos; en la
+  carga manual también, aunque el agente cargue sin bono o con un bono mal
+  calculado — siempre que al cliente le corresponda — y después que se marquen
+  como usados.
+- **`_pendingBonusFor(user, amount)`** (server.js, junto a la ruleta): suma el
+  bono por instalar (`computeInstallBonus` con la regla del panel) + el % de la
+  ruleta pendiente → `{ total, parts }`. **`_settlePendingBonuses(user, agent,
+  ctx)`**: marca `firstChargeBonusStatus:'used'` + consume el % de ruleta, con
+  las notas admin-only.
+- **Carga manual (`/api/admin/deposit`):** si el cliente tiene algo pendiente, el
+  server REEMPLAZA el bono que mandó el agente por el calculado (log + nota
+  admin-only "🤖 BONO AUTOMÁTICO … en vez de los $X que había puesto …" cuando
+  difieren) y la carga sale con `bonus_amount` nativo. La respuesta trae
+  `autoBonus`. Sin pendientes, vale el bono del agente como siempre.
+- **Carga automática hgcash (`hgcashAutoCarga`, también la asignada desde la
+  bandeja):** si hay pendientes y NO es multicuenta (`_dupBank`), el depósito va
+  con `bonusAmount` + `bonusMultiplier` (rollover del panel) en la MISMA
+  operación (misma reference `vip-hg-*`). La Transaction guarda `bonus`, el
+  cliente recibe `/sys_deposit_bonus` (con `{bonus}` y `{rollover}`), la nota al
+  agente detalla el bono automático y, al éxito, `_settlePendingBonuses`. Si la
+  plataforma rechaza el bono (`bonusFailed`), la carga entra igual, el bono sigue
+  PENDIENTE y la nota pide aplicarlo con Bonificación.
+- **Panel:** el bloque de bonos pendientes del modal Depositar y los banners
+  dicen que lo aplica el sistema solo (admin-sw **v41**).
+- **Validado:** `node --check` OK, `check-tdz` ✅. Back necesita redeploy.
+  PROBAR: cliente con el 100% pendiente → transferencia hgcash de $10.000 → carga
+  con $6.000 de bono en 1girox, mensaje "incluye $6.000 de bonificación", banner
+  del chat en gris "ya utilizado"; carga MANUAL de $10.000 SIN bono → sale con
+  $6.000 igual y nota 🤖; cliente multicuenta → carga sin bono y el bono queda
+  pendiente para revisar.
+
 ### 188. RULETA DIARIA: premios editables (dinero con rollover / bonificación % / peso-probabilidad) + elegibilidad editable · BONO por instalar la app con TOPE ($5.000 al 100%) y EXCEDENTE (20%) · sugerencia automática del bono en Depositar
 - **Pregunta del owner ("hay veces que la ruleta no le aparece a gente"):** sí, es
   por diseño (#71): la celda de la ruleta solo se muestra si el cliente tiene la
