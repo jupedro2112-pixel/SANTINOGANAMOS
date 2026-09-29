@@ -6,6 +6,45 @@
 >
 > **Última actualización: 2026-09-29**
 
+---
+
+> ## 👉 PRÓXIMO PASO (lo primero que tenés que hacer al retomar)
+>
+> **Contexto en 10 segundos:** el repo ya soporta 3 modos (`PLATFORM_MODE`): `manual`
+> (default, GANAMOS sin API — un agente carga desde el panel "Pendientes GANAMOS"),
+> `ganamos_api` (automático contra `agents.ganamos.co`) y `girox` (1girox). Todo hecho
+> y commiteado. El modo `ganamos_api` **está escrito pero NO probado con plata real** y
+> **no está activo** (seguís en `manual`). Detalle: entrada #191 más abajo y
+> `docs/ARCHITECTURE.md` §0.1.
+>
+> **Para dejar el modo automático andando, en este orden:**
+> 1. **Confirmar el código de operación del RETIRO.** La carga es `operation:0` (seguro).
+>    El retiro está puesto como `operation:1` pero SIN confirmar. Hacé un retiro de
+>    prueba de **$1** a un jugador de prueba y verificá que descuente. Si no descuenta o
+>    descuenta mal, probá otro valor y ajustá `GANAMOS_OP_WITHDRAW`.
+> 2. **Pasarme el JSON real de la API** para ajustar los nombres de campo del saldo/id.
+>    Poné `GANAMOS_DEBUG_SHAPES=1`, hacé UNA consulta de jugador y UNA carga de prueba,
+>    y copiame lo que loguea de `GET /api/agent_admin/user/{id}/` y de `POST .../payment/`.
+>    (Las capturas de mayo no traían el cuerpo de la respuesta, así que el mapeo del
+>    saldo es "mejor esfuerzo" hasta ver uno real.)
+> 3. **Ver si Cloudflare deja loguear desde AWS.** Con las credenciales en SSM y
+>    `PLATFORM_MODE=ganamos_api`, mirá el log de boot: si dice `cloudflare_blocked`, hay
+>    que pedir whitelisting de la IP del server a GANAMOS o usar un proxy.
+> 4. **Recién ahí:** `GANAMOS_AGENT_USER`/`GANAMOS_AGENT_PASS` en SSM +
+>    `PLATFORM_MODE=ganamos_api` + redeploy. El boot tiene que decir "MODO API DE AGENTE
+>    GANAMOS". Antes de eso, apagá el rollover global de bonos (esta API no lo aplica).
+>
+> **Tests que corro antes de tocar nada** (no hay node_modules, sólo esto):
+> `node scripts/test-ganamos-api.js` · `node scripts/test-ganamos-adapter.js` ·
+> `node scripts/check-tdz.js` · `node scripts/test-cashback-formula.js` ·
+> `node scripts/test-rollover-multicuenta.js`.
+>
+> **⚠️ Seguridad:** las capturas que el owner pegó el 2026-09-29 tenían cookies de
+> sesión VIVAS de la cuenta de agente `metawin100`. Se le avisó que cierre sesión para
+> invalidarlas. Nunca hardcodear una cookie: el cliente se loguea solo con credenciales.
+
+---
+
 ## Sesión 2026-09-29 (2ª) — GANAMOS con API: cliente automático contra el panel de agente
 
 ### 191. `ganamosApiService` — carga/retiro AUTOMÁTICOS por la API del panel de agente (agents.ganamos.co), tercer PLATFORM_MODE
