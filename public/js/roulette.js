@@ -44,6 +44,20 @@
         const c = document.getElementById('rouletteHomeCard');
         if (!c) return;
         if (!_state || !_state.eligible) {
+            // #197: sin la app instalada (con notificaciones) la celda se muestra
+            // BLOQUEADA y al tocarla explica los pasos (antes desaparecía y el
+            // cliente no sabía que existía la ruleta).
+            if (_state && _state.needsAppNotifs) {
+                c.innerHTML = '<div class="dash-roulette" style="opacity:.7;" onclick="VIP.roulette && VIP.roulette.needsApp()">'
+                    + '<span class="dash-roulette-avatar">🔒</span>'
+                    + '<span class="dash-roulette-label">RULETA</span>'
+                    + '<span class="dash-roulette-sub">Instalá la app</span>'
+                    + '</div>';
+                c.style.display = '';
+                const sep0 = document.getElementById('rouletteRecentWinnersCard');
+                if (sep0) sep0.style.display = 'none';
+                return;
+            }
             // #188: si le faltan cargas, se muestra la celda BLOQUEADA con lo que
             // le falta (antes desaparecía y el cliente no sabía por qué).
             if (_state && _state.needsActive && _state.minCargas > 0) {
@@ -65,20 +79,26 @@
         }
 
         const spin = _state.spin;
+        const open = _state.openPrize; // #197 premio de otro día todavía abierto
         // Celda compacta con el mismo formato que el recuadro de usuario
         // (avatar dorado + etiqueta + estado). Tap → modal de spin.
         let subText;
-        if (_state.alreadySpun && spin) {
-            const won = Number(spin.prizeARS || 0) > 0;
-            if (spin.prizeType === 'percent' && Number(spin.prizePct) > 0) {
-                subText = '+' + spin.prizePct + '% próx. carga';
-            } else if (won && spin.status === 'credited') {
-                subText = 'Ganaste $' + _fmt(spin.prizeARS);
-            } else if (won && spin.status === 'credit_failed') {
-                subText = 'Escribinos';
-            } else {
-                subText = 'Volvé mañana';
-            }
+        const subFor = (sp) => {
+            const won = Number(sp.prizeARS || 0) > 0;
+            const isPct = sp.prizeType === 'percent' && Number(sp.prizePct) > 0;
+            if (sp.status === 'claim_pending') return '¡RECLAMÁ!';
+            if (sp.status === 'expired') return 'Venció';
+            if (isPct && sp.status === 'percent_pending') return '+' + sp.prizePct + '% próx. carga';
+            if (isPct && sp.status === 'percent_used') return '% aplicado';
+            if (won && sp.status === 'claimed') return 'Cargando…';
+            if (won && sp.status === 'credited') return 'Ganaste $' + _fmt(sp.prizeARS);
+            if (won && sp.status === 'credit_failed') return 'Escribinos';
+            return null;
+        };
+        if (open && ['claim_pending', 'claimed', 'percent_pending'].includes(open.status) && !(_state.alreadySpun && spin && subFor(spin) && spin.status !== 'no_prize')) {
+            subText = subFor(open);
+        } else if (_state.alreadySpun && spin) {
+            subText = subFor(spin) || 'Volvé mañana';
         } else {
             subText = '¡GIRÁ HOY!';
         }
@@ -199,6 +219,108 @@
         if (modal) modal.style.display = 'none';
     }
 
+    // #197 Caja del premio según la etapa del reclamo.
+    function _msLeftText(ms) {
+        ms = Math.max(0, Number(ms) || 0);
+        const h = Math.floor(ms / 3600000), m = Math.floor((ms % 3600000) / 60000);
+        return h > 0 ? (h + ' h ' + m + ' min') : (m + ' min');
+    }
+    function _prizeBox(sp, claimHours) {
+        const won = Number(sp.prizeARS || 0) > 0;
+        const isPct = sp.prizeType === 'percent' && Number(sp.prizePct) > 0;
+        const prizeHtml = isPct
+            ? '<div style="color:#fff;font-size:30px;font-weight:900;margin-bottom:6px;">+' + _esc(sp.prizePct) + '% EXTRA</div><div style="color:#ffd479;font-size:13px;font-weight:800;">en tu PRÓXIMA CARGA</div>'
+            : '<div style="color:#fff;font-size:32px;font-weight:900;margin-bottom:6px;">$' + _fmt(sp.prizeARS) + '</div>';
+        let box = '';
+        if (sp.status === 'claim_pending') {
+            // Recalcular lo que falta con el reloj local (msLeft vino del server).
+            const left = sp.claimExpiresAt ? (new Date(sp.claimExpiresAt).getTime() - Date.now()) : (sp.msLeft || 0);
+            box = '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(255,215,0,0.14),rgba(102,255,102,0.08));border:2px solid #ffd700;border-radius:14px;padding:22px 16px;text-align:center;margin-bottom:12px;">'
+                + '<div style="font-size:56px;line-height:1;margin-bottom:8px;">' + (isPct ? '🎁' : '🎉') + '</div>'
+                + '<div style="color:#ffd700;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">¡GANASTE!</div>'
+                + prizeHtml
+                + '<div style="color:#ffb84d;font-size:12px;font-weight:800;margin-top:8px;">⏰ Tenés ' + _esc(_msLeftText(left)) + ' para reclamarlo</div>'
+                + '<button id="rouletteClaimBtn" onclick="VIP.roulette.claim(\'' + _esc(sp.id || '') + '\')" style="margin-top:12px;width:100%;background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:14px;border-radius:12px;font-weight:900;font-size:16px;cursor:pointer;letter-spacing:1px;box-shadow:0 4px 16px rgba(255,215,0,0.45);">🎁 RECLAMAR PREMIO</button>'
+                + '<div style="color:#aaa;font-size:10.5px;margin-top:8px;">Si no lo reclamás a tiempo, vence.</div>'
+                + '</div>';
+        } else if (sp.status === 'expired') {
+            box = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);border-radius:14px;padding:22px 16px;text-align:center;margin-bottom:12px;">'
+                + '<div style="font-size:48px;margin-bottom:6px;">⌛</div>'
+                + '<div style="color:#aaa;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">Premio vencido</div>'
+                + '<div style="color:#ddd;font-size:13px;line-height:1.45;">Tenías ' + _esc(claimHours) + ' horas para reclamar ' + (isPct ? 'tu +' + _esc(sp.prizePct) + '% EXTRA' : '$' + _fmt(sp.prizeARS)) + ' y el plazo pasó. ¡Mañana tenés otro giro!</div>'
+                + '</div>';
+        } else if (isPct) {
+            const used = sp.status === 'percent_used';
+            box = '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(255,215,0,0.12),rgba(102,255,102,0.08));border:2px solid #ffd700;border-radius:14px;padding:22px 16px;text-align:center;margin-bottom:12px;">'
+                + '<div style="font-size:56px;line-height:1;margin-bottom:8px;">🎁</div>'
+                + '<div style="color:#ffd700;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">' + (used ? 'PREMIO APLICADO' : 'PREMIO RECLAMADO') + '</div>'
+                + prizeHtml
+                + (used
+                    ? '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:12.5px;font-weight:800;">✅ Ya se aplicó en una carga</div>'
+                    : '<div style="background:rgba(255,215,0,0.14);border:1px solid rgba(255,215,0,0.6);border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:12.5px;line-height:1.45;">Cuando vayas a cargar, avisale al agente: te suma el <strong>' + _esc(sp.prizePct) + '%</strong> de la carga como bono.</div>')
+                + '</div>';
+        } else if (won && sp.status === 'claimed') {
+            box = '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(102,255,102,0.10),rgba(255,215,0,0.10));border:2px solid #66ff66;border-radius:14px;padding:22px 16px;text-align:center;margin-bottom:12px;">'
+                + '<div style="font-size:56px;line-height:1;margin-bottom:8px;">🎉</div>'
+                + '<div style="color:#66ff66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">PREMIO RECLAMADO</div>'
+                + prizeHtml
+                + '<div style="background:rgba(255,215,0,0.14);border:1px solid rgba(255,215,0,0.6);border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:12.5px;line-height:1.45;">⏳ En unos minutos un agente te lo carga en tu usuario de GANAMOS y te avisamos por el chat.</div>'
+                + '</div>';
+        } else if (won && sp.status === 'credited') {
+            box = '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(102,255,102,0.10),rgba(255,215,0,0.10));border:2px solid #66ff66;border-radius:14px;padding:22px 16px;text-align:center;margin-bottom:12px;">'
+                + '<div style="font-size:56px;line-height:1;margin-bottom:8px;">🎉</div>'
+                + '<div style="color:#66ff66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">¡GANASTE!</div>'
+                + prizeHtml
+                + '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:13px;font-weight:800;">✅ Cargado en tu usuario de GANAMOS</div>'
+                + '</div>';
+        } else if (won && sp.status === 'credit_failed') {
+            box = '<div style="background:rgba(255,170,102,0.10);border:2px solid #ffaa66;border-radius:14px;padding:20px 16px;text-align:center;margin-bottom:12px;">'
+                + '<div style="font-size:48px;margin-bottom:6px;">⚠️</div>'
+                + '<div style="color:#ffaa66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">PREMIO PENDIENTE</div>'
+                + prizeHtml
+                + '<div style="color:#ffd0a0;font-size:12px;margin-top:8px;">Hubo un problema al cargarlo. Escribinos por el chat y lo resolvemos.</div>'
+                + '</div>';
+        } else if (won) {
+            // legacy 'won' (acreditación en curso sin reclamo)
+            box = '<div style="background:rgba(255,170,102,0.10);border:2px solid #ffaa66;border-radius:14px;padding:20px 16px;text-align:center;margin-bottom:12px;">'
+                + '<div style="color:#ffaa66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">PROCESANDO</div>' + prizeHtml + '</div>';
+        }
+        return box;
+    }
+
+    // #197 Reclamar el premio (dentro del plazo).
+    let _claiming = false;
+    async function claim(spinId) {
+        if (_claiming) return;
+        _claiming = true;
+        const btn = document.getElementById('rouletteClaimBtn');
+        if (btn) { btn.disabled = true; btn.textContent = '⏳ Reclamando…'; }
+        try {
+            const resp = await fetch(`${VIP.config.API_URL}/api/roulette/claim`, {
+                method: 'POST',
+                headers: { 'Authorization': `Bearer ${VIP.state.currentToken}`, 'Content-Type': 'application/json' },
+                body: JSON.stringify({ spinId: spinId || undefined })
+            });
+            const d = await resp.json();
+            if (d && d.spin) {
+                if (_state.spin && _state.spin.id === d.spin.id) _state.spin = d.spin;
+                if (_state.openPrize && _state.openPrize.id === d.spin.id) _state.openPrize = d.spin;
+                if (!_state.spin || (_state.spin.id !== d.spin.id && (!_state.openPrize || _state.openPrize.id !== d.spin.id))) _state.openPrize = d.spin;
+            }
+            if (!resp.ok || !d.success) {
+                if (VIP.ui && VIP.ui.showToast) VIP.ui.showToast((d && d.error) || 'No se pudo reclamar', d && d.expired ? 'info' : 'error');
+            } else if (VIP.ui && VIP.ui.showToast) {
+                VIP.ui.showToast('✅ ¡Premio reclamado!', 'success');
+            }
+            await loadStatus();
+            _renderModal();
+        } catch (e) {
+            if (VIP.ui && VIP.ui.showToast) VIP.ui.showToast('Error de conexión', 'error');
+        } finally {
+            _claiming = false;
+        }
+    }
+
     function _renderModal(spinResult) {
         const modal = document.getElementById('rouletteModal');
         if (!modal) return;
@@ -208,47 +330,24 @@
         }
         const spin = spinResult || _state.spin;
         const alreadySpun = !!(spin && (spin.prizeARS != null || spin.prizeType));
+        const claimHours = _state.claimHours || 24;
+        const openPrize = _state.openPrize; // #197 premio de otro día aún abierto (por reclamar / en carga / % pendiente)
         let html = '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #ffd700;border-radius:16px;padding:20px 16px;color:#fff;max-width:560px;width:100%;margin:14px auto;position:relative;">';
         html += '<button onclick="VIP.roulette.close()" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.20);color:#fff;font-size:18px;cursor:pointer;line-height:1;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">✕</button>';
         html += '<h2 style="color:#ffd700;text-align:center;margin:0 0 4px;font-size:22px;font-weight:900;letter-spacing:1.5px;padding-right:36px;">🎰 RULETA DIARIA</h2>';
-        html += '<p style="color:#ddd;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.4;">1 giro por día · auto-acreditación si ganás</p>';
+        html += '<p style="color:#ddd;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.4;">1 giro por día · si ganás, tenés ' + _esc(claimHours) + ' h para reclamar tu premio</p>';
+
+        // #197 Premio de OTRO día que sigue abierto (por reclamar / en carga / % pendiente):
+        // se muestra arriba del giro de hoy para que no se lo pierda.
+        if (openPrize && (!alreadySpun || (spin && openPrize.id !== spin.id))) html += _prizeBox(openPrize, claimHours);
 
         if (alreadySpun) {
             // Estado: ya giró hoy.
             const won = Number(spin.prizeARS || 0) > 0;
-            if (spin.prizeType === 'percent' && Number(spin.prizePct) > 0) {
-                // #188 premio BONIFICACIÓN: +X% en la próxima carga (lo aplica el agente).
-                const used = spin.status === 'percent_used';
-                html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(255,215,0,0.12),rgba(102,255,102,0.08));border:2px solid #ffd700;border-radius:14px;padding:24px 16px;text-align:center;margin-bottom:12px;">';
-                html += '<div style="font-size:60px;line-height:1;margin-bottom:8px;">🎁</div>';
-                html += '<div style="color:#ffd700;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">¡GANASTE!</div>';
-                html += '<div style="color:#fff;font-size:30px;font-weight:900;margin-bottom:6px;">+' + _esc(spin.prizePct) + '% EXTRA</div>';
-                html += '<div style="color:#ffd479;font-size:13px;font-weight:800;">en tu PRÓXIMA CARGA</div>';
-                html += used
-                    ? '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:12.5px;font-weight:800;">✅ Ya se aplicó en una carga</div>'
-                    : '<div style="background:rgba(255,215,0,0.14);border:1px solid rgba(255,215,0,0.6);border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:12.5px;line-height:1.45;">Cuando vayas a cargar, avisale al agente: te suma el <strong>' + _esc(spin.prizePct) + '%</strong> de la carga como bono. Es para tu próxima carga.</div>';
-                html += '</div>';
-            } else if (won && spin.status === 'credited') {
-                html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,rgba(102,255,102,0.10),rgba(255,215,0,0.10));border:2px solid #66ff66;border-radius:14px;padding:24px 16px;text-align:center;margin-bottom:12px;">';
-                html += '<div style="font-size:60px;line-height:1;margin-bottom:8px;">🎉</div>';
-                html += '<div style="color:#66ff66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">¡GANASTE!</div>';
-                html += '<div style="color:#fff;font-size:32px;font-weight:900;margin-bottom:6px;">$' + _fmt(spin.prizeARS) + '</div>';
-                html += '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:13px;font-weight:800;">✅ Acreditado a tu saldo automáticamente</div>';
-                // #196 GANAMOS sin rollover: el premio es plata libre (no se muestra ninguna nota).
-                if (spin.creditTxId) html += '<div style="color:#888;font-size:10px;margin-top:6px;font-family:monospace;">tx: ' + _esc(spin.creditTxId) + '</div>';
-                html += '</div>';
-
-                // CTA comunidad — el owner pidió que recomendemos entrar al
-                // grupo cuando ganen, para que reciban novedades, problemas
-                // con la página, juegos de la semana, problemas con el banco.
-                html += _communityRecommendCard();
-            } else if (won && spin.status === 'credit_failed') {
-                html += '<div style="background:rgba(255,170,102,0.10);border:2px solid #ffaa66;border-radius:14px;padding:20px 16px;text-align:center;margin-bottom:12px;">';
-                html += '<div style="font-size:48px;margin-bottom:6px;">⚠️</div>';
-                html += '<div style="color:#ffaa66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">PREMIO PENDIENTE</div>';
-                html += '<div style="color:#fff;font-size:24px;font-weight:900;margin-bottom:6px;">$' + _fmt(spin.prizeARS) + '</div>';
-                html += '<div style="color:#ffd0a0;font-size:12px;margin-top:8px;">Ganaste pero la acreditación automática falló. Escribinos por WhatsApp al número principal y te lo cargamos.</div>';
-                html += '</div>';
+            const isPct = spin.prizeType === 'percent' && Number(spin.prizePct) > 0;
+            if (won || isPct) {
+                html += _prizeBox(spin, claimHours);
+                if (spin.status === 'credited' || spin.status === 'claimed') html += _communityRecommendCard();
             } else {
                 html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);border-radius:14px;padding:24px 16px;text-align:center;margin-bottom:12px;">';
                 html += '<div style="font-size:54px;margin-bottom:6px;">😔</div>';
@@ -263,7 +362,7 @@
             html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,#4a0080,#7c00cc);border:2px solid #ffd700;border-radius:14px;padding:28px 16px;text-align:center;margin-bottom:12px;box-shadow:inset 0 0 30px rgba(255,215,0,0.20);">';
             html += '<div style="font-size:72px;line-height:1;margin-bottom:6px;animation:rouletteIcon 2s ease-in-out infinite;">🎰</div>';
             html += '<div style="color:#ffd700;font-size:16px;font-weight:900;letter-spacing:1px;margin-bottom:4px;">Tu giro de hoy te espera</div>';
-            html += '<div style="color:#fff;font-size:13px;margin-bottom:14px;opacity:0.92;">Tocá <strong>GIRAR</strong> y la suerte decide. Si ganás, se acredita solo a tu saldo.</div>';
+            html += '<div style="color:#fff;font-size:13px;margin-bottom:14px;opacity:0.92;">Tocá <strong>GIRAR</strong> y la suerte decide. Si ganás, reclamá tu premio dentro de las ' + _esc(claimHours) + ' horas.</div>';
             html += '<button id="rouletteSpinBtn" onclick="VIP.roulette.spin()" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:16px 40px;border-radius:12px;font-weight:900;font-size:18px;cursor:pointer;letter-spacing:2px;box-shadow:0 4px 16px rgba(255,215,0,0.50);">🎰 GIRAR</button>';
             html += '</div>';
             // #188 premios y probabilidades vigentes (vienen del panel).
@@ -298,7 +397,7 @@
         html += '  </div>';
         html += '  <div id="rouletteModalWinnersList" style="max-height:240px;overflow-y:auto;-webkit-overflow-scrolling:touch;font-size:12px;line-height:1.5;"></div>';
         html += '  <div id="rouletteModalWinnersEmpty" style="text-align:center;color:#888;font-size:11.5px;padding:12px 8px;">Todavía no hay ganadores hoy. Sé el primero — girá la ruleta.</div>';
-        html += '  <div style="text-align:center;font-size:10px;color:#777;margin-top:7px;padding-top:7px;border-top:1px dashed rgba(255,255,255,0.10);">🔒 Nombres parcialmente ocultos. Los premios son reales y se acreditan automáticamente.</div>';
+        html += '  <div style="text-align:center;font-size:10px;color:#777;margin-top:7px;padding-top:7px;border-top:1px dashed rgba(255,255,255,0.10);">🔒 Nombres parcialmente ocultos. Los premios son reales.</div>';
         html += '</div>';
 
         html += '</div>';
@@ -350,16 +449,8 @@
             }
             // Construimos un "spin" del shape que espera _renderModal y refrescamos.
             _state.alreadySpun = true;
-            _state.spin = {
-                prizeARS: d.prize.prizeARS,
-                prizeType: d.prize.prizeType || null, // #188
-                prizePct: d.prize.prizePct || 0,
-                rolloverX: d.prize.rolloverX, // #186
-                prizeLabel: d.prize.prizeLabel,
-                status: d.prize.status,
-                spunAt: new Date().toISOString(),
-                creditTxId: d.prize.transactionId || null
-            };
+            _state.spin = d.prize; // #197 forma pública del spin (id, status, claimExpiresAt…)
+            if (d.prize && d.prize.claimHours) _state.claimHours = d.prize.claimHours;
             _renderModal();
             renderHomeCard();
             // Refrescar saldo del header (mismo patrón que installbonus/withdraw).
@@ -424,7 +515,7 @@
         } catch (e) { /* best-effort */ }
     }
 
-    VIP.roulette = { loadStatus, open, close, spin, loadRecentWinners };
+    VIP.roulette = { loadStatus, open, close, spin, claim, needsApp: _showNeedsAppModal, loadRecentWinners };
 
     // Boot: cargar status apenas el usuario esté autenticado.
     document.addEventListener('DOMContentLoaded', () => {

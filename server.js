@@ -640,6 +640,16 @@ if (PLATFORM_MANUAL) {
     try {
       await Transaction.updateOne({ transactionId: taskId }, { $set: { 'metadata.platformTaskStatus': event, 'metadata.platformTaskSettledAt': new Date(), 'metadata.platformTaskBy': task.doneBy || null } });
     } catch (_) {}
+    // #197 Ruleta: la tarea de un premio reclamado refleja su estado en el spin.
+    if (task.flow === 'roulette' || /^vip-roulette-/.test(String(task.reference || ''))) {
+      const spinId = String(task.reference || '').replace(/^vip-roulette-/, '');
+      if (spinId) {
+        await DailyRouletteSpin.updateOne({ id: spinId }, event === 'done'
+          ? { $set: { status: 'credited', creditedAt: new Date(), agentDoneAt: new Date(), agentDoneBy: task.doneBy || null } }
+          : { $set: { status: 'credit_failed', creditError: `Rechazada por ${task.doneBy || 'agente'}: ${task.note || ''}`.slice(0, 300) } }
+        ).catch(() => {});
+      }
+    }
     if (event === 'done' && userId && task.source === 'server' && task.kind !== 'withdraw') {
       const text = await renderSystemCommand('/sys_ganamos_acreditado',
         '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰',
@@ -10812,6 +10822,25 @@ async function initializeData() {
       response: '3'
     },
     {
+      // #197 NO es un mensaje: horas que tiene el cliente para reclamar un premio de la ruleta.
+      name: '/sys_roulette_claim_hours',
+      description: 'RULETA DIARIA — HORAS PARA RECLAMAR (no es un mensaje). Escribí SOLO el número de horas que tiene el cliente para tocar "Reclamar premio" en la app después de ganar (dinero o %). Pasado el plazo el premio VENCE. Vacío o inválido = 24.',
+      type: 'info',
+      response: '24'
+    },
+    {
+      name: '/sys_roulette_won',
+      description: 'RULETA DIARIA — mensaje al cliente cuando GANA un premio (dinero o %). Variables: {username}, {premio} (ej. "$5.000" o "+50% EXTRA en tu próxima carga"), {horas} (plazo para reclamar), {vence} (fecha y hora límite). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '🎡 ¡GANASTE {premio} en la ruleta diaria! 🎉\n\nTenés {horas} horas para reclamarlo: entrá a la app, tocá RULETA y después RECLAMAR PREMIO. ⏰ Vence el {vence}.'
+    },
+    {
+      name: '/sys_roulette_claimed',
+      description: 'RULETA DIARIA — mensaje al cliente cuando RECLAMA su premio. Variables: {username}, {premio}, {detalle} (dinero: "en unos minutos un agente te lo carga…"; %: "avisale al agente en tu próxima carga…"). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '✅ ¡Premio reclamado! {detalle}'
+    },
+    {
       name: '/sys_withdrawal',
       description: 'Mensaje automático al realizar un retiro. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
@@ -18205,6 +18234,59 @@ function _roulettePublicPrizes(cfg) {
   const total = cfg.prizes.reduce((s, p) => s + p.weight, 0) || 1;
   return cfg.prizes.map(p => ({ ...p, pct: Math.round((p.weight / total) * 1000) / 10 }));
 }
+// #197 Horas que tiene el cliente para RECLAMAR un premio de la ruleta. Editable
+// desde COMANDOS: la response de /sys_roulette_claim_hours es el número (1..720).
+// Vacío/inválido → 24. Cache 30 s.
+const ROULETTE_CLAIM_HOURS_DEFAULT = 24;
+let _rouletteClaimHoursCache = { v: null, at: 0 };
+async function getRouletteClaimHours() {
+  if (_rouletteClaimHoursCache.v != null && Date.now() - _rouletteClaimHoursCache.at < 30000) return _rouletteClaimHoursCache.v;
+  let v = ROULETTE_CLAIM_HOURS_DEFAULT;
+  try {
+    const cmd = await Command.findOne({ name: '/sys_roulette_claim_hours', isActive: true }).lean();
+    const n = Number(String((cmd && cmd.response) || '').trim().replace(',', '.'));
+    if (Number.isFinite(n) && n >= 1 && n <= 720) v = n;
+  } catch (_) {}
+  _rouletteClaimHoursCache = { v, at: Date.now() };
+  return v;
+}
+function _rouletteFmtVence(d) {
+  try { return new Date(d).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; }
+}
+function _roulettePrizeText(spin) {
+  if (spin.prizeType === 'percent' || (!spin.prizeARS && spin.prizePct > 0)) return `+${spin.prizePct}% EXTRA en tu próxima carga`;
+  return `$${Number(spin.prizeARS || 0).toLocaleString('es-AR')}`;
+}
+// Premios por reclamar cuyo plazo venció → `expired` (barrido perezoso: se llama
+// desde status/claim del cliente y desde el listado del panel; no hace falta cron).
+async function _rouletteExpireStale(filter = {}) {
+  try {
+    const r = await DailyRouletteSpin.updateMany(
+      { ...filter, status: 'claim_pending', claimExpiresAt: { $lt: new Date() } },
+      { $set: { status: 'expired' } }
+    );
+    return r.modifiedCount || 0;
+  } catch (e) { logger.warn(`[roulette] expire: ${e.message}`); return 0; }
+}
+// Forma pública de un spin (PWA). Incluye lo del reclamo.
+function _rouletteSpinPublic(spin) {
+  if (!spin) return null;
+  const exp = spin.claimExpiresAt ? new Date(spin.claimExpiresAt) : null;
+  return {
+    id: spin.id,
+    prizeARS: spin.prizeARS,
+    prizeType: spin.prizeType || (spin.prizeARS > 0 ? 'cash' : 'none'),
+    prizePct: spin.prizePct || 0,
+    prizeLabel: spin.prizeLabel,
+    status: spin.status,
+    spunAt: spin.spunAt,
+    claimExpiresAt: exp,
+    msLeft: exp ? Math.max(0, exp.getTime() - Date.now()) : 0,
+    claimedAt: spin.claimedAt || null,
+    creditedAt: spin.creditedAt || null,
+    creditTxId: spin.creditTxId || null
+  };
+}
 // #189 BONOS PENDIENTES que el SERVER aplica solo en la carga (owner 2026-09-18:
 // "que sea TODO automático, aunque el agente cargue sin bono o con un bono mal
 // calculado"): el bono por instalar la app (pct% hasta el tope + excessPct% del
@@ -18333,7 +18415,12 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
     const appOk = !rcfg.requireApp || _rouletteHasAppInstalled(u);
     const act = await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d);
     const eligible = appOk && act.active;
+    await _rouletteExpireStale({ userId }); // #197
     const spin = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
+    // #197 un premio de OTRO día que sigue por reclamar / reclamado (para mostrarlo
+    // aunque hoy todavía no haya girado).
+    const openPrize = (spin && ['claim_pending', 'claimed', 'percent_pending'].includes(spin.status)) ? spin
+      : await DailyRouletteSpin.findOne({ userId, status: { $in: ['claim_pending', 'claimed', 'percent_pending'] } }).sort({ spunAt: -1 }).lean();
     res.json({
       success: true,
       eligible,
@@ -18344,20 +18431,12 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
       requireApp: rcfg.requireApp,
       dateKey,
       prizes: _roulettePublicPrizes(rcfg),
+      claimHours: await getRouletteClaimHours(), // #197
       pendingPct: (u && u.dailyRoulettePendingPct) || 0,
       pendingLabel: (u && u.dailyRoulettePendingLabel) || null,
       alreadySpun: !!spin,
-      spin: spin ? {
-        prizeARS: spin.prizeARS,
-        prizeType: spin.prizeType || (spin.prizeARS > 0 ? 'cash' : 'none'),
-        prizePct: spin.prizePct || 0,
-        prizeLabel: spin.prizeLabel,
-        status: spin.status,
-        spunAt: spin.spunAt,
-        creditedAt: spin.creditedAt,
-        creditTxId: spin.creditTxId,
-        rolloverX: await applyGlobalRollover(spin.rolloverX || 0) // #186/#188: el del premio, pisado por el global si está encendido
-      } : null
+      spin: _rouletteSpinPublic(spin),
+      openPrize: openPrize && (!spin || openPrize.id !== spin.id) ? _rouletteSpinPublic(openPrize) : null
     });
   } catch (err) {
     logger.error(`/api/roulette/status: ${err.message}`);
@@ -18707,7 +18786,7 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
       const budgetEnabled = !!(cfg && cfg.enabled !== false && budgetARS > 0);
       if (budgetEnabled && prizeARS > 0) {
         const agg = await DailyRouletteSpin.aggregate([
-          { $match: { dateKey, status: { $in: ['credited', 'won'] }, prizeARS: { $gt: 0 } } },
+          { $match: { dateKey, status: { $in: ['credited', 'won', 'claim_pending', 'claimed'] }, prizeARS: { $gt: 0 } } }, // #197
           { $group: { _id: null, total: { $sum: '$prizeARS' } } }
         ]);
         const spentToday = (agg && agg[0] && agg[0].total) || 0;
@@ -18734,7 +18813,12 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
       logger.warn(`[ROULETTE] budget-pacing falló (silencioso): ${e.message}`);
     }
 
-    const initialStatus = prizeARS > 0 ? 'won' : (prizePct > 0 ? 'percent_pending' : 'no_prize');
+    // #197 TODO premio nace POR RECLAMAR: el cliente tiene N horas (comando
+    // /sys_roulette_claim_hours) para tocar RECLAMAR en la app; si no, vence.
+    const claimHours = await getRouletteClaimHours();
+    const hasPrize = prizeARS > 0 || prizePct > 0;
+    const initialStatus = hasPrize ? 'claim_pending' : 'no_prize';
+    const claimExpiresAt = hasPrize ? new Date(Date.now() + claimHours * 3600 * 1000) : null;
     let spinDoc;
     try {
       spinDoc = await DailyRouletteSpin.create({
@@ -18751,107 +18835,136 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
         ipAddress: (req.ip || '').slice(0, 60),
         userAgent: String(req.headers['user-agent'] || '').slice(0, 200),
         status: initialStatus,
+        claimExpiresAt,
         creditAttempts: 0
       });
     } catch (e) {
       // El unique index disparó (otro tab del mismo user llegó primero).
       if (String(e.message || '').includes('duplicate key')) {
         const existing = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
-        return res.status(409).json({
-          error: 'Ya giraste la ruleta hoy.',
-          alreadySpun: true,
-          spin: existing ? {
-            prizeARS: existing.prizeARS, prizeLabel: existing.prizeLabel,
-            status: existing.status, spunAt: existing.spunAt
-          } : null
-        });
+        return res.status(409).json({ error: 'Ya giraste la ruleta hoy.', alreadySpun: true, spin: _rouletteSpinPublic(existing) });
       }
       throw e;
     }
 
-    // Si no hay premio, devolvemos el resultado y terminamos.
-    // #188 Premio "bonificación %": queda PENDIENTE en el usuario para su próxima
-    // carga (pisa un % anterior). El agente lo ve en el chat y el modal Depositar
-    // lo sugiere solo; se consume al cargar con bono.
-    if (prizePct > 0) {
-      await User.updateOne({ id: userId }, { $set: {
-        dailyRoulettePendingPct: prizePct, dailyRoulettePendingLabel: pick.label,
-        dailyRoulettePendingSpinId: spinDoc.id, dailyRoulettePendingAt: new Date()
-      } }).catch(() => {});
-      await _emitAdminOnlyChatNote(userId, username,
-        `🎡 RULETA DIARIA: ganó +${prizePct}% EXTRA en su PRÓXIMA CARGA (${pick.label}). Al cargarle, el modal Depositar te sugiere el bono con ese % y queda marcado como aplicado solo. Si no lo usás en la carga, marcalo a mano desde el chat.`).catch(() => {});
-      logger.info(`[ROULETTE] ${username} → +${prizePct}% en próxima carga (${dateKey})`);
-      return res.json({
-        success: true,
-        prize: { prizeARS: 0, prizeType: 'percent', prizePct, prizeLabel: pick.label, emoji: pick.emoji, status: 'percent_pending' }
-      });
-    }
-    if (prizeARS === 0) {
+    if (!hasPrize) {
       logger.info(`[ROULETTE] ${username} → SIN PREMIO (${dateKey})`);
-      return res.json({
-        success: true,
-        prize: { prizeARS: 0, prizeType: 'none', prizeLabel: pick.label, emoji: pick.emoji, status: 'no_prize' }
-      });
+      return res.json({ success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji } });
     }
 
-    // Hay premio → acreditarlo en la plataforma.
-    // `reference` = id del giro: único por tirada. Es la MISMA que usa el reintento
-    // manual desde el panel (`/api/admin/roulette/:id/retry-credit`), así que si el
-    // premio ya se había acreditado y sólo se perdió la respuesta, el reintento NO
-    // vuelve a pagarlo.
-    let credit;
+    const premioTxt = _roulettePrizeText(spinDoc);
+    const venceTxt = _rouletteFmtVence(claimExpiresAt);
+    // Aviso al cliente (editable en COMANDOS /sys_roulette_won; vacío = no se envía).
     try {
-      // #188: BONO con el rollover del premio (el global lo pisa si está encendido).
-      credit = await girox.creditGift(username, prizeARS, { rolloverX: Number(pick.rolloverX) || 0, reference: `vip-roulette-${spinDoc.id}`, description: `Premio ruleta diaria ${pick.label}` });
-    } catch (e) {
-      credit = { success: false, error: e.message };
-    }
-    if (!credit || !credit.success) {
-      // Marcamos credit_failed para retry manual desde panel admin.
-      await DailyRouletteSpin.updateOne(
-        { id: spinDoc.id },
-        {
-          $set: {
-            status: 'credit_failed',
-            creditError: String((credit && credit.error) || 'unknown').slice(0, 300)
-          },
-          $inc: { creditAttempts: 1 }
-        }
-      ).catch(() => {});
-      logger.error(`[ROULETTE] credit FAIL ${username} $${prizeARS}: ${(credit && credit.error) || 'unknown'}`);
-      return res.status(503).json({
-        success: false,
-        prize: { prizeARS, prizeLabel: pick.label, emoji: pick.emoji, status: 'credit_failed' },
-        error: 'Ganaste pero hubo un problema al acreditar. Avisanos por WhatsApp y lo resolvemos.'
-      });
-    }
-
-    // FIX: antes leía `credit.transactionId || credit.transferId`, campos que el
-    // cliente NUNCA devolvió en la raíz (siempre vienen dentro de `data`) → el
-    // creditTxId de todos los giros se guardaba en null. Ahora se lee bien.
-    const txId = credit.data?.transfer_id || credit.data?.transferId || null;
-    await DailyRouletteSpin.updateOne(
-      { id: spinDoc.id },
-      {
-        $set: { status: 'credited', creditTxId: txId, creditedAt: new Date() },
-        $inc: { creditAttempts: 1 }
-      }
-    ).catch(() => {});
-    // Registro en Transacciones del panel (2026-09-07): antes el premio sólo
-    // vivía en DailyRouletteSpin y era invisible en "Transacciones". Tipo propio
-    // 'roulette' (NO 'deposit': no es carga real). Fire-and-forget.
-    await _recordRouletteTransaction(spinDoc.id, userId, username, prizeARS, pick.label, txId, credit);
-    logger.info(`[ROULETTE] ${username} → $${prizeARS} acreditado tx=${txId}`);
-    return res.json({
-      success: true,
-      prize: {
-        prizeARS, prizeType: 'cash', prizeLabel: pick.label, emoji: pick.emoji,
-        status: 'credited', transactionId: txId,
-        rolloverX: credit && credit.rolloverApplied != null ? credit.rolloverApplied : await applyGlobalRollover(Number(pick.rolloverX) || 0) // #186/#188
-      }
-    });
+      const wonMsg = await renderSystemCommand('/sys_roulette_won',
+        '🎡 ¡GANASTE {premio} en la ruleta diaria! 🎉\n\nTenés {horas} horas para reclamarlo: entrá a la app, tocá RULETA y después RECLAMAR PREMIO. ⏰ Vence el {vence}.',
+        { username, premio: premioTxt, horas: claimHours, vence: venceTxt });
+      if (wonMsg) await _sendSystemMessageToUser(userId, username, wonMsg);
+    } catch (e) { logger.warn(`[ROULETTE] aviso de premio a ${username}: ${e.message}`); }
+    await _emitAdminOnlyChatNote(userId, username,
+      `🎡 RULETA DIARIA: ganó ${premioTxt} (${pick.label}). Tiene ${claimHours} h para RECLAMARLO desde la app (vence ${venceTxt}). Cuando lo reclame: ${prizeARS > 0 ? 'la carga aparece en "Pendientes GANAMOS" y en Ruleta diaria' : 'te aparece en Ruleta diaria y el modal Depositar te sugiere el % en su próxima carga'}.`).catch(() => {});
+    logger.info(`[ROULETTE] ${username} → ${premioTxt} POR RECLAMAR hasta ${claimExpiresAt.toISOString()} (${dateKey})`);
+    return res.json({ success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji, claimHours } });
   } catch (err) {
     logger.error(`/api/roulette/spin: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// #197 POST /api/roulette/claim — el cliente RECLAMA su premio por reclamar (dentro
+// del plazo). Dinero → creditGift con reference vip-roulette-<spinId> (en manual
+// = tarea pendiente en "Pendientes GANAMOS"; el ✅ del agente pasa el spin a
+// credited). % → queda pendiente en el usuario para su próxima carga.
+app.post('/api/roulette/claim', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+    await _rouletteExpireStale({ userId });
+    const spinId = req.body && req.body.spinId ? String(req.body.spinId) : null;
+    const q = { userId, status: 'claim_pending' };
+    if (spinId) q.id = spinId;
+    const spin = await DailyRouletteSpin.findOne(q).sort({ spunAt: -1 });
+    if (!spin) {
+      const last = await DailyRouletteSpin.findOne({ userId, $or: [{ prizeARS: { $gt: 0 } }, { prizeType: 'percent' }] }).sort({ spunAt: -1 }).lean();
+      if (last && last.status === 'expired') return res.status(410).json({ error: 'Tu premio venció: el plazo para reclamarlo ya pasó.', expired: true, spin: _rouletteSpinPublic(last) });
+      return res.status(404).json({ error: 'No tenés ningún premio por reclamar.', spin: _rouletteSpinPublic(last) });
+    }
+    const premioTxt = _roulettePrizeText(spin);
+    if (spin.prizeType === 'percent' || (!(spin.prizeARS > 0) && spin.prizePct > 0)) {
+      // Reserva atómica del estado.
+      const r = await DailyRouletteSpin.updateOne({ id: spin.id, status: 'claim_pending' }, { $set: { status: 'percent_pending', claimedAt: new Date() } });
+      if (!r.modifiedCount) return res.status(409).json({ error: 'Este premio ya fue reclamado.' });
+      await User.updateOne({ id: userId }, { $set: {
+        dailyRoulettePendingPct: spin.prizePct, dailyRoulettePendingLabel: spin.prizeLabel,
+        dailyRoulettePendingSpinId: spin.id, dailyRoulettePendingAt: new Date()
+      } }).catch(() => {});
+      await _emitAdminOnlyChatNote(userId, username,
+        `🎡 RULETA — RECLAMÓ +${spin.prizePct}% EXTRA en su PRÓXIMA CARGA (${spin.prizeLabel}). Al cargarle, el modal Depositar te sugiere el bono con ese % y queda marcado como aplicado solo. También podés marcarlo usado desde Ruleta diaria.`).catch(() => {});
+      try {
+        const m = await renderSystemCommand('/sys_roulette_claimed',
+          '✅ ¡Premio reclamado! {detalle}',
+          { username, premio: premioTxt, detalle: `Tenés +${spin.prizePct}% EXTRA en tu PRÓXIMA CARGA: cuando vayas a cargar, avisale al agente y te lo suma en el momento. 🥳` });
+        if (m) await _sendSystemMessageToUser(userId, username, m);
+      } catch (_) {}
+      logger.info(`[ROULETTE] ${username} reclamó +${spin.prizePct}% (${spin.id})`);
+      const fresh = await DailyRouletteSpin.findOne({ id: spin.id }).lean();
+      return res.json({ success: true, spin: _rouletteSpinPublic(fresh) });
+    }
+    // Dinero
+    const r = await DailyRouletteSpin.updateOne({ id: spin.id, status: 'claim_pending' }, { $set: { status: 'claimed', claimedAt: new Date() } });
+    if (!r.modifiedCount) return res.status(409).json({ error: 'Este premio ya fue reclamado.' });
+    let credit;
+    try {
+      credit = await girox.creditGift(username, spin.prizeARS, { rolloverX: Number(spin.rolloverX) || 0, reference: `vip-roulette-${spin.id}`, description: `Premio ruleta diaria ${spin.prizeLabel || ''}`, flow: 'roulette' });
+    } catch (e) { credit = { success: false, error: e.message }; }
+    if (!credit || !credit.success) {
+      await DailyRouletteSpin.updateOne({ id: spin.id }, { $set: { status: 'credit_failed', creditError: String((credit && credit.error) || 'unknown').slice(0, 300) }, $inc: { creditAttempts: 1 } }).catch(() => {});
+      logger.error(`[ROULETTE] claim credit FAIL ${username} $${spin.prizeARS}: ${(credit && credit.error) || 'unknown'}`);
+      return res.status(503).json({ success: false, error: 'Reclamaste tu premio pero hubo un problema al cargarlo. Escribinos por el chat y lo resolvemos.' });
+    }
+    const txId = credit.data?.transfer_id || credit.data?.transferId || null;
+    const pendingInGanamos = !!credit.pending; // adaptador manual: tarea pendiente para el agente
+    await DailyRouletteSpin.updateOne({ id: spin.id }, {
+      $set: pendingInGanamos
+        ? { status: 'claimed', creditTxId: txId, platformTaskId: txId }
+        : { status: 'credited', creditTxId: txId, creditedAt: new Date() },
+      $inc: { creditAttempts: 1 }
+    }).catch(() => {});
+    await _recordRouletteTransaction(spin.id, userId, username, spin.prizeARS, spin.prizeLabel, txId, credit);
+    try {
+      const m = await renderSystemCommand('/sys_roulette_claimed',
+        '✅ ¡Premio reclamado! {detalle}',
+        { username, premio: premioTxt, detalle: pendingInGanamos ? `En unos minutos un agente te carga ${premioTxt} en tu usuario de GANAMOS y te avisamos por acá. 🎰` : `${premioTxt} ya están en tu cuenta. ¡A jugar! 🎰` });
+      if (m) await _sendSystemMessageToUser(userId, username, m);
+    } catch (_) {}
+    logger.info(`[ROULETTE] ${username} reclamó $${spin.prizeARS} (${spin.id}) → ${pendingInGanamos ? 'PENDIENTE GANAMOS ' + txId : 'acreditado tx=' + txId}`);
+    const fresh = await DailyRouletteSpin.findOne({ id: spin.id }).lean();
+    return res.json({ success: true, spin: _rouletteSpinPublic(fresh) });
+  } catch (err) {
+    logger.error(`/api/roulette/claim: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// #197 POST /api/admin/roulette/:id/mark-used — el agente marca aplicado un % reclamado
+// (lo normal es que se consuma solo al cargar con bono; esto es el atajo manual).
+app.post('/api/admin/roulette/:id/mark-used', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const spin = await DailyRouletteSpin.findOne({ id: req.params.id });
+    if (!spin) return res.status(404).json({ error: 'Spin no encontrado' });
+    if (spin.status !== 'percent_pending') return res.status(400).json({ error: 'Este premio no está pendiente de aplicar.' });
+    const agent = req.user.username;
+    const u = await User.findOne({ id: spin.userId }).select('id dailyRoulettePendingSpinId').lean();
+    if (u && u.dailyRoulettePendingSpinId === spin.id) {
+      await _consumeRoulettePercent(spin.userId, agent, null);
+    } else {
+      await DailyRouletteSpin.updateOne({ id: spin.id }, { $set: { status: 'percent_used', creditedAt: new Date(), agentDoneAt: new Date(), agentDoneBy: agent } });
+      await _emitAdminOnlyChatNote(spin.userId, spin.username, `✅ RULETA: el +${spin.prizePct}% EXTRA fue marcado como APLICADO por ${agent}.`).catch(() => {});
+    }
+    await DailyRouletteSpin.updateOne({ id: spin.id }, { $set: { agentDoneAt: new Date(), agentDoneBy: agent } }).catch(() => {});
+    res.json({ success: true });
+  } catch (err) {
+    logger.error(`/api/admin/roulette/:id/mark-used: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
   }
 });
@@ -18861,17 +18974,35 @@ app.get('/api/admin/roulette/stats', authMiddleware, adminMiddleware, async (req
   try {
     const days = Math.max(1, Math.min(90, Number(req.query.days) || 14));
     const cutoff = new Date(Date.now() - days * 24 * 3600 * 1000);
+    await _rouletteExpireStale(); // #197
 
+    // #197 contadores por tipo de premio y etapa del reclamo.
+    const isCash = { $gt: ['$prizeARS', 0] };
+    const isPct = { $eq: ['$prizeType', 'percent'] };
+    const claimedStatuses = ['claimed', 'credited', 'credit_failed', 'won', 'percent_pending', 'percent_used'];
+    const c = (cond) => ({ $sum: { $cond: [cond, 1, 0] } });
+    const groupFields = {
+      spins: { $sum: 1 },
+      winners: c({ $or: [isCash, isPct] }),
+      totalGiven: { $sum: { $cond: [{ $in: ['$status', ['credited', 'won']] }, '$prizeARS', 0] } },
+      totalPending: { $sum: { $cond: [{ $eq: ['$status', 'credit_failed'] }, '$prizeARS', 0] } },
+      cashWinners: c(isCash),
+      cashClaimed: c({ $and: [isCash, { $in: ['$status', claimedStatuses] }] }),
+      cashLoaded: c({ $and: [isCash, { $in: ['$status', ['credited', 'won']] }] }),
+      cashAwaitingAgent: c({ $and: [isCash, { $eq: ['$status', 'claimed'] }] }),
+      cashExpired: c({ $and: [isCash, { $eq: ['$status', 'expired'] }] }),
+      cashOpen: c({ $and: [isCash, { $eq: ['$status', 'claim_pending'] }] }),
+      pctWinners: c(isPct),
+      pctClaimed: c({ $and: [isPct, { $in: ['$status', claimedStatuses] }] }),
+      pctUsed: c({ $and: [isPct, { $eq: ['$status', 'percent_used'] }] }),
+      pctAwaitingAgent: c({ $and: [isPct, { $eq: ['$status', 'percent_pending'] }] }),
+      pctExpired: c({ $and: [isPct, { $eq: ['$status', 'expired'] }] }),
+      pctOpen: c({ $and: [isPct, { $eq: ['$status', 'claim_pending'] }] })
+    };
     const [byDay, byPrize, totals] = await Promise.all([
       DailyRouletteSpin.aggregate([
         { $match: { spunAt: { $gte: cutoff } } },
-        { $group: {
-          _id: '$dateKey',
-          spins: { $sum: 1 },
-          winners: { $sum: { $cond: [{ $or: [{ $gt: ['$prizeARS', 0] }, { $eq: ['$prizeType', 'percent'] }] }, 1, 0] } }, // #188 los % también son premio
-          totalGiven: { $sum: { $cond: [{ $eq: ['$status', 'credited'] }, '$prizeARS', 0] } },
-          totalPending: { $sum: { $cond: [{ $eq: ['$status', 'credit_failed'] }, '$prizeARS', 0] } }
-        }},
+        { $group: { _id: '$dateKey', ...groupFields } },
         { $sort: { _id: -1 } }
       ]),
       DailyRouletteSpin.aggregate([
@@ -18881,24 +19012,23 @@ app.get('/api/admin/roulette/stats', authMiddleware, adminMiddleware, async (req
       ]),
       DailyRouletteSpin.aggregate([
         { $match: { spunAt: { $gte: cutoff } } },
-        { $group: {
-          _id: null,
-          spinsTotal: { $sum: 1 },
-          winnersTotal: { $sum: { $cond: [{ $or: [{ $gt: ['$prizeARS', 0] }, { $eq: ['$prizeType', 'percent'] }] }, 1, 0] } },
-          givenTotal: { $sum: { $cond: [{ $eq: ['$status', 'credited'] }, '$prizeARS', 0] } },
-          pendingTotal: { $sum: { $cond: [{ $eq: ['$status', 'credit_failed'] }, '$prizeARS', 0] } }
-        }}
+        { $group: { _id: null, ...groupFields } }
       ])
     ]);
-
+    const t = totals[0] || {};
     res.json({
       success: true,
       days,
       since: cutoff.toISOString(),
+      claimHours: await getRouletteClaimHours(),
       prizes: ROULETTE_PRIZES,
       byDay,
       byPrize,
-      totals: totals[0] || { spinsTotal: 0, winnersTotal: 0, givenTotal: 0, pendingTotal: 0 }
+      totals: {
+        spinsTotal: t.spins || 0, winnersTotal: t.winners || 0, givenTotal: t.totalGiven || 0, pendingTotal: t.totalPending || 0,
+        cash: { winners: t.cashWinners || 0, claimed: t.cashClaimed || 0, loaded: t.cashLoaded || 0, awaitingAgent: t.cashAwaitingAgent || 0, expired: t.cashExpired || 0, open: t.cashOpen || 0 },
+        percent: { winners: t.pctWinners || 0, claimed: t.pctClaimed || 0, used: t.pctUsed || 0, awaitingAgent: t.pctAwaitingAgent || 0, expired: t.pctExpired || 0, open: t.pctOpen || 0 }
+      }
     });
   } catch (err) {
     logger.error(`/api/admin/roulette/stats: ${err.message}`);
@@ -18911,8 +19041,10 @@ app.get('/api/admin/roulette/history', authMiddleware, adminMiddleware, async (r
   try {
     const page = Math.max(1, Number(req.query.page) || 1);
     const pageSize = Math.max(10, Math.min(200, Number(req.query.pageSize) || 50));
+    await _rouletteExpireStale(); // #197
     const filter = {};
-    if (req.query.status) filter.status = String(req.query.status);
+    if (req.query.status === 'agent') filter.status = { $in: ['claimed', 'percent_pending', 'credit_failed'] }; // #197 lo que tiene que hacer el agente
+    else if (req.query.status) filter.status = String(req.query.status);
     if (req.query.minPrize) filter.prizeARS = { $gte: Number(req.query.minPrize) };
     if (req.query.username) filter.username = String(req.query.username).toLowerCase();
 

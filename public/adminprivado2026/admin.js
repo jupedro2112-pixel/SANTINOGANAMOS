@@ -10352,6 +10352,23 @@ async function loadRouletteAdmin() {
         html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,215,0,0.35);border-radius:10px;padding:11px;text-align:center;"><div style="color:#aaa;font-size:10.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">$ Regalado</div><div style="color:#ffd700;font-size:22px;font-weight:900;margin-top:2px;">' + fmtMoney(t.givenTotal) + '</div></div>';
         if (t.pendingTotal > 0) html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,128,128,0.35);border-radius:10px;padding:11px;text-align:center;"><div style="color:#aaa;font-size:10.5px;font-weight:800;letter-spacing:1px;text-transform:uppercase;">$ Pendiente</div><div style="color:#ff8080;font-size:22px;font-weight:900;margin-top:2px;">' + fmtMoney(t.pendingTotal) + '</div><div style="color:#888;font-size:10px;">credit fallido</div></div>';
         html += '</div>';
+        // #197 Reclamos por tipo de premio.
+        const cs = t.cash || {}, ps = t.percent || {};
+        const card = (title, color, rows) => '<div style="flex:1;min-width:250px;background:rgba(0,0,0,0.30);border:1px solid ' + color + '55;border-radius:10px;padding:11px 13px;">'
+            + '<div style="color:' + color + ';font-size:11px;font-weight:900;letter-spacing:1px;text-transform:uppercase;margin-bottom:6px;">' + title + '</div>'
+            + rows.map(r => '<div style="display:flex;justify-content:space-between;font-size:12px;color:#ddd;padding:2px 0;border-top:1px solid rgba(255,255,255,0.05);"><span>' + r[0] + '</span><b style="color:' + (r[2] || '#fff') + ';">' + fmtNum(r[1]) + '</b></div>').join('')
+            + '</div>';
+        html += '<div style="display:flex;gap:10px;flex-wrap:wrap;margin-bottom:14px;">';
+        html += card('💰 Premios en dinero', '#ffd700', [
+            ['Ganaron', cs.winners], ['Reclamaron', cs.claimed, '#66ff66'], ['⏳ Por reclamar (vigentes)', cs.open, '#ffb84d'],
+            ['📥 Reclamados, falta cargar en GANAMOS', cs.awaitingAgent, '#ff8c5a'], ['✅ Cargados', cs.loaded, '#66ff66'], ['⌛ Vencidos sin reclamar', cs.expired, '#ff8080']
+        ]);
+        html += card('🎁 Bonificación % próx. carga', '#d9a6ff', [
+            ['Ganaron el bono', ps.winners], ['Reclamaron', ps.claimed, '#66ff66'], ['⏳ Por reclamar (vigentes)', ps.open, '#ffb84d'],
+            ['📥 Reclamados, falta aplicar en la carga', ps.awaitingAgent, '#ff8c5a'], ['✅ Aplicados', ps.used, '#66ff66'], ['⌛ Vencidos sin reclamar', ps.expired, '#ff8080']
+        ]);
+        html += '</div>';
+        html += '<div style="font-size:11px;color:#aaa;margin-bottom:12px;line-height:1.5;">El cliente tiene <b style="color:#ffd700;">' + escapeHtml(String(stats.claimHours || 24)) + ' h</b> para tocar "Reclamar premio" en la app (se cambia en COMANDOS → <code>/sys_roulette_claim_hours</code>). Dinero reclamado = tarea en <b>Pendientes GANAMOS</b> (o el botón ✅ de abajo); % reclamado = el modal Depositar lo sugiere en su próxima carga, o marcalo usado acá.</div>';
 
         // === Por día ===
         if ((stats.byDay || []).length > 0) {
@@ -10414,8 +10431,12 @@ async function loadRouletteAdmin() {
                     won:           '<span style="background:rgba(255,170,102,0.15);color:#ffaa66;border:1px solid #ffaa66;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">⏳ PROCESANDO</span>',
                     credited:      '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">✅ ACREDITADO</span>',
                     credit_failed: '<span style="background:rgba(255,128,128,0.15);color:#ff8080;border:1px solid #ff8080;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">❌ FALLO</span>',
-                    percent_pending: '<span style="background:rgba(217,166,255,0.15);color:#d9a6ff;border:1px solid #d9a6ff;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">🎁 % PENDIENTE</span>',
-                    percent_used:    '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">✅ % APLICADO</span>'
+                    percent_pending: '<span style="background:rgba(217,166,255,0.15);color:#d9a6ff;border:1px solid #d9a6ff;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">📥 % RECLAMADO · aplicar en su carga</span>',
+                    percent_used:    '<span style="background:rgba(102,255,102,0.15);color:#66ff66;border:1px solid #66ff66;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">✅ % APLICADO</span>',
+                    // #197 etapas del reclamo
+                    claim_pending:   '<span style="background:rgba(255,184,77,0.15);color:#ffb84d;border:1px solid #ffb84d;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">⏳ POR RECLAMAR' + (it.claimExpiresAt ? ' · vence ' + escapeHtml(fmtFechaHoraAR(it.claimExpiresAt)) : '') + '</span>',
+                    claimed:         '<span style="background:rgba(255,140,90,0.15);color:#ff8c5a;border:1px solid #ff8c5a;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">📥 RECLAMADO · cargar en GANAMOS</span>',
+                    expired:         '<span style="background:rgba(255,128,128,0.12);color:#ff8080;border:1px solid #ff8080;padding:2px 7px;border-radius:5px;font-size:10px;font-weight:800;">⌛ VENCIDO</span>'
                 }[it.status] || it.status;
                 html += '<tr style="border-top:1px solid rgba(255,255,255,0.05);">';
                 html += '<td style="padding:7px 10px;color:#aaa;font-size:10.5px;white-space:nowrap;">' + escapeHtml(when) + '</td>';
@@ -10423,8 +10444,17 @@ async function loadRouletteAdmin() {
                 html += '<td style="padding:7px 10px;text-align:right;color:' + (it.prizeARS >= 10000 ? '#ffd700' : (it.prizeARS >= 1000 ? '#ff8c5a' : (it.prizeARS > 0 ? '#aaffaa' : '#888'))) + ';font-weight:800;">' + (it.prizeARS > 0 ? fmtMoney(it.prizeARS) : (it.prizeType === 'percent' ? '<span style="color:#d9a6ff;">+' + escapeHtml(String(it.prizePct || 0)) + '% próx. carga</span>' : '—')) + '</td>';
                 html += '<td style="padding:7px 10px;text-align:center;">' + statusBadge + '</td>';
                 html += '<td style="padding:7px 10px;color:#888;font-size:10px;font-family:monospace;">';
-                if (it.status === 'credited' && it.creditTxId) {
-                    html += escapeHtml(String(it.creditTxId).slice(0, 18));
+                if (it.status === 'credited') {
+                    html += (it.agentDoneBy ? '✅ ' + escapeHtml(it.agentDoneBy) + (it.agentDoneAt ? ' · ' + escapeHtml(fmtFechaHoraAR(it.agentDoneAt)) : '') : (it.creditTxId ? escapeHtml(String(it.creditTxId).slice(0, 18)) : '—'));
+                } else if (it.status === 'claimed' && it.platformTaskId) {
+                    // #197 dinero reclamado en modo manual: el agente lo carga en GANAMOS y marca hecho (misma tarea que en Pendientes GANAMOS)
+                    html += '<button onclick="rouletteMarkLoaded(\'' + rouletteEscapeJsArg(it.platformTaskId) + '\')" style="background:rgba(102,255,102,0.12);color:#66ff66;border:1px solid rgba(102,255,102,0.45);padding:3px 8px;border-radius:5px;font-size:10px;font-weight:800;cursor:pointer;">✅ Ya lo cargué</button>'
+                        + (it.claimedAt ? '<div style="color:#888;">reclamó ' + escapeHtml(fmtFechaHoraAR(it.claimedAt)) + '</div>' : '');
+                } else if (it.status === 'percent_pending') {
+                    html += '<button onclick="rouletteMarkUsed(\'' + rouletteEscapeJsArg(it.id) + '\')" style="background:rgba(217,166,255,0.12);color:#d9a6ff;border:1px solid rgba(217,166,255,0.45);padding:3px 8px;border-radius:5px;font-size:10px;font-weight:800;cursor:pointer;">✓ Marcar aplicado</button>'
+                        + (it.claimedAt ? '<div style="color:#888;">reclamó ' + escapeHtml(fmtFechaHoraAR(it.claimedAt)) + '</div>' : '');
+                } else if (it.status === 'percent_used') {
+                    html += it.agentDoneBy ? '✅ ' + escapeHtml(it.agentDoneBy) : '—';
                 } else if (it.status === 'credit_failed') {
                     html += '<button onclick="retryRouletteCredit(\'' + rouletteEscapeJsArg(it.id) + '\')" style="background:rgba(0,212,255,0.10);color:#00d4ff;border:1px solid rgba(0,212,255,0.40);padding:3px 8px;border-radius:5px;font-size:10px;font-weight:700;cursor:pointer;">🔁 Reintentar</button>';
                 } else {
@@ -10442,8 +10472,33 @@ async function loadRouletteAdmin() {
     }
 }
 
+// #197 Dinero reclamado (modo manual): marcar HECHA la PlatformTask del premio.
+async function rouletteMarkLoaded(taskId) {
+    if (!confirm('¿Ya cargaste este premio en el panel de GANAMOS? Se marca como hecho y se le avisa al cliente.')) return;
+    try {
+        const r = await authFetch('/api/admin/platform-tasks/' + encodeURIComponent(taskId) + '/done', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({}) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || d.error) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Premio marcado como cargado', 'success');
+        loadRouletteAdmin();
+        if (typeof refreshPlatformTasksBadge === 'function') refreshPlatformTasksBadge();
+    } catch (e) { alert('Error de conexión'); }
+}
+// #197 % reclamado: marcarlo aplicado a mano (lo normal es que se consuma solo al cargar con bono).
+async function rouletteMarkUsed(spinId) {
+    if (!confirm('¿Marcar este % como APLICADO? Hacelo sólo si ya se lo sumaste en una carga.')) return;
+    try {
+        const r = await rouletteAuthFetch('/api/admin/roulette/' + encodeURIComponent(spinId) + '/mark-used', { method: 'POST', headers: { 'Content-Type': 'application/json' } });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.success) { alert('❌ ' + (d.error || 'Error')); return; }
+        showToast('✅ Marcado como aplicado', 'success');
+        loadRouletteAdmin();
+    } catch (e) { alert('Error de conexión'); }
+}
+window.rouletteMarkLoaded = rouletteMarkLoaded; window.rouletteMarkUsed = rouletteMarkUsed;
+
 async function retryRouletteCredit(spinId) {
-    if (!confirm('¿Reintentar la acreditación de este premio? Va a llamar a 1girox para acreditar al saldo del user.')) return;
+    if (!confirm('¿Reintentar la acreditación de este premio? En GANAMOS vuelve a crear la tarea pendiente para el agente.')) return;
     try {
         const r = await rouletteAuthFetch('/api/admin/roulette/' + encodeURIComponent(spinId) + '/retry-credit', {
             method: 'POST',

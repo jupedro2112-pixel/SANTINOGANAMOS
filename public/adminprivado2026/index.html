@@ -1801,6 +1801,7 @@ document.addEventListener('change', function (ev) {
                     <div style="color:#bbb;font-size:11px;margin-bottom:9px;line-height:1.5;">
                         Cada fila es un premio. <b>Dinero</b> = fichas que se acreditan solas como BONO<span class="manual-hide"> (con el rollover que pongas acá; si el <b>rollover GLOBAL</b> está activado, manda el global)</span>.
                         <b>Bonificación</b> = un % EXTRA en la PRÓXIMA CARGA del cliente (queda pendiente, el modal Depositar lo sugiere y se marca aplicado solo).
+                        <b>Reclamo (#197):</b> todo premio nace "por reclamar"; el cliente tiene las horas de <code>/sys_roulette_claim_hours</code> (COMANDOS, default 24) para tocar RECLAMAR en la app o vence. Dinero reclamado → tarea en Pendientes GANAMOS; % reclamado → se aplica en su próxima carga.
                         <b>Peso</b> = probabilidad relativa; la columna <b>Prob.</b> muestra el % real que sale de la suma de pesos. Dejá al menos un "Sin premio".
                     </div>
                     <div id="roulettePrizesGlobalHint" style="font-size:11px;color:#ffb347;margin-bottom:8px;display:none;"></div>

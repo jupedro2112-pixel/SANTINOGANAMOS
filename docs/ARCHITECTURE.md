@@ -969,6 +969,23 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   `vip-refcom-<payoutId>` reusando el documento de intentos fallidos). La comisión es
   netwin del referido × el % del comando `/sys_referral_pct` (3% default, #195; el
   motor llama `refreshReferralPct(true)` antes de calcular). Ver §4.6.
+- **Ruleta diaria — RECLAMO con vencimiento (#197):** `POST /api/roulette/spin` ya no
+  acredita: crea el `DailyRouletteSpin` en `claim_pending` con `claimExpiresAt = ahora +
+  horas(/sys_roulette_claim_hours)` y manda `/sys_roulette_won` al chat. `GET
+  /api/roulette/status` devuelve `spin` (hoy) y `openPrize` (premio de otro día aún
+  abierto), `claimHours`, y barre vencidos del usuario. `POST /api/roulette/claim`:
+  dinero → `claimed` + `creditGift(reference vip-roulette-<spinId>, flow roulette)` (en
+  manual queda `platformTaskId` y el listener de PlatformTask pasa el spin a `credited`
+  al ✅ del agente, o `credit_failed` si la rechaza; con API pasa directo a `credited`)
+  + Transaction `roulette`; % → `percent_pending` + `dailyRoulettePendingPct` en el
+  usuario (se consume en la carga con bono o con `POST /api/admin/roulette/:id/
+  mark-used`). `GET /api/admin/roulette/stats` trae `totals.cash` y `totals.percent`
+  {winners, claimed, open, awaitingAgent, loaded|used, expired}; `history?status=agent`
+  lista lo que le falta hacer al agente. Estados del spin: `no_prize | claim_pending |
+  expired | claimed | credited | credit_failed | percent_pending | percent_used` (+ `won`
+  legacy). Panel: sección Ruleta diaria con las dos cards de reclamo y botones
+  "✅ Ya lo cargué" / "✓ Marcar aplicado". PWA: celda bloqueada "Instalá la app" si
+  falta la PWA con notificaciones; caja del premio con cuenta regresiva y RECLAMAR.
 - **Ruleta diaria** (#188, premios y elegibilidad EDITABLES): `Config['dailyRoulette']`
   = `{ prizes:[{label, emoji, type, value, rolloverX, weight}], minCargas30d,
   requireApp }` (`getDailyRouletteConfig`; default = pirámide histórica + 10 cargas +

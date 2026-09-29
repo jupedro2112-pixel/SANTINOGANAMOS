@@ -44,12 +44,24 @@ const spinSchema = new mongoose.Schema({
   // Si prizeARS=0, status='no_prize'.
   status: {
     type: String,
-    // percent_pending: ganó un % en la próxima carga (lo aplica el agente);
-    // percent_used: ya se aplicó en una carga.
-    enum: ['no_prize', 'won', 'credited', 'credit_failed', 'percent_pending', 'percent_used'],
+    // #197 FLUJO CON RECLAMO (2026-09-29): todo premio nace `claim_pending` y el
+    // cliente tiene `claimExpiresAt` (N horas, comando /sys_roulette_claim_hours)
+    // para tocar RECLAMAR en la app; si no, pasa a `expired`.
+    //   dinero:  claim_pending → claimed (tarea en "Pendientes GANAMOS" / acreditado
+    //            por API) → credited (el agente la marcó ✅) | credit_failed.
+    //   %:       claim_pending → percent_pending (queda en el usuario para su
+    //            próxima carga) → percent_used (aplicado por el agente).
+    // `won` es el estado legacy (premio acreditado sin reclamo).
+    enum: ['no_prize', 'won', 'credited', 'credit_failed', 'percent_pending', 'percent_used', 'claim_pending', 'claimed', 'expired'],
     default: 'won',
     index: true
   },
+  // #197 reclamo con vencimiento
+  claimExpiresAt: { type: Date, default: null, index: true },
+  claimedAt: { type: Date, default: null },
+  platformTaskId: { type: String, default: null }, // PlatformTask (modo manual) creada al reclamar dinero
+  agentDoneAt: { type: Date, default: null },
+  agentDoneBy: { type: String, default: null },
   creditTxId: { type: String, default: null, index: true },
   creditError: { type: String, default: null },
   creditedAt: { type: Date, default: null },

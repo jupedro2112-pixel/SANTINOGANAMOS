@@ -176,9 +176,19 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   manual, pisando el bono del agente si hay pendientes; nunca en multicuenta) vía
   `_pendingBonusFor` + `_settlePendingBonuses`. Un flujo de carga nuevo tiene que
   pasar por ahí.
-- **Ninguna push puede mencionar la RULETA** (2026-09-07): la ruleta diaria no está
-  activa; `notificationService.isRouletteText` bloquea el envío en las 5 funciones
-  (`blocked:'roulette'`) y el seed del boot migra reglas/plantillas guardadas.
+- **Ninguna PUSH puede mencionar la RULETA** (2026-09-07): `notificationService.isRouletteText`
+  bloquea el envío en las 5 funciones (`blocked:'roulette'`) y el seed del boot migra
+  reglas/plantillas guardadas. Los mensajes de CHAT (`_sendSystemMessageToUser`) sí pueden.
+- **Ruleta diaria = CON RECLAMO y vencimiento (#197, 2026-09-29):** ningún premio se
+  acredita solo. Nace `claim_pending` y el cliente tiene las horas del comando
+  `/sys_roulette_claim_hours` (COMANDOS, default 24) para tocar RECLAMAR en la app, si
+  no pasa a `expired` (barrido perezoso `_rouletteExpireStale`, sin cron). Dinero
+  reclamado → `creditGift` (manual: PlatformTask pendiente, spin `claimed` →
+  `credited` cuando el agente marca ✅; el listener de tareas lo refleja). % reclamado
+  → `percent_pending` en el usuario (se aplica en su próxima carga o "Marcar aplicado"
+  en el panel). Requisito: app instalada con notificaciones (`requireApp`); sin eso la
+  PWA muestra la celda bloqueada "Instalá la app". Mensajes: `/sys_roulette_won`,
+  `/sys_roulette_claimed`.
 - **Username tomado en 1girox por OTRA estructura** (2026-09-07):
   `syncUserToPlatform` devuelve `code:'username_taken_foreign'` y TODAS las altas
   rebotan sin dejar cuenta local (una cuenta así "vinculada" es inoperable para

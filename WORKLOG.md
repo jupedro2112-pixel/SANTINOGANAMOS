@@ -37,6 +37,47 @@
 
 ---
 
+## Sesión 2026-09-29 (8ª) — Ruleta diaria: RECLAMO del premio con vencimiento + vista del agente
+
+### 197. La ruleta está activa; premios "por reclamar" (N horas desde COMANDOS), requisito app+notifs visible, sección admin con reclamos por tipo y acciones del agente
+- **Pregunta del owner: "¿la ruleta está activa? no me aparece".** SÍ está activa (no
+  hay flag de apagado). No aparecía porque `renderHomeCard` OCULTABA la celda cuando el
+  usuario no tiene la PWA instalada con notificaciones (`needsAppNotifs`), que es el
+  caso al probar desde el navegador. Ahora la celda se muestra BLOQUEADA ("🔒 RULETA ·
+  Instalá la app") y al tocarla abre el modal con los 3 pasos. El requisito "app
+  instalada con notificaciones" ya existía (`requireApp`, token FCM standalone) y queda.
+- **Reclamo con vencimiento (pedido):** el premio (dinero o %) ya NO se acredita solo.
+  `spin` → `claim_pending` + `claimExpiresAt` (horas del comando nuevo
+  **`/sys_roulette_claim_hours`**, default 24) + mensaje `/sys_roulette_won` al chat
+  ("tenés {horas} h, vence {vence}"). Nuevo `POST /api/roulette/claim`: dinero →
+  `claimed` + `creditGift` (manual: tarea en "Pendientes GANAMOS", `platformTaskId`;
+  el listener de tareas pasa el spin a `credited` al ✅ del agente o `credit_failed` si
+  la rechaza) + Transaction `roulette` + `/sys_roulette_claimed`; % → `percent_pending`
+  + `dailyRoulettePendingPct` (se consume solo en la carga con bono, o "Marcar
+  aplicado"). Vencidos: `expired` por barrido perezoso (`_rouletteExpireStale`) en
+  status/claim/listados; sin cron. `status` devuelve además `openPrize` (premio de
+  otro día aún abierto) y `claimHours`.
+- **PWA (SW v112, `roulette.js`):** `_prizeBox` por etapa (por reclamar con cuenta
+  regresiva + botón "🎁 RECLAMAR PREMIO", vencido, reclamado "en unos minutos un agente
+  te lo carga", cargado, % reclamado/aplicado, fallo); `claim()`; subtítulos
+  "¡RECLAMÁ!" / "Venció" / "Cargando…" en la celda; textos sin "se acredita solo".
+- **Panel (admin-sw v44):** en Ruleta diaria dos cards: **Premios en dinero** (ganaron,
+  reclamaron, por reclamar vigentes, reclamados sin cargar, cargados, vencidos) y
+  **Bonificación %** (ganaron el bono, reclamaron, por reclamar, reclamados sin
+  aplicar, aplicados, vencidos); nota con las horas vigentes. Historial con estados
+  nuevos y acciones: "✅ Ya lo cargué" (marca hecha la PlatformTask, misma que en
+  Pendientes GANAMOS) y "✓ Marcar aplicado" (`POST /api/admin/roulette/:id/mark-used`).
+  `history?status=agent` filtra lo pendiente del agente.
+- **Comandos nuevos (seed):** `/sys_roulette_claim_hours` (número), `/sys_roulette_won`
+  ({username} {premio} {horas} {vence}), `/sys_roulette_claimed` ({premio} {detalle}).
+- **Modelo `DailyRouletteSpin`:** estados `claim_pending | claimed | expired` +
+  `claimExpiresAt`, `claimedAt`, `platformTaskId`, `agentDoneAt`, `agentDoneBy`.
+- **Validado:** `node --check` (server, modelo, roulette.js, admin.js, SWs),
+  `check-tdz` ✅. No se pudo levantar el server. **Probar en deploy:** girar desde la
+  app instalada → mensaje "ganaste… tenés 24 h" → RECLAMAR → aparece en Pendientes
+  GANAMOS y en Ruleta diaria → ✅ → cliente recibe "ya te cargamos"; dejar vencer un
+  premio → "Venció"; cambiar `/sys_roulette_claim_hours` a 1 y ver el plazo nuevo.
+
 ## Sesión 2026-09-29 (7ª) — GANAMOS sin rollover ni reembolsos: limpieza integral + imágenes GANAMOS
 
 ### 196. Se eliminan rollover, reembolsos, reembolso en vivo, rakeback y niveles VIP de todo lo que ve el cliente y el agente en modo manual; logo/banners de GANAMOS
