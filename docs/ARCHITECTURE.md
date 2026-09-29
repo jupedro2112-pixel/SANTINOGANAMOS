@@ -143,8 +143,8 @@ El sistema VIPCARGAS:
   comprobantes) y **retiros** (self-service con confirmación de agente y pago
   automático por hgcash).
 - Da **reembolsos** sobre la pérdida real/NETWIN (diario/semanal/mensual), **ruleta
-  diaria**, **fueguito** (racha), **bono instalación $5.000**, **referidos** (8% de
-  netwin → owner-revenue, y 7% de eso al referidor) y **campañas/publicistas** con
+  diaria**, **fueguito** (racha), **bono instalación $5.000**, **referidos** (el referidor
+  cobra un % del netwin de sus referidos: comando `/sys_referral_pct`, 3% por defecto, #195) y **campañas/publicistas** con
   sub-atribución por influencer.
 - El "saldo real" del jugador vive en 1girox; VIPCARGAS guarda atribución, bonos,
   reclamos y el registro permanente de transacciones.
@@ -578,8 +578,13 @@ salen de la MISMA Partner API, con la misma `X-Api-Key` y por **username**:
   el manual): se trata igual — sin stats.
 
 **La comisión de referidos no viene del proveedor:** 1girox devuelve todos los campos
-`commission` en 0, así que la tasa es NUESTRA: `GIROX_REFERRAL_COMMISSION_PCT`
-(default **8%** del netwin = owner-revenue), y sobre eso va la tasa del referidor.
+`commission` en 0, así que la tasa es NUESTRA y es UNA sola (`src/utils/referralRate.js`):
+`netwin del referido × %`. El % sale del comando **`/sys_referral_pct`** de COMANDOS
+(su `response` es el número; default **3**, #195), con fallback a la env
+`GIROX_REFERRAL_COMMISSION_PCT` y override por usuario `referralRateOverride`. El mismo
+valor alimenta `GET /api/public/config.referralPct`, `GET /api/referrals/me.referralPct`
+(el del usuario) y la variable `{referral_pct}` de cualquier `/sys_*`; la PWA lo pinta
+en los `<span class="referral-pct">` / `.referral-pct-example` (`platformmode.js`).
 
 **`giroxUserId`** — el propio `stats` devuelve el ID numérico del jugador y los flujos
 lo persisten "gratis" (update condicional sólo si estaba vacío). Ya NO bloquea nada:
@@ -629,7 +634,7 @@ tenían los 4 clientes viejos.
 | `GIROX_PLAY_URL` | `https://1girox.com` | Sitio del jugador (fallback si el SSO falla) |
 | `GIROX_NETWIN_SCOPE` | `casino` | `casino` \| `total` (incluiría sports) en reembolsos/comisiones |
 | `GIROX_MAX_RPM` | `55` | Techo local de requests/min **por instancia** |
-| `GIROX_REFERRAL_COMMISSION_PCT` | `8` | % de netwin que es owner-revenue (el proveedor ya no la informa) |
+| `GIROX_REFERRAL_COMMISSION_PCT` | `3` | Fallback del % de referidos si el comando `/sys_referral_pct` está vacío/inválido (#195) |
 | `VIP_USD_ARS_RATE` | `1500` | Tasa USD→ARS de los umbrales VIP (los umbrales de Stake están en USD) |
 | `VIP_WAGER_SCOPE` | `casino` | Qué apostado suma para el nivel (`casino` \| `total`) |
 | `VIP_WAGER_EPOCH` | `2026-07` | Primer mes que se acumula (cuando arrancó 1girox) |
@@ -932,9 +937,9 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   solo porque los buckets se recalculan con `$set`).
 - **Referidos**: preview/calculate (delta incremental sobre ledger de payouts) /
   payout (acredita con `giroxService.creditUserBalance`, reference
-  `vip-refcom-<payoutId>` reusando el documento de intentos fallidos). El revenue sale
-  del netwin del panel × `GIROX_REFERRAL_COMMISSION_PCT` (8%) y sobre eso la tasa del
-  referidor (7%). Ver §4.6.
+  `vip-refcom-<payoutId>` reusando el documento de intentos fallidos). La comisión es
+  netwin del referido × el % del comando `/sys_referral_pct` (3% default, #195; el
+  motor llama `refreshReferralPct(true)` antes de calcular). Ver §4.6.
 - **Ruleta diaria** (#188, premios y elegibilidad EDITABLES): `Config['dailyRoulette']`
   = `{ prizes:[{label, emoji, type, value, rolloverX, weight}], minCargas30d,
   requireApp }` (`getDailyRouletteConfig`; default = pirámide histórica + 10 cargas +

@@ -9,6 +9,7 @@ const referralCalculationService = require('../services/referralCalculationServi
 const referralPayoutService = require('../services/referralPayoutService');
 const { getCurrentPeriodKey, getPreviousPeriodKey, getPeriodLabel, getPeriodRange, getNextPeriodLabel } = require('../utils/periodKey');
 const { generateReferralCode } = require('../utils/referralCode');
+const { getReferralPctForUser } = require('../utils/referralRate');
 const logger = require('../utils/logger');
 
 // Validate period key format (YYYY-MM)
@@ -110,12 +111,15 @@ const getMyReferralInfo = asyncHandler(async (req, res) => {
   ]);
 
   const historicalTotal = totalCredited[0]?.total || 0;
+  // #195: % que cobra ESTE usuario (override puntual o el de /sys_referral_pct) para los textos de la PWA.
+  const referralPct = await getReferralPctForUser(user);
 
   res.json({
     status: 'success',
     data: {
       referralCode: user.referralCode,
       referralLink,
+      referralPct,
       totalReferred,
       activeReferred,
       currentPeriod,

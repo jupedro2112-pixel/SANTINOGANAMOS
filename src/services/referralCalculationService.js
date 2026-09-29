@@ -14,13 +14,13 @@
  *      integración (si 1girox le cambiaba el HTML/Bearer, se caían las comisiones).
  *
  * La comisión del owner NO la define el proveedor — es NUESTRA tasa fija
- * (ver `utils/referralRate.js`, 8% por defecto).
+ * (ver `utils/referralRate.js`: comando /sys_referral_pct, 3% por defecto).
  * Los montos vienen en PESOS: no se divide por 100 en ningún lado.
  */
 const { v4: uuidv4 } = require('uuid');
 const { User, ReferralCommission, ReferralPayout } = require('../models');
 const giroxService = require('./platformService');
-const { getReferralRateForUser, getConfiguredRate } = require('../utils/referralRate');
+const { getReferralRateForUser, getConfiguredRate, refreshReferralPct } = require('../utils/referralRate');
 const { getPeriodRange } = require('../utils/periodKey');
 const logger = require('../utils/logger');
 
@@ -358,6 +358,9 @@ async function calculateCommissionsForPeriod(periodKey, options = {}) {
   // cálculo sin verificarlo; si se corrige, corregir también los reembolsos.
   const { fromDate, toDate } = getPeriodRange(periodKey);
   const usersNeedingRevenue = referredUsers.filter(u => !u.excludedFromReferral);
+  // #195: la tasa sale del comando /sys_referral_pct (COMANDOS). Se relee acá para que
+  // los getters sincrónicos de abajo usen el valor vigente y no uno cacheado viejo.
+  await refreshReferralPct(true);
   const prefetch = await fetchRevenuesForUsers(usersNeedingRevenue, periodKey, fromDate, toDate);
   const revenueByReferredId = prefetch.revenueByUserId;
   const batchRequests = prefetch.requests;

@@ -178,6 +178,11 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `PUBLISHER_ADMIN_ALLOWED_PATHS`).
 - **Auth:** JWT por header Authorization O por cookie httpOnly `admin_api_session`
   (el panel admin usa cookie).
+- **% de referidos = comando `/sys_referral_pct`** (#195, 2026-09-29): su texto es el
+  NÚMERO (default 3). Lo lee `src/utils/referralRate.js` (cálculo/pago) y todos los
+  textos que muestran el % (PWA vía `/api/public/config`, `{referral_pct}` en /sys_*).
+  No hardcodear "3%" en ningún texto nuevo: usar `<span class="referral-pct">` en la
+  PWA o la variable en los comandos.
 - **Mensajes automáticos al usuario** son editables desde la sección COMANDOS
   (comandos `/sys_*`). Usar el helper `renderSystemCommand(name, fallback, vars)` para
   cualquier mensaje automático nuevo.

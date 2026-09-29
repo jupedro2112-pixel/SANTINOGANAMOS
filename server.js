@@ -651,6 +651,7 @@ if (PLATFORM_MANUAL) {
 const periodRanges = require('./src/utils/periodRanges');
 // Rangos de reembolso Bronce/Plata/Oro según la pérdida del período.
 const refundTiers = require('./src/utils/refundTiers');
+const referralRate = require('./src/utils/referralRate'); // #195 % de referidos (comando /sys_referral_pct)
 // Fórmula PURA del reembolso acumulativo de por vida (ESPEC-REEMBOLSO-1GIROX.md §3).
 const cashbackFormula = require('./src/utils/cashbackFormula');
 // Niveles VIP por apostado acumulado (réplica de Stake) + su motor de sync.
@@ -1533,6 +1534,11 @@ async function renderSystemCommand(name, fallback, vars = {}) {
   }
   if (template == null) return null;
   let out = template;
+  // #195: {referral_pct} está disponible en TODOS los mensajes automáticos (sale del
+  // comando /sys_referral_pct). Un caller puede pisarla pasándola en `vars`.
+  if (out.includes('{referral_pct}') && vars.referral_pct == null) {
+    try { vars = { ...vars, referral_pct: await referralRate.getReferralPct() }; } catch (_) { /* queda sin reemplazar */ }
+  }
   for (const [k, v] of Object.entries(vars)) {
     out = out.replace(new RegExp('\\{' + k + '\\}', 'g'), v == null ? '' : String(v));
   }
@@ -10779,6 +10785,15 @@ async function initializeData() {
       response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸\n\nPuedes verificarlo en: https://1girox.com{rollover}'
     },
     {
+      // #195: NO es un mensaje: su texto es el NÚMERO del porcentaje de referidos. Lo lee
+      // src/utils/referralRate.js (cálculo/pago de comisiones) y todos los textos que
+      // muestran el % (Información del Servicio, Mis Referidos, {referral_pct} en /sys_*).
+      name: '/sys_referral_pct',
+      description: 'PORCENTAJE DE REFERIDOS (no es un mensaje). Escribí SOLO el número: ej. 3 (= el referidor cobra el 3% de lo que pierden sus referidos cada mes). Lo usan el cálculo de comisiones, "Información del Servicio", el modal "Mis Referidos" y la variable {referral_pct} de cualquier comando /sys_*. Si lo dejás vacío o inválido, vale 3.',
+      type: 'info',
+      response: '3'
+    },
+    {
       name: '/sys_withdrawal',
       description: 'Mensaje automático al realizar un retiro. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
@@ -14567,13 +14582,16 @@ const _STATS_CACHE_TTL = 60000; // 60 seconds
 // ============================================================
 // La PWA lo lee al arrancar (antes del login): oculta el registro público, el saldo
 // y los reembolsos, y sabe a qué URL manda el botón CASINO.
-app.get('/api/public/config', (req, res) => {
+app.get('/api/public/config', async (req, res) => {
+  let referralPct = referralRate.DEFAULT_REFERRAL_PCT;
+  try { referralPct = await referralRate.getReferralPct(); } catch (_) { /* default */ }
   res.json({
     platformMode: girox.PLATFORM_MODE,
     manual: PLATFORM_MANUAL,
     playUrl: girox.getPlayUrl(),
     publicRegister: !PLATFORM_MANUAL || PUBLIC_REGISTER_ENABLED,
-    brand: process.env.BRAND_NAME || 'GANAMOS'
+    brand: process.env.BRAND_NAME || 'GANAMOS',
+    referralPct // #195: % de referidos (comando /sys_referral_pct) para los textos de la PWA
   });
 });
 

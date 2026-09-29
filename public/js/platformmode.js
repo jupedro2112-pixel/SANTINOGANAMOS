@@ -28,6 +28,20 @@
         if (VIP.ui && typeof VIP.ui.stopBalancePolling === 'function') VIP.ui.stopBalancePolling();
     }
 
+    // #195: el % de referidos sale del comando /sys_referral_pct (GET /api/public/config
+    // → referralPct; /api/referrals/me → referralPct del usuario, que puede tener un
+    // acuerdo puntual). Todo texto que lo muestre lleva <span class="referral-pct">
+    // y el ejemplo de $100.000 lleva class="referral-pct-example".
+    function applyReferralPct(pct) {
+        const n = Number(pct);
+        if (!Number.isFinite(n) || n <= 0) return;
+        VIP.state.referralPct = n;
+        const txt = String(n).replace('.', ',');
+        document.querySelectorAll('.referral-pct').forEach((el) => { el.textContent = txt; });
+        const ejemplo = '$' + new Intl.NumberFormat('es-AR').format(Math.round(100000 * n / 100));
+        document.querySelectorAll('.referral-pct-example').forEach((el) => { el.textContent = ejemplo; });
+    }
+
     function applyRegisterUi(enabled) {
         if (enabled) return;
         const btn = document.getElementById('registerBtn');
@@ -37,6 +51,7 @@
     VIP.platform = {
         isManual: () => !!(VIP.state.platform && VIP.state.platform.manual),
         playUrl: () => (VIP.state.platform && VIP.state.platform.playUrl) || VIP.config.PLATFORM_URL,
+        applyReferralPct,
         apply: function () {
             if (VIP.state.platform.manual) applyManualUi();
             applyRegisterUi(VIP.state.platform.publicRegister);
@@ -56,6 +71,7 @@
                 };
                 if (j.playUrl) VIP.config.PLATFORM_URL = j.playUrl;
                 VIP.platform.apply();
+                if (j.referralPct != null) applyReferralPct(j.referralPct);
             } catch (_) { /* sin config: comportamiento por defecto */ }
         }
     };

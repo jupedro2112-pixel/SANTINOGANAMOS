@@ -455,6 +455,8 @@ VIP.ui = (function () {
             document.getElementById('referralHistoricalTotal').textContent =
                 '$' + new Intl.NumberFormat('es-AR').format(Math.round(me.historicalTotalCredited || 0));
             document.getElementById('referralCurrentPeriod').textContent = me.currentPeriodLabel || me.currentPeriod || '—';
+            // #195: el % que cobra ESTE usuario (acuerdo puntual o el de /sys_referral_pct).
+            if (me.referralPct != null && VIP.platform && VIP.platform.applyReferralPct) VIP.platform.applyReferralPct(me.referralPct);
 
             VIP.state.referralData = me;
 

@@ -37,6 +37,36 @@
 
 ---
 
+## Sesión 2026-09-29 (6ª) — Referidos al 3% editable desde COMANDOS + modal de CBU cierra al tocar afuera
+
+### 195. `/sys_referral_pct`: el % de referidos vive en COMANDOS y lo leen el cálculo y TODOS los textos
+- **Pedido del owner:** referidos al 3%, que se refleje en Información del Servicio y
+  en todo lo que muestre el porcentaje, y que sea modificable desde COMANDOS.
+- **Comando nuevo `/sys_referral_pct`** (seed, `type:'info'`, response `'3'`): NO es un
+  mensaje, su texto es el número (acepta "3", "3%", "2,5"). Vacío o inválido → 3.
+- **`src/utils/referralRate.js` reescrito:** prioridad comando (cache 30 s) → env
+  `GIROX_REFERRAL_COMMISSION_PCT` → `DEFAULT_REFERRAL_PCT=3`; override por usuario
+  intacto. Nuevos `getReferralPct()` (async), `refreshReferralPct(force)`,
+  `getReferralPctForUser(user)`, `parsePct`. Los getters sincrónicos de siempre
+  (`getConfiguredRate`, `getReferralRateForUser`) devuelven el último cache; el motor
+  de comisiones (`referralCalculationService`) hace `await refreshReferralPct(true)`
+  antes de calcular, así paga con el valor vigente.
+- **Dónde se muestra:** `GET /api/public/config` → `referralPct`; `GET /api/referrals/me`
+  → `referralPct` (el del usuario, respeta el override); `renderSystemCommand` inyecta
+  la variable **`{referral_pct}`** en cualquier `/sys_*` que la use. En la PWA los 5
+  textos que decían "8%" (dos cards de Información del Servicio, header y explicación
+  del modal Mis Referidos, y el ejemplo "$8.000") pasan a `<span class="referral-pct">`
+  / `.referral-pct-example`; `platformmode.js` los pinta al cargar la config y
+  `ui.loadReferralData` los repinta con el % del usuario.
+- **Modal "Datos para Transferir" (CBU):** ahora se cierra tocando fuera del recuadro
+  (mismo patrón `onclick="if(event.target===this)hideModal(...)"` + `stopPropagation`
+  que los demás modales). SW v110.
+- **Validado:** `node --check` en todo lo tocado, `check-tdz` ✅, helper en frío
+  (`parsePct` y fallback sin DB → 3). No hay textos con "8%" de referidos en la PWA
+  (los "8%" de `notificationRulesService` son del REEMBOLSO, no se tocan).
+- **Para el owner:** el valor se edita en COMANDOS → `/sys_referral_pct`. Las
+  comisiones ya calculadas (`ReferralCommission.referralRate`) no cambian retroactivamente.
+
 ## Sesión 2026-09-29 (5ª) — Se elimina el modo `ganamos_api`: el repo queda SOLO en manual
 
 ### 194. Borrado completo del cliente API de GANAMOS (`ganamosApiService`) y de todo lo que lo activaba
