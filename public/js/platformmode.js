@@ -2,9 +2,10 @@
 // PLATFORM MODE (#190) — GANAMOS sin API
 // ========================================
 // Lee GET /api/public/config al arrancar (antes del login) y adapta la PWA:
-//   - manual=true → no hay saldo (se oculta), no hay reembolsos ni nivel VIP (se
-//     ocultan), el botón CASINO abre GANAMOS en una pestaña (sin SSO), y el
-//     registro público desaparece (la cuenta la crea el agente y manda el link).
+//   - manual=true → no hay saldo (se oculta), el botón CASINO abre GANAMOS en una
+//     pestaña (sin SSO), y el registro público desaparece (la cuenta la crea el
+//     agente y manda el link). Reembolsos, nivel VIP y rollover ya NO existen en
+//     el HTML (#196: se eliminaron, GANAMOS no los tiene).
 //   - publicRegister=false → se oculta "Registrarse".
 // Si el endpoint falla, la app sigue con el comportamiento de siempre.
 (function () {
@@ -15,11 +16,6 @@
     function applyManualUi() {
         // Saldo: GANAMOS no lo informa.
         hide('.dash-balance');
-        // Reembolsos / nivel VIP: sin netwin no existen (apagados por el owner).
-        hide('.dash-refunds');
-        hide('.dash-user');
-        hide('.menu-item.profile-btn');
-        // Rollover: sigue existiendo (lo aplica el agente en GANAMOS); no se toca.
         const casinoBtn = document.getElementById('plataformaBtn');
         if (casinoBtn) casinoBtn.title = 'Abre la página de GANAMOS en una pestaña nueva';
         document.querySelectorAll('.menu-item-label').forEach((el) => {

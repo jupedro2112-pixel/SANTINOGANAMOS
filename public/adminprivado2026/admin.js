@@ -668,6 +668,12 @@ function setupRoleBasedUI() {
     }
     // #190 modo manual: no hay saldo del jugador (GANAMOS no lo informa) → ocultar el $ del
     // header del chat y el botón "Seleccionar todo el saldo" del retiro manual.
+    // #196 GANAMOS no tiene reembolsos, niveles VIP, rollover ni saldo del jugador: la clase
+    // `platform-manual` en <body> oculta (CSS en index.html) el nav Reembolsos, los filtros y
+    // stats de reembolso/cashback/rakeback/VIP, las cards de rollover global / reembolso en vivo /
+    // rangos / niveles VIP, los campos de rollover (bienvenida, fueguito, lotes, ruleta), las
+    // opciones "reembolso"/"solo reembolsos"/"con saldo" y las columnas de Balance.
+    document.body.classList.toggle('platform-manual', window._platformMode === 'manual');
     if (window._platformMode === 'manual') {
         document.querySelectorAll('.user-balance').forEach((el) => { el.style.display = 'none'; });
         const selAll = document.getElementById('btnSelectAllBalance');
@@ -4310,7 +4316,7 @@ function renderUsers(users) {
             <td>${escapeHtml(user.email || '-')}</td>
             <td>${escapeHtml(user.phone || '-')}</td>
             <td><span class="role-badge ${user.role}">${getRoleLabel(user.role)}</span></td>
-            <td>${formatMoney(user.balance)}</td>
+            <td class="col-balance">${formatMoney(user.balance)}</td>
             <td>${statusCell}</td>
             <td>${formatDate(user.lastLogin)}</td>
             <td>${notifPlanBadge(user.notificationPlan)}</td>
@@ -5379,7 +5385,7 @@ function renderTransactionStats(summary) {
                 <span class="stat-number">${formatMoney(summary.vipLevelups || 0)}</span>
                 <span class="stat-label">Bonos de nivel VIP</span>
             </div>` : ''}
-            <div class="stat-card gifts" title="Todo lo que NO es carga ni retiro: bonificaciones + reembolsos + reembolso en vivo + fueguito + referidos + rakeback + nivel VIP + ruleta. En 1girox va como BONO.">
+            <div class="stat-card gifts" title="Todo lo que NO es carga ni retiro: bonificaciones + fueguito + referidos + ruleta (+ reembolsos/rakeback/VIP si la plataforma los tiene).">
                 <span style="font-size:1.2rem">🎁</span>
                 <span class="stat-number">${formatMoney(summary.gifts || 0)}</span>
                 <span class="stat-label">Total regalos (no cargas)</span>
@@ -5762,16 +5768,19 @@ async function loadCBUConfig() {
     loadWelcomeCodeConfig();
     // Cargar la config del banco automático (hgcash)
     loadHgcashConfig();
+    // #196 GANAMOS (manual): reembolsos, reembolso en vivo, rollover global y niveles VIP no existen
+    // (el server responde 404 y el CSS oculta las cards): no se cargan.
+    const _manual = window._platformMode === 'manual';
     // Cargar los porcentajes de reembolso (solo admin general)
-    loadRefundTiers();
+    if (!_manual) loadRefundTiers();
     // Cargar la config del reembolso en vivo (solo admin general)
-    loadInstantCashbackCfg();
+    if (!_manual) loadInstantCashbackCfg();
     // #184 Rollover GLOBAL de bonos (solo admin general)
-    loadBonusRolloverCfg();
+    if (!_manual) loadBonusRolloverCfg();
     // #188 Regla del bono por instalar la app (solo admin general)
     loadInstallBonusCfg();
     // Cargar el estado de los niveles VIP (solo admin general)
-    loadVipLevelsConfig();
+    if (!_manual) loadVipLevelsConfig();
     // Cargar los premios del fueguito (solo admin general)
     loadFireMilestones();
 }
@@ -7147,7 +7156,9 @@ function _nbHelpHtml() {
     return '<strong style="color:#d4af37">❓ Cómo funciona el lote con regalo</strong><br><br>' +
         '<strong>💸 ¿Quién pone la plata?</strong><br>' +
         '· <strong>％ en la carga</strong>: el regalo lo aplicás VOS — al activarse, en el chat del cliente te aparece el CARTEL VERDE de siempre: sumale el % en su próxima carga y tocá "✓ Marcar usado".<br>' +
-        '· <strong>💵 Fichas</strong>: se acreditan SOLAS por la API (con el rollover que elijas). No tenés que hacer NADA — te llega una nota gris al chat avisando.<br><br>' +
+        (window._platformMode === 'manual'
+            ? '· <strong>💵 Fichas</strong>: quedan como tarea PENDIENTE en "Pendientes GANAMOS" para que un agente las cargue en el panel de GANAMOS; el cliente recibe el aviso cuando la marcás ✅ Hecha.<br><br>'
+            : '· <strong>💵 Fichas</strong>: se acreditan SOLAS por la API (con el rollover que elijas). No tenés que hacer NADA — te llega una nota gris al chat avisando.<br><br>') +
         '<strong>⏱ Modos</strong><br>' +
         '· <strong>🔑 Código</strong>: el cliente mete el código en su app (menú ☰ → "🎁 Reclamar Bono con Código"). Una vez por cuenta. Sirve para que el regalo lo cobre solo el que VUELVE.<br>' +
         '· <strong>⏰ Por tiempo</strong>: el regalo aplica a TODOS los destinatarios apenas se envía. ⚠️ Con fichas esto ACREDITA PLATA A CADA UNO al enviar — el confirm te muestra el total.<br><br>' +
@@ -7180,7 +7191,7 @@ function nbFormChanged() {
     const mode = document.querySelector('input[name="nbMode"]:checked')?.value || 'code';
     const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
     show('nbCodeWrap', mode === 'code');
-    show('nbRolloverWrap', gift === 'fixed');
+    show('nbRolloverWrap', gift === 'fixed' && window._platformMode !== 'manual'); // #196 GANAMOS sin rollover
     const lbl = document.getElementById('nbAmountLabel');
     if (lbl) lbl.textContent = gift === 'fixed' ? 'Monto ($ fichas)' : 'Monto (%)';
     show('nbListWrap', aud === 'list');
@@ -10241,7 +10252,7 @@ function _rpRowHtml(p) {
         '<td><input type="text" class="rp-label" value="' + v(p.label) + '" maxlength="30" placeholder="(auto)" style="width:130px;"></td>' +
         '<td><select class="rp-type" onchange="roulettePrizesChanged()"><option value="cash"' + sel('cash') + '>💰 Dinero (fichas)</option><option value="percent"' + sel('percent') + '>🎁 Bonificación % próx. carga</option><option value="none"' + sel('none') + '>😔 Sin premio</option></select></td>' +
         '<td><input type="number" class="rp-value" value="' + v(p.value) + '" min="0" style="width:90px;" oninput="roulettePrizesChanged()"></td>' +
-        '<td><input type="number" class="rp-roll" value="' + v(p.rolloverX || 0) + '" min="0" max="50" style="width:64px;" title="Solo para Dinero. Si el rollover global está activado, manda el global."></td>' +
+        '<td class="rp-roll-col"><input type="number" class="rp-roll" value="' + v(p.rolloverX || 0) + '" min="0" max="50" style="width:64px;" title="Solo para Dinero. Si el rollover global está activado, manda el global."></td>' +
         '<td><input type="number" class="rp-weight" value="' + v(p.weight) + '" min="0.01" step="0.5" style="width:70px;" oninput="roulettePrizesChanged()"></td>' +
         '<td class="rp-prob" style="font-weight:800;color:#ffd700;white-space:nowrap;">—</td>' +
         '<td><button class="btn btn-sm" style="background:#dc3545;color:#fff;border:none;border-radius:6px;padding:4px 8px;cursor:pointer;" onclick="this.closest(\'.rp-row\').remove();roulettePrizesChanged()">🗑️</button></td>' +
@@ -14092,14 +14103,14 @@ function renderBankClose(c, isToday) {
     const body = document.getElementById('bankCloseBody');
     if (!body || !c) return;
     const s = c.summary || {}, ca = c.cashier || {}, bk = c.bank || {};
-    const st = c.status === 'ok' ? '<span style="color:#4caf50;font-weight:800;">✅ 0 diferencias — todo cuadra</span>' : (c.status === 'diff' ? '<span style="color:#ff5050;font-weight:800;">🔴 ' + c.unresolvedCount + ' diferencia(s) sin resolver</span>' : '<span style="color:#ffb347;font-weight:800;">⚠️ Sin diferencias (el cruce con el cajero 1girox no tiene datos)</span>');
+    const st = c.status === 'ok' ? '<span style="color:#4caf50;font-weight:800;">✅ 0 diferencias — todo cuadra</span>' : (c.status === 'diff' ? '<span style="color:#ff5050;font-weight:800;">🔴 ' + c.unresolvedCount + ' diferencia(s) sin resolver</span>' : (window._platformMode === 'manual' ? '<span style="color:#4caf50;font-weight:800;">✅ Sin diferencias</span>' : '<span style="color:#ffb347;font-weight:800;">⚠️ Sin diferencias (el cruce con el cajero 1girox no tiene datos)</span>'));
     const tile = (t, v, sub) => '<div style="flex:1;min-width:150px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);"><div style="font-size:10.5px;color:#aaa;text-transform:uppercase;letter-spacing:.5px;">' + t + '</div><div style="font-size:16px;font-weight:800;">' + v + '</div>' + (sub ? '<div style="font-size:11px;color:#bbb;">' + sub + '</div>' : '') + '</div>';
     let html = '<div style="margin-bottom:10px;font-size:14px;">Cierre <b>' + escapeHtml(c.dateKey) + '</b>' + (isToday ? ' <span style="color:#ffb347;">(día en curso — parcial)</span>' : '') + ' · ' + st + '<div style="font-size:11px;color:#888;">calculado ' + escapeHtml(c.computedAt ? fmtFechaHoraAR(c.computedAt) : '') + ' por ' + escapeHtml(c.computedBy || '') + (c.notifiedAt ? ' · enviado a Telegram' : '') + '</div></div>';
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
         tile('⬇️ Entradas banco', (s.entradas ? s.entradas.count : 0) + ' · ' + _money(s.entradas && s.entradas.total), 'auto ' + (s.entradasCargadas ? s.entradasCargadas.auto : 0) + ' · asignadas ' + (s.entradasCargadas ? s.entradasCargadas.asignadas : 0) + ' · manual ' + (s.entradasCargadas ? s.entradasCargadas.manuales : 0) + ' · no corresponde ' + (s.entradasNoCorresponde ? s.entradasNoCorresponde.count : 0)) +
         tile('💰 Cargas sistema', (s.cargas ? s.cargas.count : 0) + ' · ' + _money(s.cargas && s.cargas.total), 'con transferencia ' + (s.cargas ? s.cargas.vinculadas : 0) + ' · otro banco ' + (s.cargas && s.cargas.otroBanco ? s.cargas.otroBanco.count : 0) + ' · sin origen ' + (s.cargas && s.cargas.sinTransferencia ? s.cargas.sinTransferencia.count : 0)) +
         tile('⬆️ Salidas banco', (s.salidas ? s.salidas.count : 0) + ' · ' + _money(s.salidas && s.salidas.total), 'pagos ' + (s.salidas ? s.salidas.pagos : 0) + ' (' + _money(s.salidas && s.salidas.pagosTotal) + ') · bajadas ' + (s.salidas ? s.salidas.bajadas : 0) + ' (' + _money(s.salidas && s.salidas.bajadasTotal) + ')') +
-        tile('🎰 Cajero 1girox', ca.status === 'sin_datos' ? 'sin datos' : (ca.status === 'ok' ? '✅ cuadra' : '🔴 ' + _money(ca.diff)), ca.status !== 'sin_datos' ? 'real ' + _money(ca.actualDelta) + ' · sistema ' + _money(ca.expectedDelta) + ' · ' + (ca.ops || 0) + ' op.' : 'la Partner API de 1girox no informa el saldo del agente (cruce sin datos)') +
+        (window._platformMode === 'manual' ? '' : tile('🎰 Cajero 1girox', ca.status === 'sin_datos' ? 'sin datos' : (ca.status === 'ok' ? '✅ cuadra' : '🔴 ' + _money(ca.diff)), ca.status !== 'sin_datos' ? 'real ' + _money(ca.actualDelta) + ' · sistema ' + _money(ca.expectedDelta) + ' · ' + (ca.ops || 0) + ' op.' : 'la Partner API de 1girox no informa el saldo del agente (cruce sin datos)')) + // #196 GANAMOS: sin cajero
         (bk.netBalance != null ? tile('🏦 Saldo hgcash al cierre', _money(bk.netBalance), bk.actualDelta != null ? 'vs. cierre anterior ' + _money(bk.actualDelta) + ' (entradas−salidas ' + _money(bk.expectedDelta) + ')' : '') : '') +
         '</div>';
     const diffs = c.diffs || [];

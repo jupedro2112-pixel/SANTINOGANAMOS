@@ -759,6 +759,17 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
   for (const def of defaults) {
     if (_seedDisabledAudiences.has(def.audienceType)) def.enabled = false;
   }
+  // #196 GANAMOS (modo manual): no hay reembolsos → las reglas de categoría 'refund'
+  // no se siembran, y las ya guardadas se desactivan y marcan.
+  let _manualMode = false;
+  try { _manualMode = !!require('./platformService').MANUAL_MODE; } catch (_) {}
+  if (_manualMode) {
+    for (let i = defaults.length - 1; i >= 0; i--) if (defaults[i].category === 'refund') defaults.splice(i, 1);
+    try {
+      const r = await NotificationRule.updateMany({ category: 'refund', enabled: true }, { $set: { enabled: false } });
+      if (r.modifiedCount) console.log(`[notif-rules] GANAMOS: ${r.modifiedCount} regla(s) de reembolso desactivadas (sin reembolsos)`);
+    } catch (e) { console.warn(`[notif-rules] no se pudieron desactivar las reglas de reembolso: ${e.message}`); }
+  }
 
   // MIGRACIÓN idempotente (2026-09-07, réplica #204): ninguna push puede
   // mencionar la RULETA DIARIA (no está activa). Reglas GUARDADAS cuyo title/body

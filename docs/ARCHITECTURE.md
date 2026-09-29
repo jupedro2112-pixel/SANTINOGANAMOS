@@ -103,8 +103,37 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   `syncUserToPlatform` → `alreadyExists:true` (el jugador ya existe en GANAMOS);
   `createSession` → `GANAMOS_PLAY_URL` (la PWA abre una pestaña, sin iframe);
   `changeUserPassword` → ok sin hacer nada (la clave de GANAMOS la maneja el agente);
-  `getPlatformConfig` → bonos habilitados, multiplicadores 0/2/3/5/10 (el rollover
-  global se ANOTA en la tarea para que el agente lo aplique).
+  `getPlatformConfig` → bonos habilitados, **único multiplicador 0, rollover
+  apagado** (#196: GANAMOS NO tiene rollover; el adaptador fuerza x0 en cargas con
+  bono y regalos aunque el caller pida otro, y el resolver global se ignora).
+- **#196 GANAMOS SIN ROLLOVER NI REEMBOLSOS (2026-09-29):** en `server.js`
+  `PLATFORM_NO_ROLLOVER = MANUAL_MODE` → `getGlobalBonusRollover()` devuelve apagado
+  x0 (ignora `Config['bonusRolloverGlobal']`), `applyGlobalRollover()` = 0,
+  `_rolloverNoteText()` = '' (la variable `{rollover}` queda vacía en cualquier
+  comando), y los POST admin de bienvenida/fueguito/lotes/ruleta fuerzan rollover 0.
+  `buildEscaleraText()` = '' (`{escalera}` vacía). Endpoints cerrados en manual (404):
+  `/api/refunds/claim/*`, `/api/cashback/claim`, `/api/vip/rakeback/claim`, y los GET
+  admin `bonus-rollover` / `instant-cashback` / `refund-tiers` / `vip-levels`
+  (el panel no los carga). Crons VIP (`_runVipTick/_runVipSweepCheck`) salen al
+  toque. `/api/claims-feed` no inventa ni lista reembolsos; `solo_reembolsos` no es
+  un plan válido; las reglas push de categoría `refund` no se siembran y se
+  desactivan; la plantilla push `reembolso` no existe (`notificationRoutes`).
+  **Migración de textos al boot (manual):** todo `/sys_*` sembrado cuya respuesta
+  aún contenga `1girox|reembolso|{escalera}|{rollover}|rakeback|nivel VIP` se pisa
+  con la seed vigente (idempotente); a cualquier otro comando se le quitan
+  `{rollover}`/`{escalera}`. Las seeds ya no traen link a 1girox.com ni "mañana
+  revisá tu reembolso". **PWA:** se eliminaron `refunds.js`, los modales de
+  reembolso/perfil VIP/"¿Qué es el rollover?", las cards de reembolsos/VIP/rakeback
+  de Información del Servicio y de la bienvenida por pauta, la fila de reembolsos
+  y el recuadro USUARIO del dashboard, el plan "SOLO REEMBOLSOS" de la encuesta y
+  las notas de rollover de fueguito/ruleta. **Panel:** `body.platform-manual`
+  (CSS en `adminprivado2026/index.html`) oculta nav Reembolsos, filtros/stats de
+  reembolso/cashback/rakeback/VIP, cards rollover global / reembolso en vivo /
+  rangos / niveles VIP, campos de rollover (bienvenida, fueguito, lotes, ruleta),
+  opciones "reembolso"/"solo reembolsos"/"con saldo", columnas Balance y el tile
+  "Cajero 1girox" del cierre. **Imágenes GANAMOS:** `public/icons/icon-*.png`,
+  `public/images/soporte-ganamos.png` (avatar del chat) y 3 banners
+  `banner-inicio|jackpots|futbol-ganamos.jpg` (rotan en el login, `app.js`).
 - **Registro público apagado** (`/api/auth/register` y `/api/landing/signup` → 410)
   salvo `PUBLIC_REGISTER_ENABLED=1`: el agente crea la cuenta desde el panel (mismo
   username que en GANAMOS) y manda el link de acceso. `check-username` sólo mira la
@@ -626,7 +655,7 @@ tenían los 4 clientes viejos.
 | Variable | Default | Para qué |
 |---|---|---|
 | `PLATFORM_MODE` | `manual` | `manual` = GANAMOS sin API/bandeja (§0); `girox` = Partner API de 1girox. Cualquier otro valor cae a `manual` (el viejo `ganamos_api` se eliminó, #194) |
-| `GANAMOS_PLAY_URL` | `https://ganamos.io` (placeholder) | URL pública de GANAMOS que abre el botón CASINO en modo manual. **Cargar la real en SSM** |
+| `GANAMOS_PLAY_URL` | `https://ganamos.net` | URL pública de GANAMOS que abre el botón CASINO en modo manual (default = el dominio del logo; se puede pisar en SSM) |
 | `PUBLIC_REGISTER_ENABLED` | — | `1`/`true` = reabre el registro público en modo manual (default: alta sólo por agente, 410) |
 | `BRAND_NAME` | `GANAMOS` | Marca que devuelve `GET /api/public/config` |
 | `GIROX_API_URL` | — | Base de la Partner API, sin barra final (ej. `https://api.1girox.com/api/v1`) |

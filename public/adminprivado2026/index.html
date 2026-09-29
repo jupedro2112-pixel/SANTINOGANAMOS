@@ -33,8 +33,31 @@
     <!-- Firebase SDK (self-hosted para evitar bloqueos de red/CDN/CSP) -->
     <script src="/lib/firebase/9.1.2/firebase-app-compat.js"></script>
     <script src="/lib/firebase/9.1.2/firebase-messaging-compat.js"></script>
+<style>
+/* #196 GANAMOS (modo manual): sin reembolsos, sin niveles VIP, sin rollover, sin saldo del jugador */
+body.platform-manual .manual-hide,
+body.platform-manual .nav-group-title.nav-group-refunds,
+body.platform-manual .nav-item[data-section="reembolsos"],
+body.platform-manual .filter-btn[data-filter="refund"],
+body.platform-manual .filter-btn[data-filter="cashback"],
+body.platform-manual .filter-btn[data-filter="rakeback"],
+body.platform-manual .filter-btn[data-filter="vip_levelup"],
+body.platform-manual #bonusRolloverHeader, body.platform-manual #bonusRolloverForm,
+body.platform-manual #cashbackHeader, body.platform-manual #cashbackForm,
+body.platform-manual #refundTiersHeader, body.platform-manual #refundTiersForm,
+body.platform-manual #vipLevelsHeader, body.platform-manual #vipLevelsForm,
+body.platform-manual #nbRolloverWrap,
+body.platform-manual #schedType option[value="reembolso"],
+body.platform-manual #schedPlan option[value="solo_reembolsos"],
+body.platform-manual #notifSegment option[value="with_balance"],
+body.platform-manual .col-balance,
+body.platform-manual .stat-card.refund, body.platform-manual .stat-card.cashback,
+body.platform-manual .stat-card.rakeback, body.platform-manual .stat-card.vip_levelup,
+body.platform-manual .rp-roll-col { display: none !important; }
+</style>
 </head>
 <body>
+<!-- #196 la clase platform-manual la pone admin.js (setupRoleBasedUI) cuando platformMode=manual: oculta todo lo de reembolsos/VIP/rollover/saldo que GANAMOS no tiene -->
 <script>
 // Avisos de formulario en ESPAÑOL: el navegador los muestra en el idioma del
 // sistema (inglés en muchos equipos) ignorando el lang de la página. Mismo
@@ -157,7 +180,7 @@ document.addEventListener('change', function (ev) {
                     <span>🕵️</span>
                     <span>Cuentas sospechosas</span>
                 </a>
-                <div class="nav-group-title" style="padding:13px 16px 5px;font-size:9.5px;font-weight:900;letter-spacing:1.2px;color:#d4af37;text-transform:uppercase;opacity:.7;">Reembolsos</div>
+                <div class="nav-group-title nav-group-refunds" style="padding:13px 16px 5px;font-size:9.5px;font-weight:900;letter-spacing:1.2px;color:#d4af37;text-transform:uppercase;opacity:.7;">Reembolsos</div>
                 <a href="#" class="nav-item" data-section="reembolsos">
                     <span>💸</span>
                     <span>Reembolsos reclamados</span>
@@ -471,7 +494,7 @@ document.addEventListener('change', function (ev) {
                                 <th>Email</th>
                                 <th>Teléfono</th>
                                 <th>Rol</th>
-                                <th>Balance</th>
+                                <th class="col-balance">Balance</th>
                                 <th>Estado</th>
                                 <th>Último Login</th>
                                 <th>Plan notif.</th>
@@ -676,7 +699,7 @@ document.addEventListener('change', function (ev) {
                             <div class="form-group">
                                 <label>Monto del bono sorpresa ($) — tipo MONTO AUTOMÁTICO:</label>
                                 <input type="number" id="welcomeCodeAmount" min="0" max="10000000" step="100" style="width:100%;">
-                                <small style="color:#aaa;font-size:11px;">Solo aplica al tipo "Monto sorpresa AUTOMÁTICO": se acredita solo, COMO BONO, con el rollover de abajo. Queda CONGELADO por cliente al canjear.</small>
+                                <small style="color:#aaa;font-size:11px;">Solo aplica al tipo "Monto sorpresa AUTOMÁTICO": se acredita solo, como bono<span class="manual-hide">, con el rollover de abajo</span>. Queda CONGELADO por cliente al canjear.</small>
                             </div>
                             <div class="form-group">
                                 <label>% extra en la PRÓXIMA CARGA — tipo BONO:</label>
@@ -691,7 +714,7 @@ document.addEventListener('change', function (ev) {
                                 </select>
                                 <small style="color:#aaa;font-size:11px;">También queda congelado por cliente al canjear: cambiarlo después no afecta canjes ya hechos.</small>
                             </div>
-                            <div class="form-group">
+                            <div class="form-group manual-hide">
                                 <label>🎯 Rollover del bono cash (x):</label>
                                 <input type="number" id="welcomeCodeRolloverX" min="0" max="50" step="1" placeholder="2" style="width:100%;">
                                 <small style="color:#aaa;font-size:11px;">Solo aplica al tipo "Monto sorpresa AUTOMÁTICO": el cliente tiene que apostar X veces el bono para poder retirarlo (ej. x2: bono de $5.000 → apostar $10.000). 0 = sin rollover (plata libre). Tiene que ser un multiplicador permitido por la plataforma — si no, avisa al guardar.</small>
@@ -840,11 +863,11 @@ document.addEventListener('change', function (ev) {
                         <div class="cbu-form" id="fireMilestonesForm">
                             <p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">
                                 Premios en <b>efectivo</b> que gana el cliente al llegar a X días de racha. Si pierde un
-                                día, la racha se reinicia. El premio se acredita al instante (jugable) pero con
+                                día, la racha se reinicia. El premio se acredita al instante<span class="manual-hide"> (jugable) pero con
                                 <b>ROLLOVER</b>: para poder RETIRARLO tiene que apostar el multiplicador × el premio
-                                (lo controla la propia plataforma). Solo el admin general.
+                                (lo controla la propia plataforma)</span>. Solo el admin general.
                             </p>
-                            <div class="form-group" style="max-width:340px;">
+                            <div class="form-group manual-hide" style="max-width:340px;">
                                 <label>🎯 Rollover de los premios (x):</label>
                                 <input type="number" id="fireRolloverMultiplier" min="0" max="50" step="0.5" placeholder="5" style="width:100%;">
                                 <small style="color:#aaa;font-size:11px;">Ej. 5 = un premio de $10.000 exige apostar $50.000 antes de poder retirarse. 0 = sin rollover (premio libre). Las columnas "Requisito carga" ya NO se usan para reclamar (quedaron reemplazadas por el rollover).</small>
@@ -1776,14 +1799,14 @@ document.addEventListener('change', function (ev) {
                 <div style="background:linear-gradient(135deg,rgba(155,48,255,0.12),rgba(255,215,0,0.06));border:1.5px solid rgba(155,48,255,0.55);border-radius:11px;padding:13px 14px;margin-bottom:14px;" id="roulettePrizesCard">
                     <div style="color:#d9a6ff;font-weight:900;font-size:12px;letter-spacing:0.6px;margin-bottom:6px;">🎁 PREMIOS Y PROBABILIDADES</div>
                     <div style="color:#bbb;font-size:11px;margin-bottom:9px;line-height:1.5;">
-                        Cada fila es un premio. <b>Dinero</b> = fichas que se acreditan solas como BONO (con el rollover que pongas acá; si el <b>rollover GLOBAL</b> está activado, manda el global).
+                        Cada fila es un premio. <b>Dinero</b> = fichas que se acreditan solas como BONO<span class="manual-hide"> (con el rollover que pongas acá; si el <b>rollover GLOBAL</b> está activado, manda el global)</span>.
                         <b>Bonificación</b> = un % EXTRA en la PRÓXIMA CARGA del cliente (queda pendiente, el modal Depositar lo sugiere y se marca aplicado solo).
                         <b>Peso</b> = probabilidad relativa; la columna <b>Prob.</b> muestra el % real que sale de la suma de pesos. Dejá al menos un "Sin premio".
                     </div>
                     <div id="roulettePrizesGlobalHint" style="font-size:11px;color:#ffb347;margin-bottom:8px;display:none;"></div>
                     <div style="overflow-x:auto;">
                         <table class="data-table" style="min-width:640px;font-size:12px;">
-                            <thead><tr><th>Emoji</th><th>Etiqueta</th><th>Tipo</th><th>Valor</th><th>Rollover (x)</th><th>Peso</th><th>Prob.</th><th></th></tr></thead>
+                            <thead><tr><th>Emoji</th><th>Etiqueta</th><th>Tipo</th><th>Valor</th><th class="rp-roll-col">Rollover (x)</th><th>Peso</th><th>Prob.</th><th></th></tr></thead>
                             <tbody id="roulettePrizesRows"></tbody>
                         </table>
                     </div>

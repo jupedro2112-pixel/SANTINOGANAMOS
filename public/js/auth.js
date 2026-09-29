@@ -477,7 +477,6 @@ VIP.auth = (function () {
 
                 VIP.ui.showChatScreen();
                 VIP.socket.startMessagePolling();
-                VIP.refunds.loadRefundStatus();
                 VIP.fire.loadFireStatus();
 
                 // Entrada por landing con ir=casino: abrir el casino directo
@@ -649,7 +648,6 @@ VIP.auth = (function () {
 
         VIP.ui.showChatScreen();
         VIP.socket.startMessagePolling();
-        VIP.refunds.loadRefundStatus();
         VIP.fire.loadFireStatus();
         VIP.ui.loadCanalInformativoUrl();
         refreshVerifyPhoneBanner();

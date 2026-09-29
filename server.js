@@ -486,7 +486,12 @@ girox.setCashierBalanceHook((info) => {
 // Sin cache a propósito (multi-instancia). El resolver se inyecta en giroxService,
 // que lo aplica en los 3 puntos por donde pasa todo bono.
 const BONUS_ROLLOVER_OPTIONS = bonusRollover.BONUS_ROLLOVER_OPTIONS;
+// #196 GANAMOS NO tiene rollover de bonos ni reembolsos: en modo manual el rollover
+// global queda APAGADO y fijo en x0 (no depende de Config['bonusRolloverGlobal']),
+// `applyGlobalRollover` devuelve 0 y `_rolloverNoteText` nunca agrega la nota.
+const PLATFORM_NO_ROLLOVER = !!girox.MANUAL_MODE;
 async function getGlobalBonusRollover() {
+  if (PLATFORM_NO_ROLLOVER) return bonusRollover.resolveGlobalRollover({ enabled: false, x: 0 }, [0]);
   let raw = null;
   try { raw = await getConfig('bonusRolloverGlobal', null); } catch (_) {}
   let allowed = null;
@@ -499,6 +504,7 @@ async function getGlobalBonusRollover() {
 // Rollover a usar en un flujo (para mensajes/registros): el GLOBAL si está
 // encendido, si no el propio del flujo. Coincide con lo que acredita el cliente.
 async function applyGlobalRollover(flowValue) {
+  if (PLATFORM_NO_ROLLOVER) return 0; // #196 GANAMOS sin rollover
   let g = null;
   try { g = await getGlobalBonusRollover(); } catch (_) {}
   return bonusRollover.pickRollover(g, flowValue);
@@ -514,6 +520,7 @@ girox.setRolloverResolver(async () => {
 // o applyGlobalRollover(valorDelFlujo)). Con x0 no se agrega nada. Variable
 // `{rollover}` en los comandos /sys_* (vacía = sin nota).
 function _rolloverNoteText(x, opts = {}) {
+  if (PLATFORM_NO_ROLLOVER) return ''; // #196 GANAMOS sin rollover: nunca hay nota
   const n = Math.max(0, Math.round(Number(x) || 0));
   if (!n) return '';
   const ej = `recibís $1.000 → apostás $${(1000 * n).toLocaleString('es-AR')}`;
@@ -635,7 +642,7 @@ if (PLATFORM_MANUAL) {
     } catch (_) {}
     if (event === 'done' && userId && task.source === 'server' && task.kind !== 'withdraw') {
       const text = await renderSystemCommand('/sys_ganamos_acreditado',
-        '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰{rollover}',
+        '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰',
         { amount: money(task.amount), bonus: task.bonus && task.bonus.amount > 0 ? money(task.bonus.amount) : '', motivo, rollover: _rolloverNoteText(rollX) });
       if (text) { try { await _sendSystemMessageToUser(userId, task.username, text); } catch (e) { logger.warn(`[ganamos] aviso al cliente de la tarea ${taskId}: ${e.message}`); } }
     }
@@ -1551,6 +1558,7 @@ async function renderSystemCommand(name, fallback, vars = {}) {
 // con la config real al momento de ENVIAR cada mensaje. Si las 3 escaleras
 // (diaria/semanal/mensual) son iguales muestra una sola; si difieren, una por línea.
 async function buildEscaleraText() {
+  if (PLATFORM_NO_STATS) return ''; // #196 GANAMOS sin reembolsos: {escalera} queda vacía
   try {
     const tbp = await getRefundTiersByPeriod();
     const money = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-AR');
@@ -2592,7 +2600,7 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     const depositTpl = resolveSysContent(depositCmd, _hgPending
       ? `🏦 ¡Recibimos tu transferencia de $${Number(amount).toLocaleString('es-AR')}! ⏳ En unos minutos un agente te la carga en tu usuario de GANAMOS y te avisamos por acá. ✅`
       : _hgBonusApplied > 0
-      ? `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} (incluye $${_hgBonusApplied.toLocaleString('es-AR')} de bonificación) acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸{rollover}`
+      ? `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} (incluye $${_hgBonusApplied.toLocaleString('es-AR')} de bonificación) acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸`
       : `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸`);
     if (depositTpl) { // null = comando vaciado a propósito → no enviar mensaje al cliente
       const _hgRollNote = _hgBonusApplied > 0 ? await _rolloverNote(await getGiroxBonusMultiplier()) : '';
@@ -5960,7 +5968,7 @@ app.post('/api/messages/welcome', authMiddleware, async (req, res) => {
     // momento de enviar — así la bienvenida no queda desactualizada (#118).
     const welcomeContent = await renderSystemCommand(
       '/sys_welcome',
-      `🎉 ¡Bienvenido a la Sala de Juegos, {username}!\n\n🎁 Beneficios exclusivos:\n{escalera}\n• Fueguito diario con recompensas\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nLink de pagina: https://1girox.com/\n\nCBU activo: {cbu}`,
+      `🎉 ¡Bienvenido a GANAMOS, {username}!\n\n🎁 Beneficios exclusivos:\n• Bonos en tus cargas\n• Fueguito diario con recompensas\n• Referidos: cobrás el {referral_pct}% de la actividad de tus amigos todos los meses\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nCBU activo: {cbu}`,
       { username, cbu: cbuNumber, escalera: await buildEscaleraText() }
     );
 
@@ -7432,6 +7440,7 @@ app.get('/api/cashback/status', authMiddleware, async (req, res) => {
 // local 'bonus' + metadata.source 'instant_cashback' (alimenta `regalado` y `cobrado`).
 app.post('/api/cashback/claim', authMiddleware, authLimiter, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.status(404).json({ error: 'El reembolso en vivo no está disponible en GANAMOS.', manual: true }); // #196
     const userId = req.user.userId;
     const username = req.user.username;
     const st = await _cashbackStateToday(userId, username, { fresh: true });
@@ -7514,6 +7523,7 @@ app.post('/api/cashback/claim', authMiddleware, authLimiter, async (req, res) =>
 
 // #184 Rollover GLOBAL de bonos (GET cualquier staff; POST solo admin general).
 app.get('/api/admin/bonus-rollover', authMiddleware, adminMiddleware, async (req, res) => {
+  if (PLATFORM_NO_ROLLOVER) return res.status(404).json({ manual: true, error: 'GANAMOS no tiene rollover de bonos.' }); // #196
   try { res.json(await getGlobalBonusRollover()); }
   catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
 });
@@ -7532,6 +7542,7 @@ app.post('/api/admin/bonus-rollover', authMiddleware, adminMiddleware, async (re
 
 // Config del reembolso en vivo (GET cualquier staff; POST solo admin general).
 app.get('/api/admin/instant-cashback', authMiddleware, adminMiddleware, async (req, res) => {
+  if (PLATFORM_NO_STATS) return res.status(404).json({ manual: true, error: 'GANAMOS no tiene reembolsos.' }); // #196
   try { res.json(await getInstantCashbackConfig()); }
   catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
 });
@@ -7736,6 +7747,7 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
 
 app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.status(404).json({ success: false, manual: true, message: 'Los reembolsos no están disponibles en GANAMOS.' }); // #196
     const userId = req.user.userId;
     const username = req.user.username;
     
@@ -7891,6 +7903,7 @@ app.post('/api/refunds/claim/daily', authMiddleware, async (req, res) => {
 
 app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.status(404).json({ success: false, manual: true, message: 'Los reembolsos no están disponibles en GANAMOS.' }); // #196
     const userId = req.user.userId;
     const username = req.user.username;
     
@@ -8059,6 +8072,7 @@ app.post('/api/refunds/claim/weekly', authMiddleware, async (req, res) => {
 
 app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.status(404).json({ success: false, manual: true, message: 'Los reembolsos no están disponibles en GANAMOS.' }); // #196
     const userId = req.user.userId;
     const username = req.user.username;
     
@@ -8227,6 +8241,7 @@ app.post('/api/refunds/claim/monthly', authMiddleware, async (req, res) => {
 
 app.get('/api/refunds/history', authMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.json({ refunds: [], manual: true }); // #196
     const userId = req.user.userId;
     const userRefunds = await RefundClaim.find({ userId }).sort({ claimedAt: -1 }).lean();
 
@@ -8330,6 +8345,7 @@ app.get('/api/vip/status', authMiddleware, async (req, res) => {
 
 app.post('/api/vip/rakeback/claim', authMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.status(404).json({ success: false, manual: true, message: 'Los niveles VIP no están disponibles en GANAMOS.' }); // #196
     if (await vipLevelService.isDisabled(Config)) return res.json({ success: false, message: 'Los niveles VIP no están disponibles.' });
     const userId = req.user.userId;
     const username = req.user.username;
@@ -8537,6 +8553,7 @@ async function _scanRefundTextCommands() {
 
 app.get('/api/admin/refund-tiers', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.status(404).json({ manual: true, error: 'GANAMOS no tiene reembolsos.' }); // #196
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin general puede ver los rangos de reembolso.' });
     }
@@ -8635,6 +8652,7 @@ app.post('/api/admin/refund-tiers', authMiddleware, adminMiddleware, async (req,
 // sweep recalcula los meses con $set y el acumulado se pone al día solo.
 app.get('/api/admin/vip-levels', authMiddleware, adminMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_NO_STATS) return res.status(404).json({ manual: true, error: 'GANAMOS no tiene niveles VIP.' }); // #196
     if (req.user.role !== 'admin') {
       return res.status(403).json({ error: 'Solo el admin general puede ver el estado de los niveles VIP.' });
     }
@@ -9000,9 +9018,9 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
           .replace(/\{balance\}/g, newBalance !== null ? newBalance : 'actualizándose')
           .replace(/\{rollover\}/g, _depRolloverNote);
       } else if (includeBonusInMessage) {
-        messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balanceStr} 💸${_depRolloverNote}\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+        messageContent = `🔒💰 Depósito de $${amount} (incluye $${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balanceStr} 💸${_depRolloverNote}`;
       } else {
-        messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balanceStr} 💸\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥`;
+        messageContent = `🔒💰 Depósito de $${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balanceStr} 💸`;
       }
       
       const systemMessage = await Message.create({
@@ -9136,7 +9154,7 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
         if (!installDisabled) { // null = comando vaciado a propósito → no enviar
         const installContent = (installCmd && installCmd.response)
           ? installCmd.response.replace(/\{amount\}/g, amount).replace(/\{balance\}/g, newBalance !== null ? newBalance : 'actualizándose')
-          : `🎁━━━━━━━━━━━━━━━🎁\n📲 INSTALÁ LA APP\n   Y GANÁ $5.000 🎁\n🎁━━━━━━━━━━━━━━━🎁\n\n¿Todavía no instalaste la app? ¡Hacelo ahora y reclamá tu BONO DE $5.000! 🤑\n\n✅ Te avisamos al toque de tus bonos y reembolsos\n✅ Entrás más rápido y no perdés tu cuenta\n\n📲 Tocá "📱 Instalar App" o, en el menú del navegador, elegí "Agregar a pantalla de inicio".\n\n🎁 Una vez instalada, abrí la app y tocá el botón "🎁 Reclamar $5.000" que vas a ver arriba del chat. ¡El bono se acredita al instante!`;
+          : `🎁━━━━━━━━━━━━━━━🎁\n📲 INSTALÁ LA APP\n   Y GANÁ $5.000 🎁\n🎁━━━━━━━━━━━━━━━🎁\n\n¿Todavía no instalaste la app? ¡Hacelo ahora y reclamá tu BONO DE $5.000! 🤑\n\n✅ Te avisamos al toque de tus bonos y regalos\n✅ Entrás más rápido y no perdés tu cuenta\n\n📲 Tocá "📱 Instalar App" o, en el menú del navegador, elegí "Agregar a pantalla de inicio".\n\n🎁 Una vez instalada, abrí la app y tocá el botón "🎁 Reclamar $5.000" que vas a ver arriba del chat. ¡El bono se acredita al instante!`;
 
         const installMessage = await Message.create({
           id: uuidv4(),
@@ -9606,7 +9624,7 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
               .replace(/\$\{balance\}/g, newBalance !== null ? newBalance : '—')
               .replace(/\{rollover\}/g, _bonusRolloverNote);
           } else {
-            bonusMsg = `🎁 ¡Bonificación de $${bonusAmount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es $${newBalance !== null ? newBalance : '—'} 💸${_bonusRolloverNote}\n\nPuedes verificarlo en: https://1girox.com`;
+            bonusMsg = `🎁 ¡Bonificación de $${bonusAmount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es $${newBalance !== null ? newBalance : '—'} 💸${_bonusRolloverNote}`;
           }
           if (!bonusDisabled) await Message.create({ // null = comando vaciado a propósito → no enviar
             id: uuidv4(),
@@ -10770,19 +10788,19 @@ async function initializeData() {
       name: '/sys_deposit',
       description: 'Mensaje automático al realizar un depósito sin bonus. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
-      response: '🔒💰 Depósito de ${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥'
+      response: '🔒💰 Depósito de ${amount} acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸'
     },
     {
       name: '/sys_deposit_bonus',
-      description: 'Mensaje automático al realizar un depósito con bonus. Variables disponibles: ${amount}, ${bonus}, ${balance}, {rollover} (nota del rollover del bono, vacía si es x0)',
+      description: 'Mensaje automático al realizar un depósito con bonus. Variables disponibles: ${amount}, ${bonus}, ${balance}',
       type: 'message',
-      response: '🔒💰 Depósito de ${amount} (incluye ${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸{rollover}\n\nPuedes verificarlo en: https://1girox.com\n\n🔥 Mañana podes revisar si tenes reembolso para reclamar de forma automatica 🔥'
+      response: '🔒💰 Depósito de ${amount} (incluye ${bonus} de bonificación) acreditado con éxito. ✅ \n💸 Tu nuevo saldo es ${balance} 💸'
     },
     {
       name: '/sys_bonus',
-      description: 'Mensaje automático al aplicar una bonificación. Variables disponibles: ${amount}, ${balance}, {rollover} (nota del rollover, vacía si es x0)',
+      description: 'Mensaje automático al aplicar una bonificación. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
-      response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸\n\nPuedes verificarlo en: https://1girox.com{rollover}'
+      response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸'
     },
     {
       // #195: NO es un mensaje: su texto es el NÚMERO del porcentaje de referidos. Lo lee
@@ -10812,13 +10830,13 @@ async function initializeData() {
       name: '/sys_install_app',
       description: 'Mensaje "instalá la app" que se envía tras un depósito si el usuario no tiene la app instalada. Variables: ${amount}, ${balance}',
       type: 'message',
-      response: '🎁━━━━━━━━━━━━━━━🎁\n📲 INSTALÁ LA APP\n   Y GANÁ $5.000 🎁\n🎁━━━━━━━━━━━━━━━🎁\n\n¿Todavía no instalaste la app? ¡Hacelo ahora y reclamá tu BONO DE $5.000! 🤑\n\n✅ Te avisamos al toque de tus bonos y reembolsos\n✅ Entrás más rápido y no perdés tu cuenta\n\n📲 Tocá "📱 Instalar App" o, en el menú del navegador, elegí "Agregar a pantalla de inicio".\n\n🎁 Una vez instalada, abrí la app y tocá el botón "🎁 Reclamar $5.000" que vas a ver arriba del chat. ¡El bono se acredita al instante!'
+      response: '🎁━━━━━━━━━━━━━━━🎁\n📲 INSTALÁ LA APP\n   Y GANÁ $5.000 🎁\n🎁━━━━━━━━━━━━━━━🎁\n\n¿Todavía no instalaste la app? ¡Hacelo ahora y reclamá tu BONO DE $5.000! 🤑\n\n✅ Te avisamos al toque de tus bonos y regalos\n✅ Entrás más rápido y no perdés tu cuenta\n\n📲 Tocá "📱 Instalar App" o, en el menú del navegador, elegí "Agregar a pantalla de inicio".\n\n🎁 Una vez instalada, abrí la app y tocá el botón "🎁 Reclamar $5.000" que vas a ver arriba del chat. ¡El bono se acredita al instante!'
     },
     {
       name: '/sys_welcome',
-      description: 'Mensaje de bienvenida que se envía cuando el usuario ingresa por primera vez (cada 24h). Variables: {username}, {cbu}, {escalera} (se reemplaza sola por los rangos de reembolso vigentes del panel)',
+      description: 'Mensaje de bienvenida que se envía cuando el usuario ingresa por primera vez (cada 24h). Variables: {username}, {cbu}, {referral_pct} (% de referidos vigente)',
       type: 'message',
-      response: '🎉 ¡Bienvenido a la Sala de Juegos, {username}!\n\n🎁 Beneficios exclusivos:\n{escalera}\n• Fueguito diario con recompensas\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nLink de pagina: https://1girox.com/\n\nCBU activo: {cbu}'
+      response: '🎉 ¡Bienvenido a GANAMOS, {username}!\n\n🎁 Beneficios exclusivos:\n• Bonos en tus cargas\n• Fueguito diario con recompensas\n• Referidos: cobrás el {referral_pct}% de la actividad de tus amigos todos los meses\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nCBU activo: {cbu}'
     },
     {
       name: '/sys_cbu',
@@ -10842,9 +10860,9 @@ async function initializeData() {
     {
       // #190 GANAMOS: el agente marcó ✅ una tarea pendiente (carga hgcash, premio de ruleta, fueguito, etc.).
       name: '/sys_ganamos_acreditado',
-      description: 'GANAMOS (sin API): mensaje al cliente cuando el agente marca HECHA una carga/bono pendiente en "Pendientes GANAMOS". Variables: {amount}, {bonus}, {motivo} (transferencia hgcash, ruleta diaria, fueguito…), {rollover} (nota del rollover si el bono lo tiene). Si lo dejás vacío, no se envía.',
+      description: 'GANAMOS (sin API): mensaje al cliente cuando el agente marca HECHA una carga/bono pendiente en "Pendientes GANAMOS". Variables: {amount}, {bonus}, {motivo} (transferencia hgcash, ruleta diaria, fueguito…). Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰{rollover}'
+      response: '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰'
     },
     {
       name: '/sys_install_bonus',
@@ -10890,9 +10908,9 @@ async function initializeData() {
     },
     {
       name: '/sys_welcome_code_cash',
-      description: 'Mensaje automático cuando el cliente canjea el código de bienvenida y el bono es MONTO SORPRESA (se acredita solo). Variables: {username}, ${amount}, {rollover} (nota del rollover, vacía si es x0). Si lo dejás vacío, no se envía.',
+      description: 'Mensaje automático cuando el cliente canjea el código de bienvenida y el bono es MONTO SORPRESA (se acredita solo). Variables: {username}, ${amount}. Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '🎉 ¡Código de bienvenida canjeado, {username}!\n\n💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰{rollover}\n\n⚠️ Es por única vez.',
+      response: '🎉 ¡Código de bienvenida canjeado, {username}!\n\n💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰\n\n⚠️ Es por única vez.',
     },
     {
       name: '/sys_lote_aviso_codigo',
@@ -10908,15 +10926,15 @@ async function initializeData() {
     },
     {
       name: '/sys_lote_aviso_cash',
-      description: 'Bloque automático al final del mensaje de un LOTE de FICHAS POR TIEMPO (ya acreditadas solas). Variables: {gift}. Si lo dejás vacío, se manda solo el mensaje del lote. {rollover} = nota del rollover (vacía si es x0).',
+      description: 'Bloque automático al final del mensaje de un LOTE de FICHAS POR TIEMPO (ya acreditadas solas). Variables: {gift}. Si lo dejás vacío, se manda solo el mensaje del lote.',
       type: 'message',
-      response: '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰{rollover}'
+      response: '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰'
     },
     {
       name: '/sys_lote_canje_cash',
-      description: 'Mensaje automático cuando el cliente canjea un código de LOTE de fichas (se acreditan solas). Variables: ${amount}, {rollover} (nota de rollover, puede venir vacía). Si lo dejás vacío, no se envía.',
+      description: 'Mensaje automático cuando el cliente canjea un código de LOTE de fichas (se acreditan solas). Variables: ${amount}. Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '💰 ¡Tu regalo de ${amount} ya está ACREDITADO en tu cuenta! A jugarlo 🎰{rollover}'
+      response: '💰 ¡Tu regalo de ${amount} ya está ACREDITADO en tu cuenta! A jugarlo 🎰'
     },
     {
       name: '/sys_lote_canje_percent',
@@ -10996,15 +11014,49 @@ async function initializeData() {
   // APPENDEA al final (idempotente: tras agregarla deja de matchear; un comando
   // vaciado a propósito no se toca). Lo que se ve es la nota "Este bono tiene
   // ROLLOVER xN…" con el x vigente del panel; con x0 la variable queda vacía.
-  try {
-    const r = await Command.updateMany(
-      { name: { $in: ['/sys_deposit_bonus', '/sys_bonus', '/sys_vip_levelup', '/sys_welcome_code_cash', '/sys_lote_aviso_cash'] },
-        response: { $regex: /\S/, $not: /\{rollover\}/ } },
-      [{ $set: { response: { $concat: ['$response', '{rollover}'] } } }]
-    );
-    if (r.modifiedCount) console.log(`✅ {rollover} agregado a ${r.modifiedCount} comando(s) de bono guardados`);
-  } catch (e) {
-    console.warn(`⚠️ Migración {rollover} en comandos: ${e.message}`);
+  if (!PLATFORM_NO_ROLLOVER) { // #196: en GANAMOS no hay rollover, no se agrega la variable
+    try {
+      const r = await Command.updateMany(
+        { name: { $in: ['/sys_deposit_bonus', '/sys_bonus', '/sys_vip_levelup', '/sys_welcome_code_cash', '/sys_lote_aviso_cash'] },
+          response: { $regex: /\S/, $not: /\{rollover\}/ } },
+        [{ $set: { response: { $concat: ['$response', '{rollover}'] } } }]
+      );
+      if (r.modifiedCount) console.log(`✅ {rollover} agregado a ${r.modifiedCount} comando(s) de bono guardados`);
+    } catch (e) {
+      console.warn(`⚠️ Migración {rollover} en comandos: ${e.message}`);
+    }
+  }
+
+  // #196 MIGRACIÓN GANAMOS (modo manual): los comandos /sys_* que quedaron sembrados
+  // con el texto heredado de 1girox (link a 1girox.com, "reembolso", {escalera},
+  // {rollover}, rakeback) se PISAN con el texto vigente de la seed. Idempotente y
+  // segura: sólo toca respuestas que todavía contengan una de esas marcas; un texto
+  // que el owner ya editó sin esas palabras no se toca.
+  if (PLATFORM_MANUAL) {
+    const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|rakeback|nivel VIP/i;
+    let fixed = 0;
+    for (const cmd of systemCmds) {
+      try {
+        const r = await Command.updateOne(
+          { name: cmd.name, response: { $regex: STALE_RE } },
+          { $set: { response: cmd.response, description: cmd.description } }
+        );
+        fixed += r.modifiedCount || 0;
+      } catch (e) {
+        console.warn(`⚠️ Migración GANAMOS ${cmd.name}: ${e.message}`);
+      }
+    }
+    // Cualquier otro comando (no sembrado) que aún tenga {rollover}/{escalera}: se le saca la variable.
+    try {
+      const r = await Command.updateMany(
+        { response: { $regex: /\{rollover\}|\{escalera\}/ } },
+        [{ $set: { response: { $replaceAll: { input: { $replaceAll: { input: '$response', find: '{rollover}', replacement: '' } }, find: '{escalera}', replacement: '' } } } }]
+      );
+      fixed += r.modifiedCount || 0;
+    } catch (e) {
+      console.warn(`⚠️ Migración GANAMOS (variables): ${e.message}`);
+    }
+    if (fixed) console.log(`✅ GANAMOS: ${fixed} comando(s) con texto heredado de 1girox/reembolsos/rollover actualizados`);
   }
 
   console.log('✅ Datos inicializados correctamente');
@@ -11888,7 +11940,7 @@ app.post('/api/community-code/claim', authMiddleware, authLimiter, async (req, r
       const contentCash = await renderSystemCommand(
         '/sys_welcome_code_cash',
         '🎉 ¡Código de bienvenida canjeado, {username}!\n\n' +
-        '💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰{rollover}\n\n' +
+        '💰 Tu BONO SORPRESA de ${amount} ya está ACREDITADO en tu cuenta. ¡A jugarlo! 🎰\n\n' +
         '⚠️ Es por única vez.',
         { username: user.username, amount: montoFmt, rollover: _rolloverNoteText(credit.rolloverApplied != null ? credit.rolloverApplied : _welcomeRolloverX) } // #186
       );
@@ -12083,6 +12135,7 @@ app.post('/api/admin/community-code', authMiddleware, adminMiddleware, async (re
     // BONO (/bonus), así que se valida contra los multiplicadores de BONOS de
     // 1girox (`bonus.multipliers` — NO los de depósito) para que el canje
     // jamás falle en la cara del cliente.
+    if (PLATFORM_NO_ROLLOVER && b.rolloverX !== undefined) b.rolloverX = 0; // #196
     if (b.rolloverX !== undefined) {
       const rx = Number(b.rolloverX);
       if (!Number.isFinite(rx) || rx < 0 || rx > 50) {
@@ -12136,7 +12189,7 @@ app.post('/api/admin/community-code', authMiddleware, adminMiddleware, async (re
 // Guarda el plan de notificaciones elegido por el usuario en la encuesta.
 app.post('/api/notification-plan', authMiddleware, async (req, res) => {
   try {
-    const VALID_PLANS = ['suave', 'normal', 'activo', 'solo_reembolsos'];
+    const VALID_PLANS = PLATFORM_NO_STATS ? ['suave', 'normal', 'activo'] : ['suave', 'normal', 'activo', 'solo_reembolsos']; // #196
     const plan = req.body && req.body.plan;
     if (!VALID_PLANS.includes(plan)) {
       return res.status(400).json({ error: 'Plan de notificaciones inválido' });
@@ -12718,6 +12771,7 @@ app.post('/api/admin/fire-milestones', authMiddleware, adminMiddleware, async (r
     if (norm.length > 30) return res.status(400).json({ error: 'Máximo 30 premios.' });
     // Rollover de los premios: número 0-50 (0 = premios libres, sin objetivo).
     let rolloverMultiplier;
+    if (PLATFORM_NO_ROLLOVER) req.body.rolloverMultiplier = 0; // #196 GANAMOS sin rollover
     if (req.body.rolloverMultiplier !== undefined && req.body.rolloverMultiplier !== null && req.body.rolloverMultiplier !== '') {
       const rm = Number(req.body.rolloverMultiplier);
       if (!Number.isFinite(rm) || rm < 0 || rm > 50) {
@@ -18121,7 +18175,7 @@ function _rouletteNormalizePrizes(raw) {
     if (type === 'percent' && (!(value > 0) || value > 500)) throw new Error(`Premio ${i + 1}: la bonificación tiene que ser un % entre 1 y 500.`);
     const weight = Number(p && p.weight);
     if (!Number.isFinite(weight) || weight <= 0) throw new Error(`Premio ${i + 1}: el peso/probabilidad tiene que ser mayor a 0.`);
-    const rolloverX = type === 'cash' ? Math.max(0, Math.min(50, Math.round(Number(p && p.rolloverX) || 0))) : 0;
+    const rolloverX = (type === 'cash' && !PLATFORM_NO_ROLLOVER) ? Math.max(0, Math.min(50, Math.round(Number(p && p.rolloverX) || 0))) : 0; // #196
     const emoji = String((p && p.emoji) || (type === 'none' ? '😔' : (type === 'percent' ? '🎁' : '💰'))).slice(0, 8);
     const label = String((p && p.label) || '').trim().slice(0, 30) ||
       (type === 'none' ? 'SIN PREMIO' : (type === 'percent' ? `+${value}% EXTRA` : '$' + value.toLocaleString('es-AR')));
@@ -18494,7 +18548,7 @@ const _CLAIMS_EXAMPLE_NAMES = ['lucas', 'martin', 'jose', 'daniela', 'rodri', 'm
 
 // Genera reclamos de ejemplo para completar el feed cuando hay pocos reales.
 function _generateExampleClaims(n) {
-  const kinds = ['ruleta', 'reembolso', 'bono'];
+  const kinds = PLATFORM_NO_STATS ? ['ruleta', 'bono'] : ['ruleta', 'reembolso', 'bono']; // #196
   const refundTypes = ['daily', 'weekly', 'monthly'];
   const out = [];
   for (let i = 0; i < n; i++) {
@@ -18527,7 +18581,7 @@ app.get('/api/claims-feed', async (req, res) => {
     const [spins, refunds, bonusUsers] = await Promise.all([
       DailyRouletteSpin.find({ prizeARS: { $gt: 0 } })
         .sort({ spunAt: -1 }).limit(35).select('username prizeARS spunAt').lean(),
-      RefundClaim.find({ amount: { $gt: 0 } })
+      PLATFORM_NO_STATS ? Promise.resolve([]) : RefundClaim.find({ amount: { $gt: 0 } }) // #196
         .sort({ claimedAt: -1 }).limit(35).select('username type amount claimedAt').lean(),
       User.find({ installBonusClaimed: true, installBonusClaimedAt: { $ne: null } })
         .sort({ installBonusClaimedAt: -1 }).limit(20).select('username installBonusClaimedAt').lean()
@@ -19156,6 +19210,7 @@ const _vipSyncDeps = {
 
 let _vipTickRunning = false; // no encimar ticks si la plataforma viene lenta
 async function _runVipTick() {
+  if (PLATFORM_NO_STATS) return; // #196 GANAMOS: sin apostado no hay niveles VIP
   if (_vipTickRunning) return;
   _vipTickRunning = true;
   try {
@@ -19172,6 +19227,7 @@ async function _runVipTick() {
 
 async function _runVipSweepCheck() {
   try {
+    if (PLATFORM_NO_STATS) return; // #196
     if (!girox.isEnabled() || await vipLevelService.isDisabled(Config)) return;
     const now = new Date();
     if (vipLevelService.hourAR(now) !== 5) return; // madrugada ART (poco juego, cupo libre)
@@ -20143,7 +20199,7 @@ async function _nbChatText(batch, opts = {}) {
       '⏰ Válido hasta {fecha}.', vars);
   } else if (opts.credited) {
     tail = await renderSystemCommand('/sys_lote_aviso_cash',
-      '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰{rollover}', vars);
+      '💰 ¡Te ACREDITAMOS {gift}! Ya están en tu cuenta. 🎰', vars);
   } else {
     tail = `🎁 Tu regalo: ${giftLine}.`;
   }
@@ -20493,7 +20549,7 @@ async function _tryClaimNotifBatchCode(reqUser, attempt) {
       : '';
     // Editable desde COMANDOS (/sys_lote_canje_cash); vacío = no se envía.
     const contentCash = await renderSystemCommand('/sys_lote_canje_cash',
-      '💰 ¡Tu regalo de ${amount} ya está ACREDITADO en tu cuenta! A jugarlo 🎰{rollover}',
+      '💰 ¡Tu regalo de ${amount} ya está ACREDITADO en tu cuenta! A jugarlo 🎰',
       { amount: montoFmt, rollover: rollNote });
     if (contentCash) await Message.create({
       id: uuidv4(), senderId: 'system', senderUsername: 'Sistema', senderRole: 'admin',
@@ -20616,7 +20672,7 @@ app.post('/api/admin/notif-batches', authMiddleware, adminMiddleware, async (req
     // Rollover (solo fichas): rango 0..50 Y contra los multiplicadores de BONO
     // de la plataforma (⚠️ bonus.multipliers — los de rollover son de DEPÓSITOS).
     let rolloverX = 0;
-    if (giftType === 'fixed') {
+    if (giftType === 'fixed' && !PLATFORM_NO_ROLLOVER) { // #196 GANAMOS: siempre x0
       rolloverX = Math.round(Number(b.rolloverX) || 0);
       if (!Number.isFinite(rolloverX) || rolloverX < 0 || rolloverX > 50) {
         return res.status(400).json({ error: 'El rollover tiene que estar entre 0 y 50 (0 = sin rollover).' });

@@ -3,7 +3,7 @@
 // Wires up all VIP modules and event listeners.
 // Load order in HTML must be:
 //   config.js → notifications.js → ui.js → chat.js →
-//   socket.js → auth.js → refunds.js → fire.js → app.js
+//   socket.js → auth.js → fire.js → app.js  (refunds.js se eliminó: GANAMOS no tiene reembolsos, #196)
 // ========================================
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -131,12 +131,11 @@ function setupEventListeners() {
             return d.innerHTML;
         };
         const _vipFmtMoney = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-AR');
-        const _vipRefundLabel = { daily: 'diario', weekly: 'semanal', monthly: 'mensual' };
         function _vipClaimText(it) {
             const name = it.name || '***';
             if (it.kind === 'ruleta') return '🎰 ' + name + ' ganó ' + _vipFmtMoney(it.amount) + ' en la ruleta diaria';
-            if (it.kind === 'bono') return '🎁 ' + name + ' reclamó un regalo de ' + _vipFmtMoney(it.amount);
-            return '💸 ' + name + ' reclamó ' + _vipFmtMoney(it.amount) + ' de reembolso ' + (_vipRefundLabel[it.refundType] || '');
+            // #196 GANAMOS sin reembolsos: el server ya no manda kind 'reembolso'; cualquier otro kind cae acá.
+            return '🎁 ' + name + ' reclamó un regalo de ' + _vipFmtMoney(it.amount);
         }
 
         let _vipClaims = [];
@@ -243,15 +242,15 @@ function setupEventListeners() {
             if (body) body.innerHTML = h;
         });
 
-        // Panel del home colapsable: "subir" el menú (ruleta, reembolsos,
-        // saldo, retirar) para agrandar el chat, y bajarlo para ver todo.
+        // Panel del home colapsable: "subir" el menú (ruleta, saldo, retirar)
+        // para agrandar el chat, y bajarlo para ver todo.
         const homePanel = document.getElementById('homePanel');
         const homePanelToggle = document.getElementById('homePanelToggle');
         if (homePanel && homePanelToggle) {
             const hptLabel = homePanelToggle.querySelector('.hpt-label');
             const hptChevron = homePanelToggle.querySelector('.hpt-chevron');
-            // "Ocultar menú" NO esconde todo: deja a la vista la fila de REEMBOLSOS
-            // y el perfil del usuario (`.dash-top`), que es lo que el cliente mira
+            // "Ocultar menú" NO esconde todo: deja a la vista el botón del casino
+            // (`.dash-play`), que es lo que el cliente mira
             // todo el tiempo. Se ocultan el casino/saldo, la comunidad, el bono de
             // instalación y —a pedido del owner— el cartel de verificar teléfono,
             // que vive FUERA del panel pero ocupa media pantalla.
@@ -374,15 +373,19 @@ function setupEventListeners() {
         const fileInput = document.getElementById('fileInput');
         if (fileInput) fileInput.addEventListener('change', VIP.chat.handleFileSelect);
 
-        // Refund buttons
-        const dailyRefundBtn = document.getElementById('dailyRefundBtn');
-        if (dailyRefundBtn) dailyRefundBtn.addEventListener('click', () => VIP.refunds.showRefundModal('daily'));
-        const weeklyRefundBtn = document.getElementById('weeklyRefundBtn');
-        if (weeklyRefundBtn) weeklyRefundBtn.addEventListener('click', () => VIP.refunds.showRefundModal('weekly'));
-        const monthlyRefundBtn = document.getElementById('monthlyRefundBtn');
-        if (monthlyRefundBtn) monthlyRefundBtn.addEventListener('click', () => VIP.refunds.showRefundModal('monthly'));
-        const closeRefundModal = document.getElementById('closeRefundModal');
-        if (closeRefundModal) closeRefundModal.addEventListener('click', () => VIP.ui.hideModal('refundModal'));
+        // #196 Banner de GANAMOS en el login: rota entre 3 imágenes cada 5 s.
+        const loginBanner = document.getElementById('loginBanner');
+        if (loginBanner) {
+            const banners = ['/images/banner-inicio-ganamos.jpg', '/images/banner-jackpots-ganamos.jpg', '/images/banner-futbol-ganamos.jpg'];
+            banners.slice(1).forEach((src) => { const im = new Image(); im.src = src; });
+            let bi = 0;
+            setInterval(() => {
+                bi = (bi + 1) % banners.length;
+                loginBanner.style.opacity = '0';
+                setTimeout(() => { loginBanner.src = banners[bi]; loginBanner.style.opacity = '1'; }, 250);
+            }, 5000);
+            loginBanner.style.transition = 'opacity .25s ease';
+        }
 
         // Fire (Fueguito)
         const fireBtn = document.getElementById('fireBtn');

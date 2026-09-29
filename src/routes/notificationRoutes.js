@@ -775,8 +775,13 @@ const NOTIF_TEMPLATE_DEFAULTS = {
   regalo:     { label: 'Regalo',               title: '🎉 ¡Tenés un regalo!',      body: 'Te dejamos un regalo en tu cuenta. Ingresá para reclamarlo.',           durationHours: 0,  hasDuration: false },
   reembolso:  { label: 'Reembolso disponible', title: '💸 Reembolso disponible',   body: 'Tenés un reembolso para reclamar. ¡No lo dejes pasar!',                 durationHours: 0,  hasDuration: false }
 };
+// #196 GANAMOS (modo manual): no hay reembolsos → la plantilla "reembolso" y el plan
+// "solo_reembolsos" no existen (no se listan, no se lanzan, no se programan).
+let _MANUAL_MODE = false;
+try { _MANUAL_MODE = !!require('../services/platformService').MANUAL_MODE; } catch (_) {}
+if (_MANUAL_MODE) delete NOTIF_TEMPLATE_DEFAULTS.reembolso;
 const NOTIF_TEMPLATE_TYPES = Object.keys(NOTIF_TEMPLATE_DEFAULTS);
-const NOTIF_LAUNCH_PLANS = ['suave', 'normal', 'activo', 'solo_reembolsos', 'todos'];
+const NOTIF_LAUNCH_PLANS = _MANUAL_MODE ? ['suave', 'normal', 'activo', 'todos'] : ['suave', 'normal', 'activo', 'solo_reembolsos', 'todos'];
 
 // Categoría de tope de cada tipo. El reembolso no tiene tope mensual.
 const NOTIF_TYPE_CATEGORY = {

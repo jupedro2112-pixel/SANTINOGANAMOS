@@ -37,6 +37,70 @@
 
 ---
 
+## Sesión 2026-09-29 (7ª) — GANAMOS sin rollover ni reembolsos: limpieza integral + imágenes GANAMOS
+
+### 196. Se eliminan rollover, reembolsos, reembolso en vivo, rakeback y niveles VIP de todo lo que ve el cliente y el agente en modo manual; logo/banners de GANAMOS
+- **Pedido del owner (con capturas):** la app mostraba "INFORMACIÓN — Bonos y Rollover
+  x3", "¿Qué es el rollover?", cards de reembolsos/VIP/rakeback… "esto está mal, no hay
+  rollover en GANAMOS, ni reembolsos. Limpiá toda la repo para que no haya ningún hueco".
+  Se inventarió PWA, panel y backend con tres búsquedas exhaustivas y se cerró todo.
+- **Backend (server.js):** `PLATFORM_NO_ROLLOVER = MANUAL_MODE` → rollover global
+  apagado y fijo x0 (`getGlobalBonusRollover`/`applyGlobalRollover`/`_rolloverNoteText`),
+  POST admin de bienvenida/fueguito/lotes/ruleta fuerzan rollover 0; la migración que
+  appendeaba `{rollover}` a los comandos sólo corre fuera de manual. `buildEscaleraText`
+  = ''. 404 en manual: `/api/refunds/claim/*`, `/api/cashback/claim`,
+  `/api/vip/rakeback/claim`, GET admin `bonus-rollover|instant-cashback|refund-tiers|
+  vip-levels`; `/api/refunds/history` vacío. Crons VIP cortados. `/api/claims-feed` sin
+  reembolsos (ni ejemplos inventados). `solo_reembolsos` deja de ser plan válido.
+  **Seeds** de `/sys_deposit`, `/sys_deposit_bonus`, `/sys_bonus`, `/sys_install_app`,
+  `/sys_welcome`, `/sys_ganamos_acreditado`, `/sys_welcome_code_cash`,
+  `/sys_lote_aviso_cash`, `/sys_lote_canje_cash` sin `{rollover}`, sin link a
+  1girox.com, sin "mañana revisá tu reembolso"; la bienvenida usa `{referral_pct}`.
+  Mismos cambios en los fallbacks inline. **Migración GANAMOS al boot (manual,
+  idempotente):** pisa con la seed cualquier `/sys_*` sembrado cuyo texto aún tenga
+  `1girox|reembolso|{escalera}|{rollover}|rakeback|nivel VIP` y quita `{rollover}`/
+  `{escalera}` del resto → el deploy actual queda limpio sin tocar la base a mano.
+- **Adaptador (`ganamosPlatformService`):** `getPlatformConfig` → multiplicadores `[0]`,
+  rollover apagado; `depositToUser` y `creditGift` fuerzan x0 (ignoran el multiplier
+  pedido y el resolver global). Test del adaptador actualizado (31 chequeos ✅).
+- **Pushes:** `encuestaService` sin "Revisá tus reembolsos"/"beneficios VIP";
+  `notificationRulesService` no siembra reglas `refund` en manual y desactiva las
+  guardadas; `notificationRoutes` sin plantilla `reembolso` ni plan `solo_reembolsos`
+  en manual (tampoco se programan ni disparan).
+- **PWA (SW v111):** borrado `public/js/refunds.js` (y sus llamadas en auth.js/app.js);
+  fuera del HTML: menú "Mi Perfil (nivel y reembolsos)", fila REEMBOLSOS + recuadro
+  USUARIO del dashboard, modales `unifiedRefundModal`/`refundModal`/
+  `rolloverInfoModal`, cards Reembolsos/Niveles VIP/Rakeback y línea+botón de rollover
+  en Información del Servicio y en la bienvenida por pauta, "Reembolsos diarios…" del
+  welcome de publicista, plan "SOLO REEMBOLSOS" de la encuesta; fueguito y ruleta sin
+  notas de rollover; ticker del login sin "reclamó reembolso". `platformmode.js` ya no
+  necesita ocultar nada de eso.
+- **Panel (admin-sw v43):** `setupRoleBasedUI` pone `body.platform-manual`; un bloque
+  CSS en `adminprivado2026/index.html` oculta nav "Reembolsos", filtros y stat-cards
+  de reembolso/cashback/rakeback/VIP, cards Rollover global / Reembolso en vivo /
+  Rangos / Niveles VIP, campos de rollover (bienvenida, fueguito, lotes `nbRolloverWrap`,
+  columna Rollover de la ruleta), opciones "Reembolso disponible"/"Solo reembolsos"/
+  "Con saldo > 0", columnas Balance; `loadCBUConfig` no llama a esos loaders en manual;
+  el cierre bancario no muestra el tile "Cajero 1girox"; ayuda de lotes explica que las
+  fichas van a "Pendientes GANAMOS".
+- **Imágenes GANAMOS (el owner pasó logo + 3 banners):** generadas con PIL desde
+  `~/Downloads`: `public/icons/icon-{32..512}.png` (logo GANAMOS.NET sobre violeta),
+  `public/images/soporte-ganamos.png` (avatar del chat y burbuja de carga rápida),
+  `banner-inicio-ganamos.jpg` ("Jugá, ganá y cobrá"), `banner-jackpots-ganamos.jpg`,
+  `banner-futbol-ganamos.jpg` (800×213). El login rota los 3 banners cada 5 s
+  (`app.js`, `#loginBanner`). Borrados `banner-inicio-1girox.jpg` y `soporte-1girox.png`.
+  `GANAMOS_PLAY_URL` default → `https://ganamos.net` (config.js y adaptador).
+- **Queda tal cual (a propósito):** `/sys_recover_100` ("¿Querés reclamar el 100% de tu
+  carga?") es la promo de la Comunidad, no un reembolso; `/sys_vip_levelup` sigue
+  sembrado pero nunca se dispara en manual; el CSS muerto de `.refund-*` en
+  `header.css`/`responsive.css` no se ve. Modo `girox` conserva toda la lógica.
+- **Validado:** `node --check` en todo lo tocado, `check-tdz` ✅, `test-ganamos-adapter`
+  ✅, `test-rollover-multicuenta` ✅; HTML de la PWA y del panel con ids únicos y divs
+  balanceados; grep de rollover/reembolso/1girox en la PWA sólo deja comentarios.
+  **Probar en deploy:** boot con "GANAMOS: N comando(s) … actualizados"; Información del
+  Servicio sin reembolsos/VIP/rollover; login con banners GANAMOS; icono de la app
+  nuevo (reinstalar la PWA para ver el ícono); panel sin nav Reembolsos ni cards.
+
 ## Sesión 2026-09-29 (6ª) — Referidos al 3% editable desde COMANDOS + modal de CBU cierra al tocar afuera
 
 ### 195. `/sys_referral_pct`: el % de referidos vive en COMANDOS y lo leen el cálculo y TODOS los textos

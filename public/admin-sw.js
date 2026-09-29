@@ -34,7 +34,7 @@ firebase.initializeApp(firebaseConfig);
 const messaging = firebase.messaging();
 
 // Bump this version with every deploy so the admin PWA always loads fresh code.
-const CACHE_VERSION = 'v42'; // v42: sección Pendientes GANAMOS (modo manual sin API) + oculta saldos (#190) // v41: textos del bono automático en Depositar y banners (#189) // v40: premios/elegibilidad de la ruleta editables, regla del bono por instalar, sugerencia de bono en Depositar (#188) // v39: card Rollover GLOBAL de bonos + señales 🏦/🧾 en el banner multicuenta (#184) // v38: sección 🏦 Banco (bandeja en vivo, bajadas, cierre diario) + origen en Depositar (#183) // v37: card "Reembolso en vivo" en Config + categoría/filtro en Transacciones
+const CACHE_VERSION = 'v43'; // v43: GANAMOS sin reembolsos/VIP/rollover/saldo: clase platform-manual oculta nav, filtros, cards y campos (#196) // v42: sección Pendientes GANAMOS (modo manual sin API) + oculta saldos (#190) // v41: textos del bono automático en Depositar y banners (#189) // v40: premios/elegibilidad de la ruleta editables, regla del bono por instalar, sugerencia de bono en Depositar (#188) // v39: card Rollover GLOBAL de bonos + señales 🏦/🧾 en el banner multicuenta (#184) // v38: sección 🏦 Banco (bandeja en vivo, bajadas, cierre diario) + origen en Depositar (#183) // v37: card "Reembolso en vivo" en Config + categoría/filtro en Transacciones
 const CACHE_NAME = 'admin-sala-' + CACHE_VERSION;
 
 // Only pre-cache stable assets (icons rarely change).

@@ -22,11 +22,11 @@ const INCENTIVO_MSGS = [
   // 🪦 2026-09-07: eliminado '🔥 La ruleta diaria te espera / Tenés tu giro gratis
   // del día sin usar' — la ruleta diaria NO está activa y los clientes se quejaban.
   // notificationService además BLOQUEA cualquier push que mencione la ruleta.
-  { title: '💰 Revisá tus reembolsos', body: 'Fijate si tenés reembolsos para reclamar en la sala.' },
-  { title: '⭐ ¿Cómo la venís pasando?', body: 'Entrá un rato, jugá y disfrutá de tus beneficios VIP.' },
+  { title: '🎁 Revisá tus regalos', body: 'Fijate si tenés regalos o bonos para reclamar en la sala.' }, // #196 sin reembolsos
+  { title: '⭐ ¿Cómo la venís pasando?', body: 'Entrá un rato, jugá y disfrutá de tus beneficios.' },
   { title: '🎲 Un ratito de juego', body: 'Date una vuelta por la sala, te estamos esperando.' },
   { title: '🍀 Probá tu suerte hoy', body: 'Unas jugadas pueden cambiarte el día. Entrá ahora.' },
-  { title: '🎁 Beneficios activos', body: 'Sos parte de la sala VIP. Vení a aprovechar lo tuyo.' }
+  { title: '🎁 Beneficios activos', body: 'Sos parte de la sala. Vení a aprovechar lo tuyo.' }
 ];
 
 function bonoMsg(percent) {

@@ -49,14 +49,14 @@ const logger = {
 // CONFIG (lazy)
 // ============================================================
 function getPlayUrl() {
-  return (process.env.GANAMOS_PLAY_URL || 'https://ganamos.io').replace(/\/+$/, '');
+  return (process.env.GANAMOS_PLAY_URL || 'https://ganamos.net').replace(/\/+$/, '');
 }
 function getBaseUrl() { return 'manual://ganamos'; }
 /** Siempre "habilitado": en modo manual no hay credenciales que puedan faltar. */
 function isEnabled() { return true; }
 
-// Hooks que server.js inyecta (mismo contrato que giroxService). Acá se guardan
-// pero casi no se usan: el rollover se anota en la tarea para que el agente lo vea.
+// Hooks que server.js inyecta (mismo contrato que giroxService). Se guardan por
+// contrato; el resolver de rollover NO se usa (#196: GANAMOS no tiene rollover).
 let _rolloverResolver = null;
 let _cashierHook = null;
 let _keyResolver = null;
@@ -299,11 +299,9 @@ async function depositToUser(username, amount, description = '', reference = nul
   const amt = _normalizeAmount(amount);
   if (amt === null) return { success: false, error: 'Monto inválido', code: 'invalid_amount' };
   const w = wagering || {};
-  let bonusMultiplier = w.bonusMultiplier != null ? Number(w.bonusMultiplier) : null;
-  if ((Number(w.bonusAmount) > 0 || Number(w.bonusPercent) > 0) && !w.ignoreGlobalRollover) {
-    const g = await _globalRollover();
-    if (g != null) bonusMultiplier = g;
-  }
+  // #196 GANAMOS NO tiene rollover: el bono de la carga es siempre x0 (plata libre).
+  // Se ignora tanto el multiplier del caller como el resolver global.
+  const bonusMultiplier = 0;
   return _recordTask({
     kind: 'deposit',
     username,
@@ -311,7 +309,7 @@ async function depositToUser(username, amount, description = '', reference = nul
     description,
     reference: _buildReference('dep', reference),
     bonus: { amount: w.bonusAmount, percent: w.bonusPercent, multiplier: bonusMultiplier },
-    rolloverX: w.multiplier != null ? Number(w.multiplier) : null,
+    rolloverX: 0, // #196 sin rollover en GANAMOS
     flow: w.flow || null,
     agentExecuted: !!w.agentExecuted,
     agentName: w.agentName || null,
@@ -340,8 +338,9 @@ async function creditGift(username, amount, opts = {}) {
   const amt = _normalizeAmount(amount);
   if (amt === null) return { success: false, error: 'Monto inválido', code: 'invalid_amount' };
   const o = opts || {};
-  let roll = Math.max(0, Math.round(Number(o.rolloverX) || 0));
-  if (!o.ignoreGlobalRollover) { const g = await _globalRollover(); if (g != null) roll = g; }
+  // #196 GANAMOS NO tiene rollover: todo regalo es plata libre (x0), venga con el
+  // rolloverX que venga y esté o no el resolver global.
+  const roll = 0;
   const r = await _recordTask({
     kind: 'gift',
     username,
@@ -407,7 +406,8 @@ async function getPlayersStatsBatch() {
   return { ...MANUAL_ERR, error: 'El netwin no está disponible: GANAMOS no tiene API.', results: {} };
 }
 async function getPlatformConfig() {
-  return { success: true, cached: true, config: { manual: true, bonus: { enabled: true, standalone_enabled: true, multipliers: [0, 2, 3, 5, 10], fixed_min: 0, fixed_max: 0 }, rollover: { enabled: true } } };
+  // #196 GANAMOS: sin rollover → el único multiplicador permitido es 0.
+  return { success: true, cached: true, config: { manual: true, bonus: { enabled: true, standalone_enabled: true, multipliers: [0], fixed_min: 0, fixed_max: 0 }, rollover: { enabled: false } } };
 }
 async function claimPendingBonus() {
   return { success: true, amount: 0, claimed: [], wagering: null, manual: true };

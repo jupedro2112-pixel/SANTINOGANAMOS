@@ -1142,7 +1142,7 @@ VIP.ui._showCasinoFrame = function() {
         'display:flex;flex-direction:column;align-items:center;gap:4px;padding:0;z-index:6;' +
         'background:none;border:none;cursor:pointer;user-select:none;-webkit-user-select:none;">' +
         '<span style="position:relative;display:block;width:60px;height:60px;">' +
-          '<img src="/images/soporte-1girox.png" alt="Carga rápida GANAMOS" draggable="false" ' +
+          '<img src="/images/soporte-ganamos.png" alt="Carga rápida GANAMOS" draggable="false" ' +
             'style="width:60px;height:60px;border-radius:50%;object-fit:cover;display:block;' +
             'border:2px solid #00e676;box-shadow:0 6px 22px rgba(0,200,83,0.55);-webkit-user-drag:none;">' +
           '<span id="casinoChatBadge" style="display:none;position:absolute;top:-3px;right:-3px;' +
@@ -1164,7 +1164,7 @@ VIP.ui._showCasinoFrame = function() {
         // 1. Header verde
         '<div style="display:flex;align-items:center;gap:10px;padding:10px 12px;flex:0 0 auto;' +
           'background:linear-gradient(135deg,#00933c,#00c853);">' +
-          '<img src="/images/soporte-1girox.png" alt="" draggable="false" ' +
+          '<img src="/images/soporte-ganamos.png" alt="" draggable="false" ' +
             'style="width:38px;height:38px;border-radius:50%;object-fit:cover;flex:0 0 auto;' +
             'border:2px solid rgba(255,255,255,0.35);">' +
           '<div style="flex:1;min-width:0;">' +

@@ -234,8 +234,7 @@
                 html += '<div style="color:#66ff66;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">¡GANASTE!</div>';
                 html += '<div style="color:#fff;font-size:32px;font-weight:900;margin-bottom:6px;">$' + _fmt(spin.prizeARS) + '</div>';
                 html += '<div style="background:rgba(102,255,102,0.20);border:1px solid #66ff66;border-radius:8px;padding:9px 12px;margin-top:10px;color:#fff;font-size:13px;font-weight:800;">✅ Acreditado a tu saldo automáticamente</div>';
-                // #186 rollover del premio (el global del panel, lo manda el server)
-                if (Number(spin.rolloverX) > 0) html += '<div style="color:#ffd479;font-size:11.5px;margin-top:8px;line-height:1.4;">🎯 Rollover x' + spin.rolloverX + ': ya podés jugarlo; para retirarlo apostalo ' + spin.rolloverX + ' veces. Las apuestas en DEPORTES no suman.</div>';
+                // #196 GANAMOS sin rollover: el premio es plata libre (no se muestra ninguna nota).
                 if (spin.creditTxId) html += '<div style="color:#888;font-size:10px;margin-top:6px;font-family:monospace;">tx: ' + _esc(spin.creditTxId) + '</div>';
                 html += '</div>';
 

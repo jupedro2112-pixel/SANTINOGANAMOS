@@ -13,7 +13,6 @@ VIP.notifSurvey = (function () {
         suave: 'Suave',
         normal: 'Normal',
         activo: 'Activo',
-        solo_reembolsos: 'Solo reembolsos'
     };
 
     // Abre el modal. editable=true muestra la X para cerrar (cambio desde

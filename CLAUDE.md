@@ -10,8 +10,10 @@
 > fueguito, VIP, lotes…) quedan `pending` en la sección **"⏳ Pendientes GANAMOS"**
 > del panel hasta que un agente las marca hechas (el cliente recibe
 > `/sys_ganamos_acreditado`). Sin saldo, sin SSO (CASINO abre `GANAMOS_PLAY_URL` en
-> pestaña), reembolsos/VIP apagados, registro público apagado (alta por agente con
-> el MISMO username que en GANAMOS). **Leer `docs/ARCHITECTURE.md` §0 antes de tocar
+> pestaña), **SIN reembolsos, SIN niveles VIP/rakeback y SIN rollover de bonos**
+> (#196: todo eso se eliminó de la PWA y se cierra/oculta en backend y panel en modo
+> manual — no volver a mencionarlos en ningún texto al cliente), registro público
+> apagado (alta por agente con el MISMo username que en GANAMOS). **Leer `docs/ARCHITECTURE.md` §0 antes de tocar
 > cualquier flujo de plata.** Todo lo que sigue sobre "1girox" es el diseño heredado
 > (sigue vigente como modelo de flujos; el cliente real de 1girox queda para
 > `PLATFORM_MODE=girox`). Test del adaptador: `node scripts/test-ganamos-adapter.js`.
@@ -146,6 +148,14 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `Transaction type:'roulette'`**; tipo de Transaction nuevo ⇒ etiqueta + filtro +
   case del resumen en el panel (§6 de ARCHITECTURE). La devolución de retiro
   rechazado sigue como depósito (no es regalo).
+- **GANAMOS NO TIENE ROLLOVER NI REEMBOLSOS (#196, 2026-09-29):** en modo manual
+  `PLATFORM_NO_ROLLOVER` apaga el rollover global (x0 fijo, ignora la Config),
+  `_rolloverNoteText` devuelve '' y el adaptador fuerza x0; reembolsos/cashback/
+  rakeback/VIP: endpoints de reclamo 404, crons cortados, seeds y PWA sin esos
+  textos, panel con `body.platform-manual`. Un texto nuevo al cliente NO puede
+  decir "rollover", "reembolso", "rakeback" ni "nivel VIP". La migración del boot
+  pisa los `/sys_*` que todavía los mencionen. Todo lo de abajo sobre rollover y
+  reembolsos aplica sólo a `PLATFORM_MODE=girox`.
 - **ROLLOVER GLOBAL de bonos (2026-09-16):** espec en
   `docs/ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md`. Se aplica en el CLIENTE
   (`giroxService`: `creditGift`, `creditUserBalance` con multiplier, `bonus_multiplier`

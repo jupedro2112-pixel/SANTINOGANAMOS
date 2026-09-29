@@ -90,12 +90,8 @@ VIP.fire = (function () {
         const pendingCashEl = document.getElementById('firePendingCashReward');
         if (pendingCashEl) {
             if (pendingCash > 0) {
-                // Aviso de rollover: el premio se juega ya, pero para RETIRARLO hay
-                // que apostar (multiplicador × premio) — lo exige la plataforma.
-                const _mult = VIP.state.fireStatus.rolloverMultiplier || 0;
-                const _rolloverNote = _mult > 0
-                    ? `<span style="font-size:11px;color:#ffb84d;">🎯 Para poder retirarlo: apostá $${Math.round(pendingCash * _mult).toLocaleString('es-AR')} (rollover x${_mult})</span><br>`
-                    : '';
+                // #196 GANAMOS sin rollover: el premio es plata libre (sin nota de apuestas).
+                const _rolloverNote = '';
                 pendingCashEl.style.display = 'block';
                 pendingCashEl.innerHTML = `
                     <strong style="color:#ffd700;">🏆 ¡Tenés $${pendingCash.toLocaleString('es-AR')} para reclamar!</strong><br>
@@ -125,13 +121,8 @@ VIP.fire = (function () {
                 } else {
                     rewardText = m.reward ? `$${m.reward.toLocaleString('es-AR')}` : '-';
                 }
-                // 🪦 Antes acá se mostraba "(requiere actividad del mes)" según
-                // hasDepositRequirement: ese requisito fue reemplazado por el
-                // ROLLOVER (2026-08-05) — se avisa el objetivo de apuestas.
-                const _fsMult = VIP.state.fireStatus.rolloverMultiplier || 0;
-                const depositNote = (_fsMult > 0 && m.type === 'cash' && m.reward)
-                    ? ` <span style="font-size:10px;color:#ffb84d;">(retiro con rollover x${_fsMult})</span>`
-                    : '';
+                // #196 GANAMOS sin rollover ni requisito: el premio es libre.
+                const depositNote = '';
                 return `<div class="milestone-item ${statusClass}" style="display:flex;align-items:center;justify-content:space-between;padding:8px 12px;margin:4px 0;border-radius:8px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);">
                     <span>${statusIcon} <strong>Día ${m.day}</strong>: ${rewardText}${depositNote}</span>
                     <span style="font-size:11px;color:#aaa;">${statusLabel}</span>
