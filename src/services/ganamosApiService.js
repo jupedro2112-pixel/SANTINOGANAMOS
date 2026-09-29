@@ -75,7 +75,8 @@ function _proxyAgent() {
 function getProxySummary() {
   const url = _proxyUrl();
   if (!url) return 'sin proxy';
-  try { const u = new URL(url); return `proxy ${u.hostname}:${u.port || '(default)'}`; } catch (_) { return 'proxy (URL inválida)'; }
+  // URL.port viene vacío cuando es el puerto por defecto del esquema (http→80, https→443).
+  try { const u = new URL(url); return `proxy ${u.hostname}:${u.port || (u.protocol === 'https:' ? 443 : 80)}`; } catch (_) { return 'proxy (URL inválida)'; }
 }
 
 // ⚠️ En producción winston escribe SOLO a archivo (logs/*.log), que EB no muestra. Todo lo
