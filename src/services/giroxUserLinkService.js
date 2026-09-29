@@ -38,7 +38,7 @@
  */
 
 const { User } = require('../models');
-const giroxService = require('./giroxService');
+const giroxService = require('./platformService');
 const logger = require('../utils/logger');
 
 /**

@@ -9,7 +9,8 @@ VIP.config = {
     // Sitio de juego (1girox). Sólo se usa como respaldo, cuando el login único (SSO)
     // falla y el usuario tiene que entrar a mano desde el modal. El camino normal es
     // VIP.ui.enterCasino(), que recibe del backend un link de acceso ya autenticado.
-    PLATFORM_URL: 'https://1girox.com',
+    // #190 GANAMOS: la URL real la manda el backend (GET /api/public/config → GANAMOS_PLAY_URL).
+    PLATFORM_URL: 'https://ganamos.io',
     FRONTEND_MSG_RATE_MAX: 2,
     FRONTEND_MSG_RATE_WINDOW_MS: 1000,
     CBU_CLICK_COOLDOWN_MS: 10000

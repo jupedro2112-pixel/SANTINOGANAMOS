@@ -1,4 +1,20 @@
-# CLAUDE.md — Contexto del proyecto VIPCARGASANTINO
+# CLAUDE.md — Contexto del proyecto SANTINOGANAMOS (clon de VIPCARGASANTINO para GANAMOS)
+
+> 🟢 **ESTE REPO ES GANAMOS — PLATAFORMA SIN API (MODO MANUAL, #190, 2026-09-29).**
+> Clon de VIPCARGASANTINO para la sala GANAMOS, que hoy opera por WhatsApp y **no
+> expone API**: el cliente pide cargar/retirar por el chat de la web y **un agente lo
+> ejecuta a mano en el panel de GANAMOS**. `PLATFORM_MODE=manual` (default) hace que
+> `src/services/platformService.js` entregue **`ganamosPlatformService`** (mismo
+> contrato que `giroxService`) y que cada carga/retiro/bono sea una **`PlatformTask`**:
+> las del agente nacen `done`; las que genera el server solo (hgcash, ruleta,
+> fueguito, VIP, lotes…) quedan `pending` en la sección **"⏳ Pendientes GANAMOS"**
+> del panel hasta que un agente las marca hechas (el cliente recibe
+> `/sys_ganamos_acreditado`). Sin saldo, sin SSO (CASINO abre `GANAMOS_PLAY_URL` en
+> pestaña), reembolsos/VIP apagados, registro público apagado (alta por agente con
+> el MISMO username que en GANAMOS). **Leer `docs/ARCHITECTURE.md` §0 antes de tocar
+> cualquier flujo de plata.** Todo lo que sigue sobre "1girox" es el diseño heredado
+> (sigue vigente como modelo de flujos; el cliente real de 1girox queda para
+> `PLATFORM_MODE=girox`). Test del adaptador: `node scripts/test-ganamos-adapter.js`.
 
 > ⚠️ **LEER PRIMERO (continuidad entre sesiones).** El owner trabaja en **Tails sin
 > almacenamiento persistente**: al reiniciar la PC se borra TODO lo local y vuelve a
@@ -52,8 +68,15 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   proxy a /src/models). **OJO: hay DOS connectDB** (este y `src/models/index.js`); el
   segundo NO se usa desde server.js. No tocar schemas en config/database.js (sólo
   define ExternalUser y UserActivity; el resto es proxy a /src/models).
-- `src/services/giroxService.js` — **cliente ÚNICO de la Partner API** (altas, saldo,
-  cargas, retiros, bonos, cambio de clave y login único/SSO).
+- `src/services/platformService.js` — **SELECTOR** del cliente de plataforma
+  (`PLATFORM_MODE`): `ganamosPlatformService.js` (manual, default — registra
+  `PlatformTask`, sin API) o `giroxService.js` (Partner API de 1girox). **Requerir
+  siempre el selector, nunca giroxService directo.**
+- `src/services/giroxService.js` — cliente de la Partner API de 1girox (altas, saldo,
+  cargas, retiros, bonos, cambio de clave y login único/SSO). Sólo con `PLATFORM_MODE=girox`.
+- `src/services/ganamosPlatformService.js` + `src/models/PlatformTask.js` — adaptador
+  manual y bandeja "Pendientes GANAMOS" (#190). Opciones extra del contrato:
+  `agentExecuted`, `agentName`, `flow`, `meta`.
 - `src/services/giroxUserLinkService.js` — resuelve y cachea `User.giroxUserId`.
 - `src/services/giroxPublisherKeys.js` — alta de jugadores con la API key del publicista.
 - `src/utils/periodRanges.js` — rangos de fecha (ayer / semana / mes) en hora argentina.
@@ -184,7 +207,8 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 ## Flujo de trabajo del asistente
 
 1. Leer `WORKLOG.md` al iniciar.
-2. Hacer el cambio. Validar sintaxis (`node --check` en archivos tocados) **y, si se
+2. Hacer el cambio. Validar sintaxis (`node --check` en archivos tocados), **si se
+   tocó el adaptador o el contrato de plataforma correr `node scripts/test-ganamos-adapter.js`**, **y, si se
    tocó `server.js`, correr `node scripts/check-tdz.js`** (detecta usos de nivel
    superior antes de su `require` y rutas antes de `const authMiddleware`: `node
    --check` NO los ve y tumban el server al arrancar — pasó el 2026-09-16). No hay

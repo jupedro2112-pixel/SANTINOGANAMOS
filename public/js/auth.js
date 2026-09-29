@@ -1421,7 +1421,7 @@ VIP.auth = (function () {
         // El usuario de registro arranca con "girox" (antes "VIP"); el cliente
         // completa — y lo puede BORRAR si quiere otro nombre, igual que antes.
         const ru = document.getElementById('registerUsername');
-        if (ru && !ru.value.trim()) ru.value = 'girox';
+        if (ru && !ru.value.trim()) ru.value = ''; // #190 GANAMOS: el username es el que ya tiene en GANAMOS
     }
 
     // ============================================

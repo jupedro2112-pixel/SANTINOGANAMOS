@@ -136,7 +136,14 @@ VIP.ui = (function () {
 
             if (response.ok) {
                 const data = await response.json();
-                if (data.balance !== undefined) {
+                // #190 modo manual (GANAMOS sin API): no hay saldo → ocultar y dejar de pollear.
+                if (data.manual) {
+                    if (VIP.state.platform) VIP.state.platform.manual = true;
+                    document.querySelectorAll('.dash-balance').forEach((el) => { el.style.display = 'none'; });
+                    stopBalancePolling();
+                    return;
+                }
+                if (data.balance !== undefined && data.balance !== null) {
                     VIP.state.currentUser.balance = data.balance;
                     updateBalanceDisplay(data.balance);
 
@@ -214,7 +221,7 @@ VIP.ui = (function () {
             '<button type="button" onclick="VIP.ui.hideCasinoInvite();VIP.ui.enterCasino();" ' +
                 'style="width:100%;background:linear-gradient(135deg,#d4af37,#ffd700);color:#000;border:none;' +
                 'padding:14px;border-radius:26px;font-weight:900;font-size:16px;cursor:pointer;' +
-                'box-shadow:0 4px 16px rgba(212,175,55,0.5);">🎰 JUGAR AHORA EN 1GIROX</button>' +
+                'box-shadow:0 4px 16px rgba(212,175,55,0.5);">🎰 JUGAR AHORA EN GANAMOS</button>' +
             '<div style="color:#aaa;font-size:10.5px;margin-top:7px;">Entrás directo, con tu sesión ya iniciada</div>' +
             // 🪦 Acá iba el cartel informativo del código de $5.000: reemplazado
             // (owner 2026-08-05) por la mini-ENCUESTA de Comunidad de abajo.
@@ -943,6 +950,16 @@ VIP.ui._fetchCasinoSession = async function(timeoutMs) {
 };
 
 VIP.ui.enterCasino = async function() {
+  // #190 modo manual (GANAMOS sin API): no hay SSO ni iframe (otro dominio, sin
+  // sesión compartida). Se abre la página de GANAMOS en una pestaña, DENTRO del
+  // gesto del usuario (si no, el bloqueador de pop-ups mobile la mata).
+  if (VIP.platform && VIP.platform.isManual()) {
+    VIP.ui.closePlatformModal();
+    const url = VIP.platform.playUrl();
+    const win = window.open(url, '_blank', 'noopener');
+    if (!win) window.location.href = url;
+    return;
+  }
   if (VIP.ui._casinoOpening) return; // anti doble-click
   VIP.ui._casinoOpening = true;
 
@@ -1094,7 +1111,7 @@ VIP.ui._showCasinoFrame = function() {
   if (!overlay) {
     // "Carga rápida" y no "Soporte": los clientes confundían el widget nuestro
     // con el soporte propio de la página del casino.
-    const MARCA = '1Girox';
+    const MARCA = 'GANAMOS';
     overlay = document.createElement('div');
     overlay.id = 'casinoOverlay';
     // iPhone standalone (viewport-fit=cover + status bar translúcida): el
@@ -1123,7 +1140,7 @@ VIP.ui._showCasinoFrame = function() {
         'display:flex;flex-direction:column;align-items:center;gap:4px;padding:0;z-index:6;' +
         'background:none;border:none;cursor:pointer;user-select:none;-webkit-user-select:none;">' +
         '<span style="position:relative;display:block;width:60px;height:60px;">' +
-          '<img src="/images/soporte-1girox.png" alt="Carga rápida 1Girox" draggable="false" ' +
+          '<img src="/images/soporte-1girox.png" alt="Carga rápida GANAMOS" draggable="false" ' +
             'style="width:60px;height:60px;border-radius:50%;object-fit:cover;display:block;' +
             'border:2px solid #00e676;box-shadow:0 6px 22px rgba(0,200,83,0.55);-webkit-user-drag:none;">' +
           '<span id="casinoChatBadge" style="display:none;position:absolute;top:-3px;right:-3px;' +
@@ -1536,7 +1553,7 @@ VIP.ui._casinoFrameError = function(msg) {
       '🔄 Reintentar</button>' +
     '<button type="button" onclick="VIP.ui.closeCasinoFrame()" ' +
       'style="background:none;color:#aaa;border:none;font-size:14px;cursor:pointer;">' +
-      'Volver a 1GIROX</button>';
+      'Volver a GANAMOS</button>';
 };
 
 // El botón "atrás" del celular cierra el recuadro en vez de salir de la app.

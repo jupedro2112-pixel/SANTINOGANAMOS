@@ -262,6 +262,12 @@ VIP.refunds = (function () {
 
     function updateRefundButtons() {
         if (!VIP.state.refundStatus) return;
+        // #190 reembolsos apagados (modo manual GANAMOS sin netwin) → ocultar el bloque.
+        if (VIP.state.refundStatus.enabled === false || !VIP.state.refundStatus.daily) {
+            document.querySelectorAll('.dash-refunds, .dash-user, .menu-item.profile-btn').forEach((el) => { el.style.display = 'none'; });
+            updateRolloverLabels(VIP.state.refundStatus.bonusRollover);
+            return;
+        }
         updateRefundButton('daily', VIP.state.refundStatus.daily);
         updateRefundButton('weekly', VIP.state.refundStatus.weekly);
         updateRefundButton('monthly', VIP.state.refundStatus.monthly);

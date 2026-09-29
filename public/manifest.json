@@ -1,7 +1,7 @@
 {
-  "name": "CARGAS 1GIROX",
-  "short_name": "CARGAS 1GIROX",
-  "description": "CARGAS 1GIROX - Chat y reembolsos con notificaciones push",
+  "name": "GANAMOS",
+  "short_name": "GANAMOS",
+  "description": "GANAMOS - Chat, ruleta y bonos con notificaciones push",
   "id": "/",
   "start_url": "/?source=pwa",
   "display": "standalone",
@@ -78,7 +78,7 @@
       "sizes": "512x512",
       "type": "image/png",
       "form_factor": "narrow",
-      "label": "CARGAS 1GIROX - Chat"
+      "label": "GANAMOS - Chat"
     }
   ],
   "categories": ["games", "social", "entertainment"],

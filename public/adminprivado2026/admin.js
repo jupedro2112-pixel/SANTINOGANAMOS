@@ -398,6 +398,8 @@ async function handleLogin(e) {
         if (data.token) {
             currentToken = data.token;
             currentAdmin = data.user;
+            window._platformMode = data.platformMode || 'girox'; // #190 'manual' = GANAMOS sin API
+            window._playUrl = data.playUrl || '';
             
             // Configurar UI según el rol
             setupRoleBasedUI();
@@ -475,6 +477,8 @@ async function checkAdminSession() {
             const data = await response.json();
             currentToken = data.token || null;
             currentAdmin = data.user;
+            window._platformMode = data.platformMode || 'girox'; // #190
+            window._playUrl = data.playUrl || '';
             setupRoleBasedUI();
             showApp();
             // publisher_admin: vista limitada — no carga socket / chats /
@@ -653,6 +657,21 @@ function setupRoleBasedUI() {
         const canBank = ['admin', 'depositor', 'withdrawer'].includes(role);
         bankNavItem.style.display = canBank ? '' : 'none';
         if (canBank) { refreshBankBadge(); setInterval(refreshBankBadge, 2 * 60 * 1000); }
+    }
+    // #190 Pendientes GANAMOS (modo manual): todo el staff la ve; cada rol resuelve lo suyo
+    // (admin todo, cargas/comunidad cargas y bonos, pagos retiros). Badge cada 60s.
+    const ptNavItem = document.querySelector('.nav-item-platform-tasks');
+    if (ptNavItem) {
+        const manual = window._platformMode === 'manual';
+        ptNavItem.style.display = manual ? '' : 'none';
+        if (manual && !window._ptBadgeTimer) { refreshPlatformTasksBadge(); window._ptBadgeTimer = setInterval(refreshPlatformTasksBadge, 60 * 1000); }
+    }
+    // #190 modo manual: no hay saldo del jugador (GANAMOS no lo informa) → ocultar el $ del
+    // header del chat y el botón "Seleccionar todo el saldo" del retiro manual.
+    if (window._platformMode === 'manual') {
+        document.querySelectorAll('.user-balance').forEach((el) => { el.style.display = 'none'; });
+        const selAll = document.getElementById('btnSelectAllBalance');
+        if (selAll) selAll.style.display = 'none';
     }
     // SMS Masivo: solo visible para admin general
     const smsNavItem = document.querySelector('.nav-item-sms-masivo');
@@ -1236,6 +1255,13 @@ function initSocket() {
     socket.on('hgcash_movement', (d) => {
         if (typeof hgcashLiveRefresh === 'function') hgcashLiveRefresh(false);
         if (typeof bankLiveRefresh === 'function') bankLiveRefresh(d);
+    });
+    // #190 bandeja Pendientes GANAMOS en tiempo real (tarea nueva / hecha / rechazada).
+    socket.on('platform_task', (d) => {
+        if (typeof refreshPlatformTasksBadge === 'function') refreshPlatformTasksBadge();
+        const sec = document.getElementById('platformTasksSection');
+        if (sec && sec.classList.contains('active') && typeof loadPlatformTasks === 'function') loadPlatformTasks(true);
+        if (d && d.event === 'created') showToast(`⏳ Nueva pendiente en GANAMOS: ${d.kind === 'withdraw' ? 'retiro' : d.kind === 'gift' ? 'bono' : 'carga'} $${Number(d.amount || 0).toLocaleString('es-AR')} a ${d.username}`, 'info');
     });
     // #183 bandeja del banco en tiempo real: llega el documento entero del movimiento.
     socket.on('bank_movement', (d) => {
@@ -4932,6 +4958,7 @@ function switchSection(section) {
     if (section === 'reembolsos') loadReembolsos();
     if (section === 'chatDelays') loadChatDelays();
     if (section === 'reviews') loadReviews();
+    if (section === 'platformTasks') loadPlatformTasks(); // #190
     if (section === 'bank') loadBankSection();
     if (section === 'campaigns') loadCampaigns();
     if (section === 'publisherAdmins') {
@@ -14174,3 +14201,129 @@ window.bankReopen = bankReopen; window.bankOpenChat = bankOpenChat; window.openS
 window.bankSweepDestChanged = bankSweepDestChanged; window.syncSweep = syncSweep; window.openSweepDestinations = openSweepDestinations;
 window.addSweepDestRow = addSweepDestRow; window.saveSweepDestinations = saveSweepDestinations; window.openBankClose = openBankClose;
 window.bankCloseRun = bankCloseRun; window.bankCloseResolve = bankCloseResolve; window.bankGoToMovement = bankGoToMovement; window.setDepositOrigin = setDepositOrigin;
+
+// ============================================================
+// #190 PENDIENTES GANAMOS — bandeja de operaciones a ejecutar a mano (modo manual)
+// ============================================================
+// GANAMOS no tiene API: el server registra cada carga/retiro/bono como PlatformTask.
+// Las que generó SOLO (hgcash, ruleta, fueguito, VIP, lotes…) quedan `pending` y un
+// agente las hace en el panel de GANAMOS y las marca acá. Endpoints:
+//   GET  /api/admin/platform-tasks?status=&username=&limit=   (count=1 → sólo el badge)
+//   POST /api/admin/platform-tasks/:id/done | /reject {note}
+let _ptFilter = 'pending';
+let _ptCache = [];
+
+async function refreshPlatformTasksBadge() {
+    if (window._platformMode !== 'manual') return;
+    try {
+        const r = await authFetch('/api/admin/platform-tasks?count=1');
+        if (!r.ok) return;
+        const j = await r.json();
+        const b = document.getElementById('platformTasksBadge');
+        if (!b) return;
+        if (j.pendingCount > 0) { b.textContent = String(j.pendingCount); b.style.display = ''; }
+        else b.style.display = 'none';
+    } catch (_) { /* silencioso: es un badge */ }
+}
+
+function platformTasksSetFilter(f) {
+    _ptFilter = f;
+    document.querySelectorAll('.pt-filter-btn').forEach((btn) => {
+        const on = btn.dataset.f === f;
+        btn.style.border = on ? '1px solid rgba(212,175,55,0.45)' : '1px solid rgba(255,255,255,0.10)';
+        btn.style.background = on ? 'rgba(212,175,55,0.15)' : 'rgba(0,0,0,0.30)';
+        btn.style.color = on ? '#d4af37' : '#aaa';
+    });
+    loadPlatformTasks();
+}
+
+async function loadPlatformTasks(silent) {
+    const body = document.getElementById('platformTasksBody');
+    if (body && !silent) body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    try {
+        const q = (document.getElementById('platformTasksSearch') || {}).value || '';
+        const r = await authFetch(`/api/admin/platform-tasks?status=${encodeURIComponent(_ptFilter)}&limit=300${q ? '&username=' + encodeURIComponent(q.trim()) : ''}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error');
+        _ptCache = j.tasks || [];
+        const b = document.getElementById('platformTasksBadge');
+        if (b) { if (j.pendingCount > 0) { b.textContent = String(j.pendingCount); b.style.display = ''; } else b.style.display = 'none'; }
+        _ptRender();
+    } catch (e) {
+        if (body) body.innerHTML = `<div style="color:#ff8080;text-align:center;padding:14px;">${escapeHtml(e.message || 'Error de conexión')}</div>`;
+    }
+}
+
+function _ptKindBadge(kind) {
+    const map = { deposit: ['💰 CARGA', '#25d366'], withdraw: ['💸 RETIRO', '#ff8a5b'], gift: ['🎁 BONO', '#c77dff'] };
+    const [label, color] = map[kind] || [kind, '#aaa'];
+    return `<span style="display:inline-block;padding:2px 8px;border-radius:8px;font-size:10.5px;font-weight:900;color:${color};border:1px solid ${color};white-space:nowrap;">${label}</span>`;
+}
+function _ptStatusBadge(t) {
+    if (t.status === 'pending') return '<span style="color:#ffd479;font-weight:900;font-size:11px;">⏳ PENDIENTE</span>';
+    if (t.status === 'done') return `<span style="color:#25d366;font-weight:900;font-size:11px;">✅ HECHA</span><div style="color:#888;font-size:10px;">${escapeHtml(t.doneBy || '')} · ${formatDateTime(t.doneAt)}</div>`;
+    return `<span style="color:#ff5050;font-weight:900;font-size:11px;">❌ RECHAZADA</span><div style="color:#888;font-size:10px;">${escapeHtml(t.doneBy || '')} · ${formatDateTime(t.doneAt)}</div>`;
+}
+
+function _ptRender() {
+    const body = document.getElementById('platformTasksBody');
+    if (!body) return;
+    if (!_ptCache.length) {
+        body.innerHTML = `<div style="color:#aaa;text-align:center;padding:24px;">${_ptFilter === 'pending' ? '🎉 No hay nada pendiente de hacer en GANAMOS.' : 'Sin resultados.'}</div>`;
+        return;
+    }
+    const role = currentAdmin && currentAdmin.role;
+    const canSettle = (t) => role === 'admin' || (t.kind === 'withdraw' ? role === 'withdrawer' : ['depositor', 'comunidad'].includes(role));
+    const rows = _ptCache.map((t) => {
+        const bonus = t.bonus && Number(t.bonus.amount) > 0
+            ? `<div style="color:#c77dff;font-size:11px;font-weight:800;">+ bono $${Number(t.bonus.amount).toLocaleString('es-AR')}${t.bonus.multiplier > 0 ? ' (rollover x' + t.bonus.multiplier + ')' : ''}</div>`
+            : (t.rolloverX > 0 ? `<div style="color:#c77dff;font-size:11px;">rollover x${t.rolloverX}</div>` : '');
+        const actions = t.status === 'pending'
+            ? (canSettle(t)
+                ? `<button class="btn-small" onclick="platformTaskDone('${t.id}')" style="background:#1f6f3a;color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12px;">✅ Hecha</button>
+                   <button class="btn-small" onclick="platformTaskReject('${t.id}')" style="background:#3a1a1a;color:#ff6666;border:1px solid rgba(255,80,80,0.3);padding:7px 10px;border-radius:8px;font-weight:800;cursor:pointer;font-size:12px;margin-left:6px;">❌</button>`
+                : '<span style="color:#666;font-size:11px;">(otro rol)</span>')
+            : (t.note ? `<div style="color:#aaa;font-size:11px;max-width:220px;">📝 ${escapeHtml(t.note)}</div>` : '');
+        const chat = t.userId ? `<a href="#" onclick="switchSection('chats');selectConversation('${t.userId}','${escapeHtml(t.username)}');return false;" style="color:#d4af37;font-weight:800;">${escapeHtml(t.username)}</a>` : `<span style="font-weight:800;">${escapeHtml(t.username)}</span>`;
+        return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
+            <td style="padding:8px 6px;white-space:nowrap;color:#bbb;font-size:11px;">${formatDateTime(t.createdAt)}</td>
+            <td style="padding:8px 6px;">${_ptKindBadge(t.kind)}</td>
+            <td style="padding:8px 6px;">${chat}</td>
+            <td style="padding:8px 6px;font-weight:900;color:#fff;white-space:nowrap;">$${Number(t.amount).toLocaleString('es-AR')}${bonus}</td>
+            <td style="padding:8px 6px;color:#ccc;font-size:11.5px;max-width:280px;"><div style="font-weight:800;color:#ffd479;">${escapeHtml(t.flowLabel || t.flow || '')}</div>${escapeHtml(t.description || '')}<div style="color:#666;font-size:10px;">ref ${escapeHtml(t.reference)}</div></td>
+            <td style="padding:8px 6px;">${_ptStatusBadge(t)}</td>
+            <td style="padding:8px 6px;white-space:nowrap;">${actions}</td>
+        </tr>`;
+    }).join('');
+    body.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead><tr style="color:#d4af37;font-size:11px;text-align:left;border-bottom:1px solid rgba(212,175,55,0.3);">
+            <th style="padding:6px;">Fecha</th><th style="padding:6px;">Tipo</th><th style="padding:6px;">Usuario</th><th style="padding:6px;">Monto</th><th style="padding:6px;">Motivo</th><th style="padding:6px;">Estado</th><th style="padding:6px;">Acción</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+async function _ptSettle(id, action, note) {
+    try {
+        const r = await authFetch(`/api/admin/platform-tasks/${encodeURIComponent(id)}/${action}`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ note: note || '' })
+        });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'No se pudo actualizar', 'error'); return; }
+        showToast(j.alreadySettled ? (j.message || 'Ya estaba resuelta') : (action === 'done' ? '✅ Marcada como hecha. El cliente ya recibió el aviso.' : '❌ Rechazada'), j.alreadySettled ? 'info' : 'success');
+        loadPlatformTasks(true);
+        refreshPlatformTasksBadge();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+function platformTaskDone(id) {
+    const t = _ptCache.find((x) => x.id === id);
+    const det = t ? `${t.kind === 'withdraw' ? 'RETIRO' : t.kind === 'gift' ? 'BONO' : 'CARGA'} de $${Number(t.amount).toLocaleString('es-AR')}${t.bonus && t.bonus.amount > 0 ? ' + bono $' + Number(t.bonus.amount).toLocaleString('es-AR') : ''} a ${t.username}` : 'esta operación';
+    if (!confirm(`¿Ya hiciste en el panel de GANAMOS ${det}?\n\nAl confirmar, el cliente recibe el aviso automático.`)) return;
+    _ptSettle(id, 'done', '');
+}
+function platformTaskReject(id) {
+    const note = prompt('Motivo del rechazo (obligatorio). NO se acredita ni debita nada en GANAMOS:');
+    if (note == null) return;
+    if (!note.trim()) { showToast('Escribí el motivo', 'error'); return; }
+    _ptSettle(id, 'reject', note.trim());
+}
+window.loadPlatformTasks = loadPlatformTasks; window.platformTasksSetFilter = platformTasksSetFilter;
+window.platformTaskDone = platformTaskDone; window.platformTaskReject = platformTaskReject; window.refreshPlatformTasksBadge = refreshPlatformTasksBadge;

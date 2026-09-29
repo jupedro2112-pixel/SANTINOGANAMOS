@@ -5,7 +5,10 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-09-18** — RULETA DIARIA con premios editables (dinero
+> Última actualización: **2026-09-29** — **GANAMOS = MODO MANUAL sin API** (§0 nueva:
+> adaptador `ganamosPlatformService`, `PlatformTask`, bandeja "Pendientes GANAMOS",
+> PWA sin saldo/SSO/reembolsos, registro por agente; §4.8 envs; §9 trampas).
+> Antes: 2026-09-18 — RULETA DIARIA con premios editables (dinero
 > con rollover / bonificación % en la próxima carga / peso) y elegibilidad editable;
 > BONO por instalar la app con tope y excedente; sugerencia automática del bono en
 > Depositar (§2 DailyRouletteSpin/User, §5 ruleta y bono instalación, §6 panel, §7).
@@ -53,6 +56,64 @@
 9. Trampas / "no rompas esto"
 
 ---
+
+## 0. ⚠️ MODO MANUAL — GANAMOS SIN API (#190, 2026-09-29) — LEER PRIMERO
+
+Este repo es el clon de VIPCARGASANTINO para la sala **GANAMOS**, que **no expone
+ninguna API**. Todo lo que abajo dice "1girox / Partner API" sigue siendo cierto
+como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo la
+"plataforma" es **una persona con el panel de GANAMOS abierto**. Cómo se resuelve:
+
+- **Selector `src/services/platformService.js`** (`PLATFORM_MODE`, default `manual`):
+  `server.js` y los servicios hacen `require('./platformService')` y reciben o bien
+  `giroxService` (modo `girox`, intacto) o bien **`ganamosPlatformService`**, que
+  implementa EXACTAMENTE el mismo contrato (`scripts/test-ganamos-adapter.js` lo
+  verifica export por export). `girox.MANUAL_MODE` / `PLATFORM_MANUAL` (server.js)
+  es la bandera que usan los pocos flujos que necesitan saber si hablan con una API.
+- **`PlatformTask`** (`src/models/PlatformTask.js`): cada operación de plata que el
+  código "mandaba a la API" queda registrada con la MISMA `reference` (índice único
+  → idempotencia idéntica: reintento = `duplicate:true`). `kind` deposit|withdraw|gift,
+  `status` pending|done|rejected, `source` agent|server, `flow` (hgcash, roulette,
+  fire, vip, batch, admin_deposit… deducido del prefijo `vip-*` si el caller no lo
+  pasa), `bonus{amount,percent,multiplier}`, `rolloverX`, `meta`.
+  - **`agentExecuted:true`** (lo pasan `/api/admin/deposit`, `/api/admin/withdrawal`,
+    `/api/admin/bonus`, `_deductChipsAtConfirm`) → nace `done`: el clic del agente ES
+    la confirmación de que ya lo hizo en GANAMOS. No va a la bandeja.
+  - Sin esa opción (hgcash, ruleta, fueguito, VIP, lotes, welcome code, devolución,
+    referidos) → nace **`pending`** y se ve en el panel **"⏳ Pendientes GANAMOS"**.
+- **Eventos** (`girox.setTaskListener((event, task))`, cableado en server.js justo
+  después del `setKeyResolver`): `created` → nota admin-only "⏳ PENDIENTE EN GANAMOS"
+  en el chat del cliente (hgcash deja la suya) + socket `platform_task`; `done` →
+  mensaje al cliente `/sys_ganamos_acreditado` (sólo tareas `source:'server'` que no
+  sean retiro) + nota + `Transaction.metadata.platformTaskStatus`; `rejected` → nota
+  con el motivo (obligatorio), nada se acredita.
+- **Endpoints:** `GET /api/public/config` (sin auth: `platformMode`, `playUrl`,
+  `publicRegister`, `brand`); `GET /api/admin/platform-tasks?status=&username=&limit=`
+  (`count=1` → sólo `pendingCount`); `POST /api/admin/platform-tasks/:id/done|reject`
+  (`_canSettlePlatformTask`: admin todo, depositor/comunidad cargas y bonos,
+  withdrawer retiros). `/api/auth/verify` y `/api/admin/me` exponen `platformMode`.
+- **Lo que devuelve el adaptador y cómo lo toleran los flujos:** saldo y netwin →
+  `{success:false, code:'manual_mode'}` (`/api/balance(/live)` responde
+  `{manual:true}`; reembolsos/VIP/cashback `{enabled:false}`; el retiro autogestionado
+  no valida saldo y `_deductChipsAtConfirm` no lee ni verifica: registra `done`);
+  `getUserInfoByName` → jugador "vacío" `manual:true` (saldo null, bonusLocked 0) para
+  no bloquear guards ni lotes; **`validateCredentials` → `valid:false` SIEMPRE**
+  (seguridad: el login no puede crear cuentas locales sin validar);
+  `syncUserToPlatform` → `alreadyExists:true` (el jugador ya existe en GANAMOS);
+  `createSession` → `GANAMOS_PLAY_URL` (la PWA abre una pestaña, sin iframe);
+  `changeUserPassword` → ok sin hacer nada (la clave de GANAMOS la maneja el agente);
+  `getPlatformConfig` → bonos habilitados, multiplicadores 0/2/3/5/10 (el rollover
+  global se ANOTA en la tarea para que el agente lo aplique).
+- **Registro público apagado** (`/api/auth/register` y `/api/landing/signup` → 410)
+  salvo `PUBLIC_REGISTER_ENABLED=1`: el agente crea la cuenta desde el panel (mismo
+  username que en GANAMOS) y manda el link de acceso. `check-username` sólo mira la
+  base local.
+- **PWA:** `public/js/platformmode.js` aplica el modo (oculta `.dash-balance`,
+  `.dash-refunds`, `.dash-user`, menú Mi Perfil, botón Registrarse; CASINO →
+  `window.open(playUrl)`); `syncBalance` corta el polling; `withdraw.js` sin tope de
+  saldo; `refunds.js` oculta con `enabled:false`.
+- **Para volver a 1girox:** `PLATFORM_MODE=girox` + `GIROX_API_URL/KEY`. Nada del
+  cliente original se tocó.
 
 ## 1. Visión general del negocio
 
@@ -543,6 +604,10 @@ tenían los 4 clientes viejos.
 
 | Variable | Default | Para qué |
 |---|---|---|
+| `PLATFORM_MODE` | `manual` | **#190** `manual` = GANAMOS sin API (adaptador + bandeja); `girox` = Partner API de 1girox (§0) |
+| `GANAMOS_PLAY_URL` | `https://ganamos.io` (placeholder) | URL pública de GANAMOS que abre el botón CASINO en modo manual. **Cargar la real en SSM** |
+| `PUBLIC_REGISTER_ENABLED` | — | `1`/`true` = reabre el registro público en modo manual (default: alta sólo por agente, 410) |
+| `BRAND_NAME` | `GANAMOS` | Marca que devuelve `GET /api/public/config` |
 | `GIROX_API_URL` | — | Base de la Partner API, sin barra final (ej. `https://api.1girox.com/api/v1`) |
 | `GIROX_API_KEY` | — | Header `X-Api-Key` de la cuenta MASTER (`pk_...`). **SSM, nunca en el repo** |
 | `GIROX_PLAY_URL` | `https://1girox.com` | Sitio del jugador (fallback si el SSO falla) |
@@ -1087,6 +1152,13 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
 
 ## 9. Trampas / "no rompas esto"
 
+- **MODO MANUAL (§0):** nunca hacer `require('./giroxService')` directo — siempre el
+  selector `platformService`. Toda operación de plata NUEVA que dispare el server solo
+  tiene que pasar una `reference` estable (nace `pending` en la bandeja); toda la que
+  dispare un clic del agente tiene que pasar `agentExecuted:true` (o va a aparecer
+  como pendiente y el agente la haría DOS veces). `validateCredentials` manual es
+  `valid:false` a propósito: no "arreglarlo". Los flujos que leen saldo tienen que
+  tolerar `code:'manual_mode'`.
 - **DOS `connectDB`**: el real es `config/database.js`; el de `src/models/index.js` NO
   se usa. No definir schemas en config/database.js.
 - **Secrets por SSM**: no leer `process.env.X` al require; lazy getters. Los módulos

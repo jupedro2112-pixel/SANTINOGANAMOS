@@ -122,6 +122,12 @@ document.addEventListener('change', function (ev) {
                     <span>Banco</span>
                     <span id="bankBadge" style="display:none;background:#d4820a;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;">0</span>
                 </a>
+                <!-- #190 GANAMOS sin API: operaciones que el server generó solas y un agente tiene que ejecutar en GANAMOS. La muestra setupRoleBasedUI (modo manual). -->
+                <a href="#" class="nav-item nav-item-platform-tasks" data-section="platformTasks" style="display:none">
+                    <span>⏳</span>
+                    <span>Pendientes GANAMOS</span>
+                    <span id="platformTasksBadge" style="display:none;background:#ff5050;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;">0</span>
+                </a>
                 <a href="#" class="nav-item" data-section="commands">
                     <span class="icon icon-terminal"></span>
                     <span>Comandos</span>
@@ -1933,6 +1939,27 @@ document.addEventListener('change', function (ev) {
                  SECCIÓN: RESEÑAS — moderación de opiniones
                  Solo las aprobadas se muestran en el registro.
                  ============================================ -->
+            <!-- #190 Pendientes GANAMOS (modo manual, sin API) -->
+            <section id="platformTasksSection" class="section">
+                <div class="panel-header">
+                    <h2>⏳ Pendientes GANAMOS</h2>
+                    <button class="refresh-btn" onclick="loadPlatformTasks()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">GANAMOS no tiene API: acá caen las operaciones que el sistema generó <strong style="color:#ffd479;">solo</strong> (transferencia hgcash detectada, premio de la ruleta, fueguito, nivel VIP, lote, devolución…) y que <strong style="color:#25d366;">un agente tiene que hacer a mano en el panel de GANAMOS</strong>. Hacela allá y marcala ✅ <strong>Hecha</strong>: el cliente recibe el aviso automático (<code>/sys_ganamos_acreditado</code>). Las cargas, retiros y bonificaciones que hacés desde este panel NO pasan por acá (tu clic ya confirma que las hiciste).</p>
+                </div>
+                <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+                    <button class="pt-filter-btn" data-f="pending" onclick="platformTasksSetFilter('pending')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(212,175,55,0.45);background:rgba(212,175,55,0.15);color:#d4af37;font-weight:800;font-size:12px;cursor:pointer;">Pendientes</button>
+                    <button class="pt-filter-btn" data-f="done" onclick="platformTasksSetFilter('done')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.30);color:#aaa;font-weight:800;font-size:12px;cursor:pointer;">Hechas</button>
+                    <button class="pt-filter-btn" data-f="rejected" onclick="platformTasksSetFilter('rejected')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.30);color:#aaa;font-weight:800;font-size:12px;cursor:pointer;">Rechazadas</button>
+                    <button class="pt-filter-btn" data-f="all" onclick="platformTasksSetFilter('all')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.30);color:#aaa;font-weight:800;font-size:12px;cursor:pointer;">Todas</button>
+                    <input id="platformTasksSearch" type="text" placeholder="Buscar usuario…" style="margin-left:auto;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.30);color:#fff;font-size:12px;min-width:160px;" onkeydown="if(event.key==='Enter'){loadPlatformTasks();}">
+                </div>
+                <div id="platformTasksBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
+                </div>
+            </section>
+
             <section id="reviewsSection" class="section">
                 <div class="panel-header">
                     <h2>⭐ Reseñas</h2>
@@ -2604,7 +2631,7 @@ document.addEventListener('change', function (ev) {
                     <div class="form-group">
                         <label>WhatsApp (número con código de país):</label>
                         <input type="text" id="soporteWhatsappNumber" placeholder="5491122334455" style="width:100%;">
-                        <small style="color:#aaa;font-size:11px;">Solo números, con código de país y sin signos. Ej: +54 9 11 2233-4455 → 5491122334455. El link abre WhatsApp con el mensaje: "Vengo de 1GIROX necesito ayuda".</small>
+                        <small style="color:#aaa;font-size:11px;">Solo números, con código de país y sin signos. Ej: +54 9 11 2233-4455 → 5491122334455. El link abre WhatsApp con el mensaje: "Vengo de GANAMOS necesito ayuda".</small>
                     </div>
                     <div class="form-group">
                         <label>Telegram (usuario con @):</label>

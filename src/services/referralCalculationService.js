@@ -19,7 +19,7 @@
  */
 const { v4: uuidv4 } = require('uuid');
 const { User, ReferralCommission, ReferralPayout } = require('../models');
-const giroxService = require('./giroxService');
+const giroxService = require('./platformService');
 const { getReferralRateForUser, getConfiguredRate } = require('../utils/referralRate');
 const { getPeriodRange } = require('../utils/periodKey');
 const logger = require('../utils/logger');

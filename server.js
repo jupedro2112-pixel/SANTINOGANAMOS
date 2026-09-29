@@ -458,7 +458,7 @@ function validatePassword(password) {
 // ============================================
 // Partner API REST/JSON, auth por X-Api-Key. Cliente único: reemplaza a los 4
 // clientes de JUGAYGANA. Montos en PESOS (sin ×100) e idempotencia por `reference`.
-const girox = require('./src/services/giroxService');
+const girox = require('./src/services/platformService');
 // #184 Rollover GLOBAL de bonos (parte pura) + identidad del titular del comprobante.
 // ⚠️ TIENEN que ir ANTES del bloque del rollover global de abajo (lo usa a nivel
 // superior): el 2026-09-16 estaban más abajo y el server no arrancaba
@@ -569,6 +569,77 @@ girox.setKeyResolver(async (username) => {
   if (_giroxKeyCache.size > 5000) _giroxKeyCache.clear(); // backstop anti-fuga
   return key;
 });
+
+// ============================================================
+// MODO MANUAL — GANAMOS SIN API (#190, 2026-09-29)
+// ============================================================
+// `girox` es el SELECTOR (src/services/platformService.js). En modo manual
+// (PLATFORM_MODE=manual, el default de este repo) cada carga/retiro/bono es una
+// PlatformTask que ejecuta un agente en el panel de GANAMOS. Acá se cablea lo que
+// el adaptador no conoce: el userId por username, y qué pasa cuando una tarea
+// nace pendiente (nota al agente en el chat) o se marca hecha/rechazada (aviso al
+// cliente por /sys_ganamos_acreditado, nota en el chat, socket al panel).
+const PLATFORM_MANUAL = !!girox.MANUAL_MODE;
+const PUBLIC_REGISTER_ENABLED = String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === '1' || String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === 'true';
+function _taskKindLabel(kind) { return { deposit: 'CARGA', withdraw: 'RETIRO', gift: 'BONO/REGALO' }[kind] || String(kind || '').toUpperCase(); }
+function _taskFlowLabel(flow) {
+  return {
+    hgcash: 'transferencia hgcash', hgcash_assigned: 'carga asignada desde la bandeja', admin_deposit: 'carga manual',
+    admin_withdrawal: 'retiro manual', admin_bonus: 'Bonificación', payout: 'retiro autogestionado', payout_refund: 'devolución de retiro rechazado',
+    roulette: 'ruleta diaria', fire: 'fueguito', vip: 'nivel VIP', referral: 'comisión de referidos', batch: 'lote', welcome_code: 'código de bienvenida',
+    refund: 'reembolso', cashback: 'reembolso en vivo', rakeback: 'rakeback', movements: 'autogestión'
+  }[flow] || (flow || 'operación');
+}
+async function _sendSystemMessageToUser(userId, username, content) {
+  const sysMsg = await Message.create({
+    id: uuidv4(), senderId: 'admin', senderUsername: 'Sistema', senderRole: 'admin',
+    receiverId: userId, receiverRole: 'user', content, type: 'system', timestamp: new Date(), read: false
+  });
+  const msgData = { id: sysMsg.id, senderId: 'admin', senderUsername: 'Sistema', senderRole: 'admin', receiverId: userId, receiverRole: 'user', content, timestamp: new Date(), type: 'system' };
+  io.to(`user_${userId}`).emit('new_message', msgData);
+  io.to(`chat_${userId}`).emit('new_message', msgData);
+  notifyAdmins('new_message', { message: msgData, userId, username });
+  return sysMsg;
+}
+if (PLATFORM_MANUAL) {
+  girox.setUserIdResolver(async (username) => {
+    const u = await findUserByUsernameCI(username);
+    return u ? u.id : null;
+  });
+  girox.setTaskListener(async (event, task) => {
+    const money = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+    const kindLabel = _taskKindLabel(task.kind);
+    const motivo = task.description || _taskFlowLabel(task.flow);
+    const bonusTxt = task.bonus && Number(task.bonus.amount) > 0 ? ` + bono ${money(task.bonus.amount)}` : '';
+    const rollX = Number(task.bonus && task.bonus.amount > 0 ? task.bonus.multiplier : task.rolloverX) || 0;
+    const rollTxt = rollX > 0 ? ` (rollover x${rollX})` : '';
+    let userId = task.userId;
+    if (!userId) { try { const u = await findUserByUsernameCI(task.username); userId = u ? u.id : null; } catch (_) {} }
+    const taskId = String(task._id);
+    if (event === 'created') {
+      // hgcash deja su propia nota (con el detalle del movimiento) en hgcashAutoCarga.
+      if (userId && !['hgcash', 'hgcash_assigned'].includes(task.flow)) await _emitAdminOnlyChatNote(userId, task.username, `⏳ PENDIENTE EN GANAMOS — ${kindLabel} de ${money(task.amount)}${bonusTxt}${rollTxt} · ${motivo}. Hacelo en el panel de GANAMOS y marcalo ✅ en "Pendientes GANAMOS".`);
+      notifyAdmins('platform_task', { event, taskId, kind: task.kind, username: task.username, amount: task.amount, flow: task.flow || null });
+      return;
+    }
+    // done | rejected
+    try {
+      await Transaction.updateOne({ transactionId: taskId }, { $set: { 'metadata.platformTaskStatus': event, 'metadata.platformTaskSettledAt': new Date(), 'metadata.platformTaskBy': task.doneBy || null } });
+    } catch (_) {}
+    if (event === 'done' && userId && task.source === 'server' && task.kind !== 'withdraw') {
+      const text = await renderSystemCommand('/sys_ganamos_acreditado',
+        '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰{rollover}',
+        { amount: money(task.amount), bonus: task.bonus && task.bonus.amount > 0 ? money(task.bonus.amount) : '', motivo, rollover: _rolloverNoteText(rollX) });
+      if (text) { try { await _sendSystemMessageToUser(userId, task.username, text); } catch (e) { logger.warn(`[ganamos] aviso al cliente de la tarea ${taskId}: ${e.message}`); } }
+    }
+    if (userId) {
+      await _emitAdminOnlyChatNote(userId, task.username, event === 'done'
+        ? `✅ HECHO EN GANAMOS por ${task.doneBy || 'agente'} — ${kindLabel} de ${money(task.amount)}${bonusTxt}${rollTxt} · ${motivo}.${task.note ? ' Nota: ' + task.note : ''}`
+        : `❌ RECHAZADA por ${task.doneBy || 'agente'} — ${kindLabel} de ${money(task.amount)}${bonusTxt} · ${motivo}.${task.note ? ' Motivo: ' + task.note : ''} ⚠️ NO se acreditó/debitó nada en GANAMOS; revisá la Transaction si quedó registrada.`);
+    }
+    notifyAdmins('platform_task', { event, taskId, kind: task.kind, username: task.username, amount: task.amount, flow: task.flow || null, by: task.doneBy || null });
+  });
+}
 // Rangos de fecha en hora argentina para los períodos de reembolso.
 const periodRanges = require('./src/utils/periodRanges');
 // Rangos de reembolso Bronce/Plata/Oro según la pérdida del período.
@@ -2451,9 +2522,16 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     let _hgPend = { total: 0, parts: [] };
     try { if (!_dupBank) _hgPend = await _pendingBonusFor(user, amount); } catch (e) { logger.warn(`[hgcash] bonos pendientes no calculados (sigue sin bono): ${e.message}`); }
     const _hgBonus = _hgPend.total > 0 ? _hgPend.total : 0;
+    // #190 modo manual: la transferencia detectada NO se acredita sola — queda como
+    // PlatformTask PENDIENTE (flow hgcash) para que un agente la cargue en GANAMOS.
+    const _hgOpts = Object.assign(
+      _hgBonus > 0 ? { bonusAmount: _hgBonus, bonusMultiplier: await getGiroxBonusMultiplier() } : {},
+      PLATFORM_MANUAL ? { flow: assign ? 'hgcash_assigned' : 'hgcash', meta: { movementId: movement.movementId, comprobanteId: compId, chargeKey: chargeKey || null, assignedBy: assign ? agentLabel : null } } : {}
+    );
     const result = await girox.depositToUser(user.username, Number(amount),
       assign ? `Carga asignada desde bandeja (hgcash) por ${agentLabel}` : 'Carga automática (hgcash)', _ref,
-      _hgBonus > 0 ? { bonusAmount: _hgBonus, bonusMultiplier: await getGiroxBonusMultiplier() } : null);
+      Object.keys(_hgOpts).length ? _hgOpts : null);
+    const _hgPending = !!(result && result.success && result.pending); // #190 quedó para el agente
     const _hgBonusApplied = _hgBonus > 0 && result.success && !result.bonusFailed ? _hgBonus : 0;
     if (!result.success) {
       if (chargeLocked) { try { await HgcashCharge.deleteOne({ chargeKey }); } catch (_) {} }
@@ -2480,20 +2558,27 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
       adminUsername: agentLabel, adminRole: assign ? (assign.agentRole || 'depositor') : 'system',
       adminId: assign ? (assign.agentId || null) : null,
       transactionId: result.data?.transfer_id || result.data?.transferId,
-      metadata: { source: assign ? 'hgcash_assigned' : 'auto_hgcash', movementId: movement.movementId, comprobanteId: compId, duplicate: !!result.duplicate },
+      metadata: { source: assign ? 'hgcash_assigned' : 'auto_hgcash', movementId: movement.movementId, comprobanteId: compId, duplicate: !!result.duplicate,
+        ...(PLATFORM_MANUAL ? { platformTaskId: result.taskId || null, platformTaskStatus: _hgPending ? 'pending' : 'done' } : {}) },
       timestamp: new Date()
     });
 
     // Mensaje al cliente (usa /sys_deposit si está; si no, fallback).
     let newBalance = null;
-    try {
-      const balRes = await girox.getUserBalanceWithRetry(user.username);
-      if (balRes.success) newBalance = balRes.balance;
-    } catch (_) {}
+    if (!PLATFORM_MANUAL) {
+      try {
+        const balRes = await girox.getUserBalanceWithRetry(user.username);
+        if (balRes.success) newBalance = balRes.balance;
+      } catch (_) {}
+    }
     const balStr = newBalance !== null ? `$${newBalance}` : 'actualizándose 🔄';
     // #189 con bono pendiente aplicado → mensaje de carga CON bonus (con la nota del rollover).
-    const depositCmd = await Command.findOne({ name: _hgBonusApplied > 0 ? '/sys_deposit_bonus' : '/sys_deposit', isActive: true });
-    const depositTpl = resolveSysContent(depositCmd, _hgBonusApplied > 0
+    // #190 modo manual + tarea pendiente → "recibimos tu transferencia, en minutos te la cargan"
+    // (el "ya está cargado" lo manda el listener cuando el agente marca ✅ la tarea).
+    const depositCmd = await Command.findOne({ name: _hgPending ? '/sys_ganamos_carga_pendiente' : (_hgBonusApplied > 0 ? '/sys_deposit_bonus' : '/sys_deposit'), isActive: true });
+    const depositTpl = resolveSysContent(depositCmd, _hgPending
+      ? `🏦 ¡Recibimos tu transferencia de $${Number(amount).toLocaleString('es-AR')}! ⏳ En unos minutos un agente te la carga en tu usuario de GANAMOS y te avisamos por acá. ✅`
+      : _hgBonusApplied > 0
       ? `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} (incluye $${_hgBonusApplied.toLocaleString('es-AR')} de bonificación) acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸{rollover}`
       : `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸`);
     if (depositTpl) { // null = comando vaciado a propósito → no enviar mensaje al cliente
@@ -2526,7 +2611,9 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     } else if (_hgBonus > 0 && result.bonusFailed) {
       _hgBonusNote = ` ⚠️ El bono pendiente de $${_hgBonus.toLocaleString('es-AR')} NO entró (la plataforma lo rechazó): aplicalo a mano con Bonificación. El bono sigue PENDIENTE.`;
     }
-    await _emitAdminOnlyChatNote(user.id, user.username, assign
+    await _emitAdminOnlyChatNote(user.id, user.username, _hgPending
+      ? `🏦 ⏳ TRANSFERENCIA hgcash DETECTADA${assign ? ' (asignada por ' + agentLabel + ')' : ''} — ${dataDesc}. PENDIENTE de cargar en GANAMOS${_hgBonus > 0 ? ' CON BONO de $' + _hgBonus.toLocaleString('es-AR') : ''}: hacelo en el panel de GANAMOS y marcala ✅ en "Pendientes GANAMOS".${_hgBonusNote}`
+      : assign
       ? `🏦 ✅ CARGA ASIGNADA desde la bandeja del banco por ${agentLabel} — ${dataDesc}. Acreditado.${_hgBonusNote}`
       : `🏦 ✅ CARGA AUTOMÁTICA hgcash — ${dataDesc}. Acreditado.${_hgBonusNote}`);
     _emitHgcashUpdate('cargado', movement.movementId);
@@ -3124,7 +3211,9 @@ app.get('/api/auth/check-username', authLimiter, async (req, res) => {
 
     try {
       const jgUser = await girox.getUserInfoByName(username);
-      if (jgUser) {
+      // Modo manual: el adaptador devuelve un jugador "vacío" (no sabe si existe)
+      // → no cuenta como tomado. Sólo la base local decide.
+      if (jgUser && !jgUser.manual) {
         return res.json({
           available: false,
           message: 'Este nombre de usuario no está disponible. Intenta con otro nombre.'
@@ -3403,6 +3492,12 @@ app.post('/api/upload/presigned-url', authMiddleware, async (req, res) => {
 // Registro de usuario
 app.post('/api/auth/register', authLimiter, registerIpLimiter, async (req, res) => {
   try {
+    // #190 GANAMOS: los clientes llegan derivados de WhatsApp con usuario YA creado en
+    // GANAMOS; la cuenta de la web la crea el AGENTE desde el panel (mismo username)
+    // y le manda el link de acceso. Registro público apagado salvo PUBLIC_REGISTER_ENABLED=1.
+    if (PLATFORM_MANUAL && !PUBLIC_REGISTER_ENABLED) {
+      return res.status(410).json({ error: 'El registro lo hace un agente: escribinos por WhatsApp y te creamos el acceso con tu usuario de GANAMOS.', code: 'register_disabled' });
+    }
     const { username, password, email, phone, referralCode, otpCode, campaignCode, utm, fbc, fbp, landingUrl } = req.body;
 
     if (!username || !password) {
@@ -3891,6 +3986,9 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
     // Kill-switch (leído en runtime: se puede apagar desde SSM + redeploy).
     if (String(process.env.LANDING_SIGNUP_DISABLED || '').toLowerCase() === 'true') {
       return res.status(410).json({ error: 'El registro por landing está deshabilitado.' });
+    }
+    if (PLATFORM_MANUAL && !PUBLIC_REGISTER_ENABLED) { // #190: alta sólo por agente (ver /api/auth/register)
+      return res.status(410).json({ error: 'El registro lo hace un agente por WhatsApp.', code: 'register_disabled' });
     }
 
     const { name, campaignCode, utm, fbc, fbp, landingUrl } = req.body || {};
@@ -4473,6 +4571,7 @@ app.get('/api/auth/verify', authMiddleware, async (req, res) => {
         role: user.role,
         balance: user.balance,
         mustChangePassword: user.mustChangePassword === true,
+        platformMode: girox.PLATFORM_MODE, // #190 'manual' | 'girox' (la PWA oculta saldo/SSO en manual)
         metaMatching: isAdminRole(user.role) ? null : metaCapi.buildAdvancedMatching({
           email: user.email,
           phone: user.phone,
@@ -4542,6 +4641,8 @@ app.get('/api/admin/me', async (req, res) => {
         // qué publicista representa la cuenta y para filtrar el mini-dashboard.
         publisherCampaignCode: user.publisherCampaignCode || null
       },
+      platformMode: girox.PLATFORM_MODE, // #190 el panel muestra "Pendientes GANAMOS" y oculta saldos en manual
+      playUrl: girox.getPlayUrl(),
       token: freshToken
     });
   } catch (error) {
@@ -4959,6 +5060,13 @@ async function platformSessionHandler(req, res) {
     }
     if (user.isActive === false) {
       return res.status(403).json({ error: 'Tu cuenta está inactiva. Contactá al soporte.' });
+    }
+
+    // #190 Modo manual: no hay SSO. El botón CASINO abre la página de GANAMOS en una
+    // pestaña (el jugador entra con su usuario y clave de GANAMOS). `openInTab`
+    // le dice a la PWA que NO use el iframe (otro dominio, sin sesión compartida).
+    if (PLATFORM_MANUAL) {
+      return res.json({ success: true, redirectUrl: girox.getPlayUrl(), platformUrl: girox.getPlayUrl(), manual: true, openInTab: true });
     }
 
     let session = await girox.createSession(user.username);
@@ -7283,6 +7391,7 @@ setInterval(() => {
 }, 5 * 60 * 1000).unref();
 app.get('/api/cashback/status', authMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_MANUAL) return res.json({ enabled: false, manual: true }); // #190 sin netwin
     const cfg = await getInstantCashbackConfig();
     if (!cfg.enabled) return res.json({ enabled: false });
     let fresh = false;
@@ -7465,6 +7574,9 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.userId;
     const username = req.user.username;
+    // #190 Modo manual: sin netwin no hay reembolsos (apagados por decisión del owner
+    // 2026-09-29). La PWA oculta el bloque cuando enabled=false.
+    if (PLATFORM_MANUAL) return res.json({ enabled: false, manual: true });
     
     const userInfo = await girox.getUserInfoByName(username);
     const currentBalance = userInfo ? userInfo.balance : 0;
@@ -8146,6 +8258,7 @@ function _vipLevelsPublic() {
 
 app.get('/api/vip/status', authMiddleware, async (req, res) => {
   try {
+    if (PLATFORM_MANUAL) return res.json({ enabled: false, manual: true }); // #190 sin apostado no hay niveles
     if (await vipLevelService.isDisabled(Config)) return res.json({ enabled: false });
     const userId = req.user.userId;
 
@@ -8543,6 +8656,7 @@ app.post('/api/admin/vip-levels', authMiddleware, adminMiddleware, async (req, r
 app.get('/api/balance', authMiddleware, async (req, res) => {
   try {
     const username = req.user.username;
+    if (PLATFORM_MANUAL) return res.json({ manual: true, balance: null, available: null, locked: 0, claimableTotal: 0, username }); // #190 sin API no hay saldo
     const result = await girox.getUserBalance(username);
     
     if (result.success) {
@@ -8570,6 +8684,7 @@ app.get('/api/balance', authMiddleware, async (req, res) => {
 app.get('/api/balance/live', authMiddleware, async (req, res) => {
   try {
     const username = req.user.username;
+    if (PLATFORM_MANUAL) return res.json({ manual: true, balance: null, available: null, locked: 0, claimableTotal: 0, username, updatedAt: new Date().toISOString() }); // #190
     const result = await girox.getUserBalance(username);
     
     if (result.success) {
@@ -8721,11 +8836,15 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
     const _bankRelease = (toStatus, extra) => _bankReleaseClaim(_bankMovementId, _bankClaimed, toStatus, extra);
 
     // bonusMultiplier OBLIGATORIO cuando va bonus_amount (lo exige la API).
+    // #190 modo manual: el clic del agente ES la confirmación (ya cargó en GANAMOS) →
+    // la PlatformTask nace `done` (agentExecuted). En modo girox esos campos se ignoran.
+    const _depOpts = Object.assign(
+      bonusRequested ? { bonusAmount: parseFloat(bonus), bonusMultiplier: await getGiroxBonusMultiplier() } : {},
+      PLATFORM_MANUAL ? { agentExecuted: true, agentName: req.user.username, flow: 'admin_deposit', meta: { transactionId: _depTxId, adminId: req.user.userId } } : {}
+    );
     const result = await girox.depositToUser(
       user.username, parseFloat(amount), description, `vip-dep-${_depTxId}`,
-      bonusRequested
-        ? { bonusAmount: parseFloat(bonus), bonusMultiplier: await getGiroxBonusMultiplier() }
-        : null
+      Object.keys(_depOpts).length ? _depOpts : null
     );
 
     if (result.success) {
@@ -9213,7 +9332,8 @@ app.post('/api/admin/withdrawal', authMiddleware, withdrawerMiddleware, async (r
     // Id generado antes de llamar, para usarlo como `reference` (idempotencia de
     // 1girox) y después como Transaction.id — igual que en la carga manual.
     const _wdTxId = uuidv4();
-    const result = await girox.withdrawFromUser(user.username, amount, description, `vip-wd-${_wdTxId}`);
+    const result = await girox.withdrawFromUser(user.username, amount, description, `vip-wd-${_wdTxId}`,
+      PLATFORM_MANUAL ? { agentExecuted: true, agentName: req.user.username, flow: 'admin_withdrawal', meta: { transactionId: _wdTxId, adminId: req.user.userId } } : undefined); // #190
 
     if (result.success) {
       await recordUserActivity(user.id, 'withdrawal', amount);
@@ -9414,6 +9534,8 @@ app.post('/api/admin/bonus', authMiddleware, depositorMiddleware, async (req, re
       bonusAmount,
       `vip-bonus-${_bonusTxId}`,
       {
+        // #190 modo manual: Bonificación la ejecuta el agente en GANAMOS → tarea `done`.
+        ...(PLATFORM_MANUAL ? { agentExecuted: true, agentName: req.user.username, flow: 'admin_bonus', meta: { transactionId: _bonusTxId, adminId: req.user.userId } } : {}),
         // Elige un multiplicador VÁLIDO para la plataforma (x1 puede no estarlo).
         multiplier: await getGiroxBonusMultiplier(),
         description: 'Bonificación otorgada'
@@ -10538,7 +10660,9 @@ async function initializeData() {
   // en cada request. Lo único que se puede verificar al arrancar es que la config
   // esté presente — si falta, TODO lo que toca plata va a fallar, así que conviene
   // que se vea fuerte en los logs del arranque y no recién con el primer cliente.
-  if (girox.isEnabled()) {
+  if (PLATFORM_MANUAL) {
+    console.log(`✅ Plataforma en MODO MANUAL (GANAMOS sin API): cargas/retiros/bonos van a la bandeja "Pendientes GANAMOS" del panel. Casino: ${girox.getPlayUrl()}. Registro público: ${PUBLIC_REGISTER_ENABLED ? 'ABIERTO' : 'apagado (alta por agente)'}.`);
+  } else if (girox.isEnabled()) {
     console.log(`✅ 1girox configurado (${girox.getBaseUrl()})`);
   } else {
     console.error('❌ 1girox SIN CONFIGURAR: faltan GIROX_API_URL y/o GIROX_API_KEY. ' +
@@ -10685,6 +10809,20 @@ async function initializeData() {
       description: 'Confirmación automática cuando el usuario pide un retiro autogestionado. Variables: ${amount}',
       type: 'message',
       response: '⏳ Recibimos tu solicitud de retiro de ${amount}.\nUn agente la está procesando y te confirma la transferencia en breve. ¡Gracias!'
+    },
+    {
+      // #190 GANAMOS (modo manual): la transferencia hgcash se detectó pero la carga la hace un agente.
+      name: '/sys_ganamos_carga_pendiente',
+      description: 'GANAMOS (sin API): mensaje al cliente cuando se detecta su transferencia y la carga queda PENDIENTE para que un agente la haga en GANAMOS. Variables: {amount}, {bonus} (bono que va a incluir, 0 si no hay). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '🏦 ¡Recibimos tu transferencia de ${amount}! ⏳ En unos minutos un agente te la carga en tu usuario de GANAMOS y te avisamos por acá. ✅'
+    },
+    {
+      // #190 GANAMOS: el agente marcó ✅ una tarea pendiente (carga hgcash, premio de ruleta, fueguito, etc.).
+      name: '/sys_ganamos_acreditado',
+      description: 'GANAMOS (sin API): mensaje al cliente cuando el agente marca HECHA una carga/bono pendiente en "Pendientes GANAMOS". Variables: {amount}, {bonus}, {motivo} (transferencia hgcash, ruleta diaria, fueguito…), {rollover} (nota del rollover si el bono lo tiene). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰{rollover}'
     },
     {
       name: '/sys_install_bonus',
@@ -11069,7 +11207,11 @@ app.post('/api/withdrawal/request', authMiddleware, async (req, res) => {
     // descuento falla y no se paga — y al rechazar no hay que devolver nada.
     // CON retry (2 intentos): JUGAYGANA es flaky y a veces el lookup de saldo tarda/falla;
     // el reintento entra la mayoría de las veces. Cada intento ya falla rápido (timeout 12s).
-    const balanceResult = await girox.getUserBalanceWithRetry(username, { maxAttempts: 2, baseDelayMs: 400 });
+    // #190 modo manual: no hay saldo para validar; el agente lo verifica en GANAMOS
+    // antes de pagar (balanceBefore queda null).
+    const balanceResult = PLATFORM_MANUAL
+      ? { success: true, manual: true, available: null, balance: null }
+      : await girox.getUserBalanceWithRetry(username, { maxAttempts: 2, baseDelayMs: 400 });
     if (!balanceResult.success) {
       return res.status(503).json({
         error: 'La plataforma está demorada en este momento. Esperá unos segundos y volvé a intentar el retiro.',
@@ -11081,8 +11223,8 @@ app.post('/api/withdrawal/request', authMiddleware, async (req, res) => {
     // contra el total, la solicitud se aceptaría, el agente la trabajaría, y recién al
     // confirmar la plataforma la rechazaría con `rollover_locked` — un retiro colgado
     // en el panel y un cliente esperando plata que nunca iba a poder sacar.
-    const available = Number(balanceResult.available != null ? balanceResult.available : balanceResult.balance) || 0;
-    if (available < amountNum) {
+    const available = balanceResult.manual ? null : (Number(balanceResult.available != null ? balanceResult.available : balanceResult.balance) || 0);
+    if (available !== null && available < amountNum) {
       return res.status(400).json({
         error: available <= 0
           ? 'No tenés saldo disponible para retirar.'
@@ -14413,6 +14555,67 @@ app.get('/api/admin/transactions', authMiddleware, adminMiddleware, async (req, 
 let _cachedAdminStats = { data: null, lastUpdate: 0 };
 const _STATS_CACHE_TTL = 60000; // 60 seconds
 
+// ============================================================
+// #190 MODO MANUAL — config pública + bandeja "Pendientes GANAMOS"
+// ============================================================
+// La PWA lo lee al arrancar (antes del login): oculta el registro público, el saldo
+// y los reembolsos, y sabe a qué URL manda el botón CASINO.
+app.get('/api/public/config', (req, res) => {
+  res.json({
+    platformMode: girox.PLATFORM_MODE,
+    manual: PLATFORM_MANUAL,
+    playUrl: girox.getPlayUrl(),
+    publicRegister: !PLATFORM_MANUAL || PUBLIC_REGISTER_ENABLED,
+    brand: process.env.BRAND_NAME || 'GANAMOS'
+  });
+});
+
+function _canSettlePlatformTask(role, kind) {
+  if (role === 'admin') return true;
+  if (kind === 'withdraw') return role === 'withdrawer';
+  return role === 'depositor' || role === 'comunidad'; // deposit | gift
+}
+
+// Lista (status=pending|done|rejected|all, username=, limit=) + pendingCount. `count=1` → sólo el contador (badge).
+app.get('/api/admin/platform-tasks', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!PLATFORM_MANUAL) return res.json({ manual: false, tasks: [], pendingCount: 0 });
+    const pendingCount = await girox.countPending();
+    if (String(req.query.count || '') === '1') return res.json({ manual: true, pendingCount });
+    const status = ['pending', 'done', 'rejected', 'all'].includes(String(req.query.status || '')) ? String(req.query.status) : 'pending';
+    const tasks = await girox.listTasks({ status, limit: Number(req.query.limit) || 200, username: req.query.username ? String(req.query.username).trim() : null });
+    res.json({ manual: true, status, pendingCount, tasks: tasks.map((t) => ({
+      id: String(t._id), kind: t.kind, status: t.status, reference: t.reference, username: t.username, userId: t.userId,
+      amount: t.amount, description: t.description, bonus: t.bonus || null, rolloverX: t.rolloverX, source: t.source, flow: t.flow,
+      flowLabel: _taskFlowLabel(t.flow), createdBy: t.createdBy, doneBy: t.doneBy, doneAt: t.doneAt, note: t.note, meta: t.meta || {}, createdAt: t.createdAt
+    })) });
+  } catch (e) {
+    logger.error(`[platform-tasks] list: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+async function _settlePlatformTaskRoute(req, res, status) {
+  try {
+    if (!PLATFORM_MANUAL) return res.status(400).json({ error: 'La plataforma no está en modo manual.' });
+    const cur = await girox.PlatformTask.findById(req.params.id).lean();
+    if (!cur) return res.status(404).json({ error: 'Tarea inexistente' });
+    if (!_canSettlePlatformTask(req.user.role, cur.kind)) return res.status(403).json({ error: 'Tu rol no puede resolver este tipo de operación.' });
+    const note = String((req.body && req.body.note) || '').trim().slice(0, 500);
+    if (status === 'rejected' && !note) return res.status(400).json({ error: 'Para rechazar tenés que escribir el motivo.' });
+    const r = await girox.settleTask(req.params.id, { status, by: req.user.username, note });
+    if (!r.success) return res.status(400).json({ error: r.error });
+    if (r.alreadySettled) return res.json({ success: true, alreadySettled: true, task: r.task, message: `La tarea ya estaba ${r.task.status === 'done' ? 'hecha' : 'resuelta'} por ${r.task.doneBy || 'otro agente'}.` });
+    logger.info(`[platform-tasks] ${status} ${cur.kind} ${cur.username} $${cur.amount} ref=${cur.reference} por ${req.user.username}`);
+    res.json({ success: true, task: r.task, pendingCount: await girox.countPending() });
+  } catch (e) {
+    logger.error(`[platform-tasks] ${status}: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+}
+app.post('/api/admin/platform-tasks/:id/done', authMiddleware, adminMiddleware, (req, res) => _settlePlatformTaskRoute(req, res, 'done'));
+app.post('/api/admin/platform-tasks/:id/reject', authMiddleware, adminMiddleware, (req, res) => _settlePlatformTaskRoute(req, res, 'rejected'));
+
 app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const now = Date.now();
@@ -16913,6 +17116,33 @@ async function _notifyInsufficientAndCloseChat(payout, available, agentUser) {
 async function _deductChipsAtConfirm(payout, agentUser) {
   const amt = Number(payout.amount);
   const user = await User.findOne({ id: payout.userId });
+
+  // #190 MODO MANUAL: no hay saldo que leer ni descuento que verificar. El agente
+  // confirma el pago DESPUÉS de debitar las fichas en GANAMOS a mano → la tarea nace
+  // `done` y se registra la Transaction igual que en el camino normal.
+  if (PLATFORM_MANUAL) {
+    const w = await girox.withdrawFromUser(payout.username, amt, `Retiro confirmado - ${payout.username}`, `vip-payout-${payout.id}`,
+      { agentExecuted: true, agentName: agentUser && agentUser.username, flow: 'payout', meta: { payoutId: payout.id, adminId: agentUser && agentUser.userId } });
+    if (!w || !w.success) {
+      await PendingPayout.updateOne({ id: payout.id }, { $set: { status: 'failed', error: 'No se pudo registrar el descuento: ' + ((w && w.error) || '') } });
+      await _emitAdminOnlyChatNote(payout.userId, payout.username, `⚠️ No se pudo registrar el descuento de $${amt.toLocaleString('es-AR')}: ${(w && w.error) || 's/detalle'}. Reintentá.`);
+      return { ok: false, error: 'No se pudo registrar el descuento: ' + ((w && w.error) || '') };
+    }
+    await PendingPayout.updateOne({ id: payout.id }, { $set: { balanceBefore: null, balanceAfter: null, debitConfirmed: true, withdrawalTxId: w.data?.transfer_id || w.data?.transferId || null } });
+    try { await recordUserActivity(payout.userId, 'withdrawal', amt); } catch (_) {}
+    try {
+      await Transaction.create({
+        id: uuidv4(), type: 'withdrawal', amount: amt,
+        username: payout.username, userId: payout.userId,
+        description: `Retiro confirmado a ${payout.titular || ''} (${payout.alias || payout.cbu || ''})`,
+        adminId: agentUser && agentUser.userId, adminUsername: agentUser && agentUser.username, adminRole: agentUser && agentUser.role,
+        transactionId: w.data?.transfer_id || w.data?.transferId,
+        metadata: { source: 'self_service', confirmedAtPay: true, payoutId: payout.id, manualPlatform: true },
+        timestamp: new Date()
+      });
+    } catch (_) {}
+    return { ok: true, balanceAfter: null };
+  }
 
   // 1) Saldo RETIRABLE del cliente.
   // ⚠️ Se usa `available`, no `balance`: con el feat de rollover activo en 1girox el
@@ -20824,7 +21054,7 @@ app.post('/api/admin/community', authMiddleware, adminMiddleware, async (req, re
 // porque lo usa el botón "Soporte VIP" de la pantalla de login.
 // ============================================================
 // Mensaje fijo con el que abre el chat de WhatsApp de soporte.
-const SOPORTE_WA_MENSAJE = 'Vengo de 1GIROX necesito ayuda';
+const SOPORTE_WA_MENSAJE = 'Vengo de GANAMOS necesito ayuda';
 
 app.get('/api/config/soporte-vip', async (req, res) => {
   try {

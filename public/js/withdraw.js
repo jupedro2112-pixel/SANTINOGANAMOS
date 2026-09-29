@@ -93,13 +93,16 @@ VIP.withdraw = (function () {
             }
         } catch (e) { /* no bloquea: el formulario sigue usable */ }
 
-        // 2. Saldo en vivo (JugaYGana).
+        // 2. Saldo en vivo. #190 modo manual (GANAMOS sin API): no hay saldo → no se
+        // valida el monto contra nada (lo verifica el agente en GANAMOS antes de pagar).
+        let manual = !!(VIP.platform && VIP.platform.isManual());
         try {
             const res = await fetch(`${VIP.config.API_URL}/api/balance/live`, {
                 headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
             });
             if (res.ok) {
                 const data = await res.json();
+                if (data.manual) manual = true;
                 _balance = Number(data.balance) || 0;
             } else {
                 _balance = Number(VIP.state.currentUser && VIP.state.currentUser.balance) || 0;
@@ -109,6 +112,11 @@ VIP.withdraw = (function () {
         }
 
         const balEl = _el('withdrawBalanceAmount');
+        if (manual) {
+            _balance = null; // desconocido: sin tope local
+            if (balEl && balEl.parentElement) balEl.parentElement.style.display = 'none';
+            return;
+        }
         if (balEl) balEl.textContent = '$' + _balance.toLocaleString('es-AR');
 
         // Saldo por debajo del mínimo de retiro ($4.999) → bloquear el formulario y avisar.
@@ -138,7 +146,7 @@ VIP.withdraw = (function () {
             _showError('withdrawError', 'El monto mínimo de retiro es $4.999.');
             return;
         }
-        if (amount > _balance) {
+        if (_balance !== null && amount > _balance) {
             _showError('withdrawError', `No podés retirar más que tu saldo disponible ($${_balance.toLocaleString('es-AR')}).`);
             return;
         }

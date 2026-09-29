@@ -35,7 +35,7 @@
 const axios = require('axios');
 const logger = require('../utils/logger');
 const Campaign = require('../models/Campaign');
-const giroxService = require('./giroxService');
+const giroxService = require('./platformService');
 
 // ============================================================
 // CONFIG (lazy — SSM carga DESPUÉS de los require() del top de server.js,

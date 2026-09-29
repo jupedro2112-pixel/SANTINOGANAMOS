@@ -15,7 +15,7 @@
  */
 const { v4: uuidv4 } = require('uuid');
 const { User, Transaction, Message, ReferralCommission, ReferralPayout, mongoose } = require('../models');
-const giroxService = require('./giroxService');
+const giroxService = require('./platformService');
 const logger = require('../utils/logger');
 const { getPeriodLabel } = require('../utils/periodKey');
 

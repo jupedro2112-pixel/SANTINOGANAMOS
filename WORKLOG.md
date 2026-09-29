@@ -4,7 +4,113 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-09-18**
+> **Última actualización: 2026-09-29**
+
+## Sesión 2026-09-29 — GANAMOS: el repo pasa a MODO MANUAL (plataforma SIN API)
+
+### 190. Adaptador manual `ganamosPlatformService` + bandeja "Pendientes GANAMOS" + PWA sin saldo/SSO/reembolsos + registro sólo por agente
+- **Contexto (owner):** este repo es un CLON de VIPCARGASANTINO para la sala
+  **GANAMOS**, que **no tiene API**: hoy todo se maneja por WhatsApp y la idea es
+  migrar a la web (chat + ruleta + todas las funciones) **sin cargar/retirar desde
+  la página**: el cliente PIDE por el chat y **un agente lo ejecuta a mano en el panel
+  de GANAMOS**. Decisiones del owner: reembolsos APAGADOS por ahora; hgcash sigue
+  (la transferencia detectada queda "pendiente de cargar" y la hace el agente);
+  todos los clientes llegan CON usuario de GANAMOS creado (derivados de WhatsApp):
+  el agente les crea la cuenta de la web desde el panel con el MISMO username.
+- **Diseño (la clave):** no se reescribieron los ~130 puntos de `server.js` que
+  hablaban con 1girox. Se creó **`src/services/ganamosPlatformService.js`** con el
+  MISMO contrato que `giroxService.js` (mismos nombres, parámetros y formas de
+  retorno; test de contrato en `scripts/test-ganamos-adapter.js`) y un selector
+  **`src/services/platformService.js`** (`PLATFORM_MODE`: `manual` = DEFAULT de
+  este repo, `girox` = el cliente original, que queda entero para volver). Todo
+  `require` de girox (server.js, referralPayout/Calculation, giroxUserLink,
+  giroxPublisherKeys) pasó al selector. En modo manual cada carga/retiro/bono se
+  registra como **`PlatformTask`** (modelo nuevo, `reference` ÚNICA = la misma
+  llave de idempotencia de siempre; un reintento devuelve `duplicate:true` sin
+  segunda tarea):
+  - **La acción del agente en el panel ES la confirmación** (ya lo hizo en
+    GANAMOS): Depositar, retiro manual, Bonificación y confirmar pago de un
+    retiro pasan `agentExecuted:true` → la tarea nace `done` (source `agent`).
+    NO aparecen en la bandeja.
+  - **Lo que el server generaba SOLO** (transferencia hgcash, premio de ruleta,
+    fueguito, nivel VIP, lotes, código de bienvenida, devolución de retiro
+    rechazado, comisión de referidos) nace `pending` (source `server`) y va a la
+    sección nueva del panel **"⏳ Pendientes GANAMOS"** (badge rojo, socket
+    `platform_task`, filtros pendientes/hechas/rechazadas/todas, buscador por
+    usuario, link al chat). El agente lo hace en GANAMOS y marca **✅ Hecha** →
+    el cliente recibe **`/sys_ganamos_acreditado`** (variables `{amount}`,
+    `{bonus}`, `{motivo}`, `{rollover}`) y queda nota en el chat; **❌ Rechazar**
+    exige motivo y NO acredita nada. Roles: admin todo; cargas/comunidad cargas y
+    bonos; pagos retiros. Endpoints `GET /api/admin/platform-tasks?status=&username=`
+    (`count=1` → sólo contador) y `POST /api/admin/platform-tasks/:id/done|reject`.
+    Cada tarea pendiente deja además una nota admin-only "⏳ PENDIENTE EN GANAMOS"
+    en el chat del cliente (salvo hgcash, que deja la suya con el detalle).
+  - **hgcash (`hgcashAutoCarga`):** con `result.pending` el cliente recibe
+    **`/sys_ganamos_carga_pendiente`** ("recibimos tu transferencia, en minutos te
+    la cargan") en vez de "acreditado"; la nota al agente dice "TRANSFERENCIA
+    DETECTADA — PENDIENTE de cargar en GANAMOS (con bono de $X si corresponde)";
+    la Transaction lleva `metadata.platformTaskId/platformTaskStatus` (el listener
+    la marca `done`/`rejected` al resolver). BankMovement/Comprobante/HgcashCharge
+    se marcan igual que antes (una transferencia = una acreditación).
+  - **Retiros autogestionados:** `/api/withdrawal/request` NO valida saldo
+    (`balanceBefore:null`, el agente lo verifica en GANAMOS); `_deductChipsAtConfirm`
+    en manual registra el débito `done` sin lecturas ni anti-fantasma (el agente ya
+    debitó a mano) y crea la Transaction `withdrawal` con `metadata.manualPlatform`.
+  - **Saldo/netwin no existen:** `getUserBalance`/`getPlayerStats` → `code:'manual_mode'`;
+    `getUserInfoByName` devuelve un jugador "vacío" (`manual:true`, saldo null,
+    bonusLocked 0) para que los guards de bono y los lotes no bloqueen;
+    `/api/balance(/live)` → `{manual:true, balance:null}`; `/api/refunds/status`,
+    `/api/vip/status` y `/api/cashback/status` → `{enabled:false, manual:true}`.
+  - **🔒 Login:** `validateCredentials` devuelve SIEMPRE `valid:false` (test 6): el
+    login sólo acepta cuentas locales (el camino "existe en la plataforma → crear
+    local" no puede validar nada sin API). `/api/auth/check-username` ignora al
+    jugador "vacío" (sólo la base local decide si está tomado).
+  - **Registro:** `/api/auth/register` y `/api/landing/signup` responden **410**
+    en manual salvo `PUBLIC_REGISTER_ENABLED=1`. El alta la hace el agente con
+    "Crear usuario" del panel (mismo username que en GANAMOS) + link de acceso.
+  - **Botón CASINO:** `platformSessionHandler` en manual devuelve
+    `{redirectUrl: GANAMOS_PLAY_URL, openInTab:true}`; la PWA abre GANAMOS en una
+    pestaña (dentro del gesto del usuario, sin iframe: otro dominio sin sesión).
+  - **Rollover global** sigue: se anota en la tarea (`rolloverX` / `bonus.multiplier`)
+    para que el agente lo aplique en GANAMOS; `getPlatformConfig` manual permite
+    x0/2/3/5/10.
+- **PWA (SW v109):** `public/js/platformmode.js` (nuevo, después de config.js) lee
+  **`GET /api/public/config`** (`platformMode`, `playUrl`, `publicRegister`, `brand`)
+  antes del login y en manual oculta saldo (`.dash-balance`), reembolsos y "Mi
+  Perfil" (`.dash-refunds`, `.dash-user`, menú), el botón Registrarse, y cambia el
+  título del CASINO; `ui.syncBalance` corta el polling al ver `manual`;
+  `withdraw.js` no exige saldo (tope local desactivado); `refunds.js` oculta el
+  bloque con `enabled:false`. Marca: "1GIROX/Cargas 1Girox" → **GANAMOS** en
+  index.html, ui.js, manifest.json, auth.js (username por defecto vacío),
+  config.js (`PLATFORM_URL` placeholder `https://ganamos.io`). ⚠️ Las IMÁGENES
+  `/images/soporte-1girox.png` y `/images/banner-inicio-1girox.jpg` siguen siendo
+  las de 1girox: el owner tiene que reemplazar los archivos (mismo nombre).
+- **Panel (admin-sw v42):** nav "⏳ Pendientes GANAMOS" (sólo en manual; lo decide
+  `platformMode` que ahora devuelve `/api/admin/me`), sección + JS al final de
+  admin.js (`loadPlatformTasks`, `platformTaskDone/Reject`,
+  `refreshPlatformTasksBadge` cada 60 s), oculta el $ del header del chat y
+  "Seleccionar todo el saldo". `/api/auth/verify` también expone `platformMode`.
+- **Comandos nuevos (seed):** `/sys_ganamos_carga_pendiente`, `/sys_ganamos_acreditado`.
+  `SOPORTE_WA_MENSAJE` → "Vengo de GANAMOS necesito ayuda".
+- **Envs nuevas:** `PLATFORM_MODE` (default `manual`), `GANAMOS_PLAY_URL` (⚠️ el
+  owner tiene que cargar la URL REAL de GANAMOS en SSM; default placeholder
+  `https://ganamos.io`), `PUBLIC_REGISTER_ENABLED`, `BRAND_NAME`. En manual NO hacen
+  falta `GIROX_API_URL/KEY` (el boot loguea "Plataforma en MODO MANUAL").
+- **Lo que NO cambió y conviene saber:** mensajes en código de fueguito/ruleta/VIP
+  siguen diciendo "acreditado" al generar la tarea (el aviso real llega al marcar
+  ✅); si molesta, se editan los `/sys_*` o se agrega un texto "en breve" (pendiente).
+  Referidos: sin netwin la comisión no se calcula (falla limpio con `manual_mode`).
+  `/api/admin/balance/:username` responde 400 en manual (botón oculto).
+- **Validado:** `node --check` en todo lo tocado; `check-tdz` ✅; tests fríos
+  cashback y rollover ✅; **`node scripts/test-ganamos-adapter.js` ✅** (31 chequeos:
+  contrato completo vs giroxService, idempotencia, done/pending, settle, login
+  seguro). HTML PWA 415/415 y panel 686/686, ids únicos. No se pudo levantar el
+  server (sin node_modules). PROBAR en deploy: boot con "MODO MANUAL"; crear usuario
+  desde el panel + link de acceso → entra a la web sin ver saldo ni reembolsos;
+  CASINO abre GANAMOS en pestaña; transferencia hgcash → tarea pendiente + mensaje
+  "recibimos tu transferencia" → ✅ Hecha → "ya te cargamos"; ruleta → premio en la
+  bandeja; Depositar/Bonificación/pagar retiro NO generan pendientes; registro
+  público da 410.
 
 ## Sesión 2026-09-18 — Ruleta diaria con premios editables + bono por instalar con tope y excedente
 
