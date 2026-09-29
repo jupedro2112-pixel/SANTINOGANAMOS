@@ -47,8 +47,11 @@
 const axios = require('axios');
 const _fileLogger = require('../utils/logger');
 
+// ⚠️ En producción winston escribe SOLO a archivo (logs/*.log), que EB no muestra. Todo lo
+// que el owner necesita ver en el log de AWS (login OK, JSON crudo con GANAMOS_DEBUG_SHAPES)
+// va TAMBIÉN por console.log — si no, el diagnóstico del modo API es invisible.
 const logger = {
-  info: (...a) => { try { _fileLogger.info(...a); } catch (_) {} },
+  info: (...a) => { try { _fileLogger.info(...a); } catch (_) {} try { console.log(`[${new Date().toISOString()}]`, ...a); } catch (_) {} },
   warn: (...a) => { try { _fileLogger.warn(...a); } catch (_) {} try { console.warn(`[${new Date().toISOString()}]`, ...a); } catch (_) {} },
   error: (...a) => { try { _fileLogger.error(...a); } catch (_) {} try { console.error(`[${new Date().toISOString()}]`, ...a); } catch (_) {} }
 };
@@ -112,6 +115,10 @@ async function _login(force = false) {
             'user-agent': BROWSER_UA
           }
         });
+      if (process.env.GANAMOS_DEBUG_SHAPES === '1') {
+        const sc = resp.headers && resp.headers['set-cookie'];
+        logger.info(`[ganamos-api] SHAPE LOGIN (HTTP ${resp.status}) set-cookie=${Array.isArray(sc) ? sc.map((c) => c.split('=')[0]).join(',') : 'ninguna'} body=${JSON.stringify(resp.data).slice(0, 1500)}`);
+      }
       if (_isCloudflareBlock(resp.status, resp.data)) {
         logger.error('[ganamos-api] LOGIN bloqueado por Cloudflare (403). La IP del server no pasa el anti-bot. ' +
           'Pedir whitelisting de la IP a GANAMOS o usar proxy. NO es la clave.');
@@ -202,7 +209,9 @@ async function _req(method, path, { body = null, idempotent = true, referer = nu
     const msg = (resp.data && (resp.data.message || resp.data.error || resp.data.detail)) || `HTTP ${resp.status}`;
     return { ok: false, code: 'http_' + resp.status, httpStatus: resp.status, error: String(msg), data: resp.data, indeterminate: false };
   }
-  if (process.env.GANAMOS_DEBUG_SHAPES === '1') logger.info(`[ganamos-api] ${method} ${path} → ${JSON.stringify(resp.data).slice(0, 600)}`);
+  // GANAMOS_DEBUG_SHAPES=1 → JSON crudo COMPLETO (hasta 4000 chars) para ajustar el mapeo de
+  // campos (saldo/id/txId). Se loguea también el status. Apagar cuando el mapeo esté confirmado.
+  if (process.env.GANAMOS_DEBUG_SHAPES === '1') logger.info(`[ganamos-api] SHAPE ${method.toUpperCase()} ${path} (HTTP ${resp.status}) → ${JSON.stringify(resp.data).slice(0, 4000)}`);
   return { ok: true, data: resp.data, httpStatus: resp.status };
 }
 

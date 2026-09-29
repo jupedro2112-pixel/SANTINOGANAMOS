@@ -45,6 +45,26 @@
 
 ---
 
+## Sesión 2026-09-29 (3ª) — Preparación de la PRUEBA REAL del modo API (sin clientes)
+
+### 192. Logs del cliente API visibles en AWS (console) + volcado del login con GANAMOS_DEBUG_SHAPES
+- **Contexto:** el owner va a activar `PLATFORM_MODE=ganamos_api` en producción para
+  probar la API real (hoy no hay clientes), siguiendo los 4 pasos del "PRÓXIMO PASO".
+- **Bug encontrado antes de deployar:** `ganamosApiService` logueaba "login OK" y el
+  JSON crudo de `GANAMOS_DEBUG_SHAPES` con `logger.info` de winston, que en producción
+  (`NODE_ENV=production`) escribe SOLO a `logs/*.log` — en el log de EB no aparecía
+  nada. Ahora `logger.info` del cliente va TAMBIÉN por `console.log` (warn/error ya
+  iban). El volcado de shapes pasa de 600 a 4000 chars, incluye el HTTP status y el
+  prefijo `SHAPE`, y se suma el volcado del LOGIN (status, nombres de las cookies del
+  `set-cookie`, body) para ver si la sesión viene por cookie o por body.
+- **⚠️ Hallazgo pendiente (no tocado):** `server.js` NO maneja `indeterminate:true`
+  (grep = 0): un pago que pierde la respuesta hoy se reporta como fallo común. Con $1
+  de prueba no importa; antes de operar con plata real hay que tratarlo (nota al
+  agente "verificar en GANAMOS antes de reintentar").
+- **Validado:** `node --check`, `test-ganamos-api.js` ✅, `test-ganamos-adapter.js` ✅.
+- **Pasos para el owner (buscar `SHAPE` y `[ganamos-api]` en el log de EB):** ver el
+  bloque "PRÓXIMO PASO" al inicio.
+
 ## Sesión 2026-09-29 (2ª) — GANAMOS con API: cliente automático contra el panel de agente
 
 ### 191. `ganamosApiService` — carga/retiro AUTOMÁTICOS por la API del panel de agente (agents.ganamos.co), tercer PLATFORM_MODE
