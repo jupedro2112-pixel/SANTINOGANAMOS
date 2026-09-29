@@ -141,6 +141,11 @@ En este modo `PLATFORM_NO_STATS/NO_SSO/NO_SELFSIGNUP` (server.js) apagan reembol
 endpoint de alta mapeado). El saldo SÍ es real. Test: `scripts/test-ganamos-api.js`.
 Pendiente antes de plata real: confirmar el `operation` del retiro y los nombres de
 campo del saldo (`GANAMOS_DEBUG_SHAPES=1`), y verificar que Cloudflare deje loguear.
+**⛔ Estado 2026-09-29: BLOQUEADO por GANAMOS.** Desde datacenter (Render) Cloudflare
+da 403; con proxy residencial AR Cloudflare pasa pero aparece un desafío JS de
+**Servicepipe** (`servicepipe.tech`, cookies `spsn`/`spid`) que exige navegador real.
+No se va a saltear. Este modo sólo sirve si GANAMOS habilita un acceso oficial (API
+key / IP permitida). Hasta entonces el repo opera en `manual` (§0).
 
 ## 1. Visión general del negocio
 

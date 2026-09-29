@@ -29,6 +29,19 @@
 > Para AWS el whitelisting exige IP FIJA (instancia única con EIP o NAT Gateway):
 > con 2 instancias detrás del ALB la IP cambia.
 >
+> **🔴 SEGUNDA CAPA (mismo día, 07:58 UTC, probado con proxy residencial AR de Webshare
+> desde Windows con curl):** con IP argentina Cloudflare SÍ deja pasar, pero el panel
+> responde **200 con una página de verificación de Servicepipe** (servicepipe.tech:
+> `js-challenge-loader`, cookies `spsn`/`spid`, redirect a `/xpvnsulc/?back_location=…`).
+> Exige ejecutar JS en un navegador real antes de cada sesión; un server no lo puede
+> hacer y NO se va a intentar saltear (es la protección anti-bot que GANAMOS eligió).
+> **Conclusión: la API del panel de agente NO es usable desde un sistema externo sin
+> permiso de GANAMOS.** Único camino: pedirles acceso oficial (API key / IP permitida
+> en Servicepipe+Cloudflare / el método de su "bot automático"). Datos para el
+> reclamo: request_id `mwiasE4WkOs1`, IP `170.84.131.1`, 2026-09-29 07:58 UTC, agente
+> SANTINOPRUEBA9 (ID 39348055). Mientras tanto: **seguir en `PLATFORM_MODE=manual`**.
+> El soporte de proxy (#193) queda en el código por si GANAMOS habilita una IP.
+>
 > **Para dejar el modo automático andando, en este orden:**
 > 1. **Confirmar el código de operación del RETIRO.** La carga es `operation:0` (seguro).
 >    El retiro está puesto como `operation:1` pero SIN confirmar. Hacé un retiro de
@@ -81,6 +94,14 @@
   `test-ganamos-adapter` ✅. Para el owner: cargar `PROXY_URL` en Render, redeploy del
   último commit, y en el log buscar `proxy host:puerto` en la línea de boot y después
   `login OK` o `LOGIN bloqueado`.
+- **Resultado (mismo día):** con el proxy de Webshare (`p.webshare.io:80`, rotativo AR)
+  el server recibió `HTTP 404 Not Found` con cookies `spid`/`spsc` — NO era el proxy
+  (desde Windows `curl -x` al mismo proxy devolvió una IP argentina y funcionó). Con el
+  mismo curl contra `/api/sign/login` vía proxy: **200 con la página de desafío JS de
+  Servicepipe** (ver bloque PRÓXIMO PASO). Es decir: Cloudflare pasó con IP AR, pero
+  hay una segunda protección anti-bot que exige navegador. **Bloqueante definitivo sin
+  permiso de GANAMOS.** Fix menor de paso: `getProxySummary()` mostraba `(default)`
+  cuando el puerto era el del esquema (80/443); ahora muestra el número.
 
 ## Sesión 2026-09-29 (3ª) — Preparación de la PRUEBA REAL del modo API (sin clientes)
 
