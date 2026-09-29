@@ -17,6 +17,18 @@
 > **no está activo** (seguís en `manual`). Detalle: entrada #191 más abajo y
 > `docs/ARCHITECTURE.md` §0.1.
 >
+> **🔴 RESULTADO DE LA PRUEBA REAL (2026-09-29 07:36 UTC, en Render):** Cloudflare
+> BLOQUEA el login del server con **403 Forbidden** directo ("If you are not a bot,
+> please copy the report and send it to our support team", con REQUEST-ID; sin JS
+> challenge). IP de Render bloqueada: 74.220.49.198. El server arrancó bien en modo
+> API, detectó el bloqueo (`cloudflare_blocked`) y todo falló limpio (sin plata movida).
+> La clave del agente NO llegó a probarse. **Bloqueante: hay que pedirle a GANAMOS
+> que permita la IP del server (whitelisting) o un acceso oficial para integraciones.**
+> Cuenta de agente de prueba: SANTINOPRUEBA9 (ID 39348055). NO intentar evadir el
+> anti-bot (huella TLS/proxy): es el sistema de GANAMOS, el camino es pedir acceso.
+> Para AWS el whitelisting exige IP FIJA (instancia única con EIP o NAT Gateway):
+> con 2 instancias detrás del ALB la IP cambia.
+>
 > **Para dejar el modo automático andando, en este orden:**
 > 1. **Confirmar el código de operación del RETIRO.** La carga es `operation:0` (seguro).
 >    El retiro está puesto como `operation:1` pero SIN confirmar. Hacé un retiro de
@@ -64,6 +76,13 @@
 - **Validado:** `node --check`, `test-ganamos-api.js` ✅, `test-ganamos-adapter.js` ✅.
 - **Pasos para el owner (buscar `SHAPE` y `[ganamos-api]` en el log de EB):** ver el
   bloque "PRÓXIMO PASO" al inicio.
+- **Resultado (mismo día, en Render):** el owner activó `PLATFORM_MODE=ganamos_api` en
+  Render (sin clientes). Boot OK ("MODO API DE AGENTE GANAMOS"); el login dio **403 de
+  Cloudflare** (bloqueo directo, no challenge) en cada intento — ver el bloque PRÓXIMO
+  PASO. El volcado `SHAPE LOGIN` mostró exactamente eso (set-cookie=ninguna, body HTML
+  "Forbidden"), o sea el fix de logs funcionó. La carga de $1.000 de prueba falló limpia
+  con "No se encontró al jugador" (nunca llegó a preguntar). Texto menor a corregir: el
+  error del alta dice "creado en VIPCARGAS pero NO en 1girox" en modo API.
 
 ## Sesión 2026-09-29 (2ª) — GANAMOS con API: cliente automático contra el panel de agente
 
