@@ -5,11 +5,10 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-09-29 (2ª)** — **API DE AGENTE GANAMOS** (§0.1:
-> `ganamosApiService`, PLATFORM_MODE=ganamos_api, carga/retiro automáticos SIN
-> idempotencia, Cloudflare). Antes (misma fecha): **MODO MANUAL sin API** (§0:
+> Última actualización: **2026-09-29 (5ª)** — se ELIMINÓ el modo `ganamos_api`
+> (#194; ver nota al final de §0). Quedan dos modos: **MODO MANUAL sin API** (§0:
 > adaptador `ganamosPlatformService`, `PlatformTask`, bandeja "Pendientes GANAMOS",
-> PWA sin saldo/SSO/reembolsos, registro por agente; §4.8 envs; §9 trampas).
+> PWA sin saldo/SSO/reembolsos, registro por agente; §4.8 envs; §9 trampas) y `girox`.
 > Antes: 2026-09-18 — RULETA DIARIA con premios editables (dinero
 > con rollover / bonificación % en la próxima carga / peso) y elegibilidad editable;
 > BONO por instalar la app con tope y excedente; sugerencia automática del bono en
@@ -117,35 +116,20 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
 - **Para volver a 1girox:** `PLATFORM_MODE=girox` + `GIROX_API_URL/KEY`. Nada del
   cliente original se tocó.
 
-## 0.1 API DE AGENTE GANAMOS (#191, PLATFORM_MODE=ganamos_api)
+### Nota: el modo `ganamos_api` se ELIMINÓ (#194, 2026-09-29)
 
-Tercer modo, ADEMÁS del manual (§0): en vez de una bandeja para el agente, el server
-carga y descuenta SOLO contra la API del panel de agente `agents.ganamos.co`
-(`src/services/ganamosApiService.js`, `GANAMOS_API_MODE=true`, `MANUAL_MODE=false` → el
-server lo trata como plataforma real). Endpoints: `POST /api/sign/login` (cookie
-`session` JWT, login con user+clave del AGENTE en SSM), `GET .../user/search/?username=`,
-`GET .../user/{id}/` (saldo), `POST .../user/{id}/payment/` {operation,amount}
-(carga=0, retiro configurable). Tres diferencias críticas con 1girox, todas resueltas
-en el cliente:
-- **Sin idempotencia:** el pago no lleva `reference`. UN solo intento; si la respuesta
-  se pierde → `{success:false, indeterminate:true}` y el caller NO reintenta. Lecturas
-  sí reintentan; un 401 en el pago sí re-loguea (no tocó plata).
-- **Sesión, no API key:** login por credenciales, cookie en memoria con mutex y
-  re-login al 401. Nunca hardcodear la cookie (vence, es secreto de la cuenta).
-- **Cloudflare:** anti-bot; el login desde el server puede dar 403 →
-  `code:'cloudflare_blocked'` (whitelisting de IP o proxy). **Confirmado el 2026-09-29
-  desde Render (IP 74.220.49.198): 403 directo.** Con `GANAMOS_PROXY_URL`/`PROXY_URL`
-  todo el tráfico del cliente sale por ese proxy (`httpsAgent` + `proxy:false` en axios).
-En este modo `PLATFORM_NO_STATS/NO_SSO/NO_SELFSIGNUP` (server.js) apagan reembolsos/VIP
-(sin netwin), abren el casino en pestaña (sin SSO) y dejan el alta al agente (no hay
-endpoint de alta mapeado). El saldo SÍ es real. Test: `scripts/test-ganamos-api.js`.
-Pendiente antes de plata real: confirmar el `operation` del retiro y los nombres de
-campo del saldo (`GANAMOS_DEBUG_SHAPES=1`), y verificar que Cloudflare deje loguear.
-**⛔ Estado 2026-09-29: BLOQUEADO por GANAMOS.** Desde datacenter (Render) Cloudflare
-da 403; con proxy residencial AR Cloudflare pasa pero aparece un desafío JS de
-**Servicepipe** (`servicepipe.tech`, cookies `spsn`/`spid`) que exige navegador real.
-No se va a saltear. Este modo sólo sirve si GANAMOS habilita un acceso oficial (API
-key / IP permitida). Hasta entonces el repo opera en `manual` (§0).
+Entre #191 y #193 existió un tercer `PLATFORM_MODE=ganamos_api`
+(`src/services/ganamosApiService.js` + `scripts/test-ganamos-api.js`, borrados):
+cliente automático contra la API JSON del panel de agente `agents.ganamos.co`
+(login por credenciales del agente, `POST .../user/{id}/payment/` sin `reference`,
+o sea sin idempotencia). La prueba real lo descartó: desde datacenter Cloudflare
+devuelve 403 directo, y con IP residencial argentina aparece un desafío JS de
+**Servicepipe** que exige navegador. Decisión del owner: no saltear la protección
+de GANAMOS y sacar el modo entero. Si algún día GANAMOS da acceso oficial, el
+código está en el historial de git (commits `0093e11`…`eae9431`). Las envs
+`GANAMOS_AGENT_*`, `GANAMOS_OP_*`, `GANAMOS_PROXY_URL`/`PROXY_URL`,
+`GANAMOS_DEBUG_SHAPES` ya no hacen nada. En `server.js` quedan las banderas
+`PLATFORM_NO_STATS/NO_SSO/NO_SELFSIGNUP`, hoy todas iguales a `PLATFORM_MANUAL`.
 
 ## 1. Visión general del negocio
 
@@ -636,11 +620,7 @@ tenían los 4 clientes viejos.
 
 | Variable | Default | Para qué |
 |---|---|---|
-| `PLATFORM_MODE` | `manual` | `manual` = GANAMOS sin API/bandeja (§0); **#191** `ganamos_api` = API del panel de agente (§0.1); `girox` = Partner API de 1girox |
-| `GANAMOS_AGENT_USER` / `GANAMOS_AGENT_PASS` | — | **#191** Usuario y clave del AGENTE para `PLATFORM_MODE=ganamos_api`. **SSM, nunca en el repo** |
-| `GANAMOS_AGENT_API_URL` | `https://agents.ganamos.co` | Base de la API del panel de agente |
-| `GANAMOS_PROXY_URL` (o `PROXY_URL`) | — | **#193** Proxy de salida SOLO para el tráfico a la API de GANAMOS (`http://user:pass@host:port`, via `https-proxy-agent`). Cloudflare bloquea las IPs de datacenter (Render/AWS) con 403 → un proxy residencial argentino puede pasar. El boot y el "login OK" dicen `proxy host:puerto` |
-| `GANAMOS_OP_DEPOSIT` / `GANAMOS_OP_WITHDRAW` | `0` / `1` | Códigos de operación de `payment` (retiro A CONFIRMAR) |
+| `PLATFORM_MODE` | `manual` | `manual` = GANAMOS sin API/bandeja (§0); `girox` = Partner API de 1girox. Cualquier otro valor cae a `manual` (el viejo `ganamos_api` se eliminó, #194) |
 | `GANAMOS_PLAY_URL` | `https://ganamos.io` (placeholder) | URL pública de GANAMOS que abre el botón CASINO en modo manual. **Cargar la real en SSM** |
 | `PUBLIC_REGISTER_ENABLED` | — | `1`/`true` = reabre el registro público en modo manual (default: alta sólo por agente, 410) |
 | `BRAND_NAME` | `GANAMOS` | Marca que devuelve `GET /api/public/config` |

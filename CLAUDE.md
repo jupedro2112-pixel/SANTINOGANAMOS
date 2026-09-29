@@ -16,12 +16,11 @@
 > (sigue vigente como modelo de flujos; el cliente real de 1girox queda para
 > `PLATFORM_MODE=girox`). Test del adaptador: `node scripts/test-ganamos-adapter.js`.
 > 
-> 🔵 **También existe `PLATFORM_MODE=ganamos_api` (#191):** cliente AUTOMÁTICO contra
-> la API del panel de agente `agents.ganamos.co` (`ganamosApiService`, login por
-> credenciales del agente en SSM). Carga/retira por API (saldo real, sin bandeja), pero
-> ⚠️ SIN idempotencia (pago de un intento) y detrás de Cloudflare. NO activarlo con
-> plata real hasta confirmar el `operation` del retiro y los campos del saldo
-> (`GANAMOS_DEBUG_SHAPES=1`). Test: `node scripts/test-ganamos-api.js`. Ver ARCHITECTURE §0.1.
+> 🚫 **NO existe modo con API de GANAMOS.** Hubo un `PLATFORM_MODE=ganamos_api` (#191–#193,
+> cliente contra `agents.ganamos.co`) y se ELIMINÓ el 2026-09-29 (#194): GANAMOS bloquea
+> esa API con Cloudflare + un desafío JS de Servicepipe y no se va a saltear. El único
+> modo operativo de este repo es `manual`; `girox` queda para volver a 1girox. Si
+> alguien pide "automatizar contra GANAMOS", la respuesta es: no hay acceso oficial.
 
 > ⚠️ **LEER PRIMERO (continuidad entre sesiones).** El owner trabaja en **Tails sin
 > almacenamiento persistente**: al reiniciar la PC se borra TODO lo local y vuelve a
@@ -77,7 +76,7 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   define ExternalUser y UserActivity; el resto es proxy a /src/models).
 - `src/services/platformService.js` — **SELECTOR** del cliente de plataforma
   (`PLATFORM_MODE`): `ganamosPlatformService.js` (manual, default — registra
-  `PlatformTask`, sin API) o `giroxService.js` (Partner API de 1girox). **Requerir
+  `PlatformTask`, sin API) o `giroxService.js` (Partner API de 1girox). Sólo esos dos. **Requerir
   siempre el selector, nunca giroxService directo.**
 - `src/services/giroxService.js` — cliente de la Partner API de 1girox (altas, saldo,
   cargas, retiros, bonos, cambio de clave y login único/SSO). Sólo con `PLATFORM_MODE=girox`.

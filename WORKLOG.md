@@ -10,65 +10,62 @@
 
 > ## 👉 PRÓXIMO PASO (lo primero que tenés que hacer al retomar)
 >
-> **Contexto en 10 segundos:** el repo ya soporta 3 modos (`PLATFORM_MODE`): `manual`
-> (default, GANAMOS sin API — un agente carga desde el panel "Pendientes GANAMOS"),
-> `ganamos_api` (automático contra `agents.ganamos.co`) y `girox` (1girox). Todo hecho
-> y commiteado. El modo `ganamos_api` **está escrito pero NO probado con plata real** y
-> **no está activo** (seguís en `manual`). Detalle: entrada #191 más abajo y
-> `docs/ARCHITECTURE.md` §0.1.
+> **Contexto en 10 segundos:** el repo opera en **`PLATFORM_MODE=manual`** (GANAMOS sin
+> API: el cliente pide por el chat y un agente carga/retira a mano desde el panel
+> "⏳ Pendientes GANAMOS"). El modo `ganamos_api` (#191–#193) **se ELIMINÓ el 2026-09-29
+> (#194)** porque GANAMOS bloquea su API con Cloudflare + Servicepipe; no volver a
+> intentarlo salvo que GANAMOS dé acceso oficial (el código queda en el git log). Detalle
+> en `docs/ARCHITECTURE.md` §0.
 >
-> **🔴 RESULTADO DE LA PRUEBA REAL (2026-09-29 07:36 UTC, en Render):** Cloudflare
-> BLOQUEA el login del server con **403 Forbidden** directo ("If you are not a bot,
-> please copy the report and send it to our support team", con REQUEST-ID; sin JS
-> challenge). IP de Render bloqueada: 74.220.49.198. El server arrancó bien en modo
-> API, detectó el bloqueo (`cloudflare_blocked`) y todo falló limpio (sin plata movida).
-> La clave del agente NO llegó a probarse. **Bloqueante: hay que pedirle a GANAMOS
-> que permita la IP del server (whitelisting) o un acceso oficial para integraciones.**
-> Cuenta de agente de prueba: SANTINOPRUEBA9 (ID 39348055). NO intentar evadir el
-> anti-bot (huella TLS/proxy): es el sistema de GANAMOS, el camino es pedir acceso.
-> Para AWS el whitelisting exige IP FIJA (instancia única con EIP o NAT Gateway):
-> con 2 instancias detrás del ALB la IP cambia.
->
-> **🔴 SEGUNDA CAPA (mismo día, 07:58 UTC, probado con proxy residencial AR de Webshare
-> desde Windows con curl):** con IP argentina Cloudflare SÍ deja pasar, pero el panel
-> responde **200 con una página de verificación de Servicepipe** (servicepipe.tech:
-> `js-challenge-loader`, cookies `spsn`/`spid`, redirect a `/xpvnsulc/?back_location=…`).
-> Exige ejecutar JS en un navegador real antes de cada sesión; un server no lo puede
-> hacer y NO se va a intentar saltear (es la protección anti-bot que GANAMOS eligió).
-> **Conclusión: la API del panel de agente NO es usable desde un sistema externo sin
-> permiso de GANAMOS.** Único camino: pedirles acceso oficial (API key / IP permitida
-> en Servicepipe+Cloudflare / el método de su "bot automático"). Datos para el
-> reclamo: request_id `mwiasE4WkOs1`, IP `170.84.131.1`, 2026-09-29 07:58 UTC, agente
-> SANTINOPRUEBA9 (ID 39348055). Mientras tanto: **seguir en `PLATFORM_MODE=manual`**.
-> El soporte de proxy (#193) queda en el código por si GANAMOS habilita una IP.
->
-> **Para dejar el modo automático andando, en este orden:**
-> 1. **Confirmar el código de operación del RETIRO.** La carga es `operation:0` (seguro).
->    El retiro está puesto como `operation:1` pero SIN confirmar. Hacé un retiro de
->    prueba de **$1** a un jugador de prueba y verificá que descuente. Si no descuenta o
->    descuenta mal, probá otro valor y ajustá `GANAMOS_OP_WITHDRAW`.
-> 2. **Pasarme el JSON real de la API** para ajustar los nombres de campo del saldo/id.
->    Poné `GANAMOS_DEBUG_SHAPES=1`, hacé UNA consulta de jugador y UNA carga de prueba,
->    y copiame lo que loguea de `GET /api/agent_admin/user/{id}/` y de `POST .../payment/`.
->    (Las capturas de mayo no traían el cuerpo de la respuesta, así que el mapeo del
->    saldo es "mejor esfuerzo" hasta ver uno real.)
-> 3. **Ver si Cloudflare deja loguear desde AWS.** Con las credenciales en SSM y
->    `PLATFORM_MODE=ganamos_api`, mirá el log de boot: si dice `cloudflare_blocked`, hay
->    que pedir whitelisting de la IP del server a GANAMOS o usar un proxy.
-> 4. **Recién ahí:** `GANAMOS_AGENT_USER`/`GANAMOS_AGENT_PASS` en SSM +
->    `PLATFORM_MODE=ganamos_api` + redeploy. El boot tiene que decir "MODO API DE AGENTE
->    GANAMOS". Antes de eso, apagá el rollover global de bonos (esta API no lo aplica).
+> **Pendientes del modo manual (el owner):**
+> 1. Cargar `GANAMOS_PLAY_URL` REAL en SSM (hoy placeholder `https://ganamos.io`).
+> 2. Reemplazar las imágenes `/images/soporte-1girox.png` y `/images/banner-inicio-1girox.jpg`
+>    (siguen siendo las de 1girox; mismo nombre de archivo).
+> 3. Probar en deploy el flujo completo: boot dice "MODO MANUAL"; crear usuario desde el
+>    panel + link de acceso → entra sin ver saldo ni reembolsos; CASINO abre GANAMOS en
+>    pestaña; transferencia hgcash → tarea pendiente + "recibimos tu transferencia" →
+>    ✅ Hecha → "ya te cargamos"; ruleta → premio en la bandeja; Depositar/Bonificación/
+>    pagar retiro NO generan pendientes; registro público da 410.
 >
 > **Tests que corro antes de tocar nada** (no hay node_modules, sólo esto):
-> `node scripts/test-ganamos-api.js` · `node scripts/test-ganamos-adapter.js` ·
-> `node scripts/check-tdz.js` · `node scripts/test-cashback-formula.js` ·
-> `node scripts/test-rollover-multicuenta.js`.
+> `node scripts/test-ganamos-adapter.js` · `node scripts/check-tdz.js` ·
+> `node scripts/test-cashback-formula.js` · `node scripts/test-rollover-multicuenta.js`.
 >
 > **⚠️ Seguridad:** las capturas que el owner pegó el 2026-09-29 tenían cookies de
 > sesión VIVAS de la cuenta de agente `metawin100`. Se le avisó que cierre sesión para
-> invalidarlas. Nunca hardcodear una cookie: el cliente se loguea solo con credenciales.
+> invalidarlas.
 
 ---
+
+## Sesión 2026-09-29 (5ª) — Se elimina el modo `ganamos_api`: el repo queda SOLO en manual
+
+### 194. Borrado completo del cliente API de GANAMOS (`ganamosApiService`) y de todo lo que lo activaba
+- **Decisión del owner:** "saca la api de ganamos completa, porque no se puede usar,
+  que quede modo manual". Fundamento: #192/#193 probaron que la API del panel de
+  agente está detrás de Cloudflare (403 desde datacenter) Y de un desafío JS de
+  Servicepipe (con IP residencial AR), que exige navegador real; no se va a saltear.
+- **Borrado:** `src/services/ganamosApiService.js` y `scripts/test-ganamos-api.js`
+  (`git rm`). `platformService.js` vuelve a dos ramas (`girox` / manual por default;
+  `ganamos_api` o cualquier otro valor caen a `manual`) y ya no exporta
+  `GANAMOS_API_MODE`. En `server.js` se fue `PLATFORM_GANAMOS_API` y la rama de boot
+  "MODO API DE AGENTE GANAMOS"; `PLATFORM_NO_STATS/NO_SSO/NO_SELFSIGNUP` quedan (hoy
+  todas = `PLATFORM_MANUAL`) para no tocar los 9 usos que ya tenían. Sin cambios en
+  `package.json`: `https-proxy-agent` sigue siendo dependencia de los clientes
+  JUGAYGANA muertos.
+- **Envs que dejan de existir:** `GANAMOS_AGENT_USER/PASS`, `GANAMOS_AGENT_API_URL`,
+  `GANAMOS_OP_DEPOSIT/WITHDRAW`, `GANAMOS_TIMEOUT_MS`, `GANAMOS_SESSION_TTL_MS`,
+  `GANAMOS_UA`, `GANAMOS_DEBUG_SHAPES`, `GANAMOS_PROXY_URL`/`PROXY_URL`. Si quedaron
+  cargadas en SSM/Render no molestan (nadie las lee); conviene borrar las credenciales
+  del agente por higiene.
+- **Docs:** CLAUDE.md (la nota azul de #191 pasa a "🚫 NO existe modo con API"),
+  ARCHITECTURE §0 (el §0.1 se reemplaza por una nota de eliminación; filas de envs
+  fuera; cabecera), este bloque PRÓXIMO PASO.
+- **Validado:** `node --check` (server.js, platformService.js) ✅, `check-tdz` ✅,
+  `test-ganamos-adapter` ✅ (31 chequeos). Grep de `ganamos_api|ganamosApi|GANAMOS_AGENT|
+  GANAMOS_OP_|GANAMOS_DEBUG|GANAMOS_PROXY` en código: sólo quedan los dos comentarios
+  históricos.
+- **Para volver a tenerlo** (sólo si GANAMOS da acceso oficial): `git show 0093e11`
+  (cliente + test), `9f79cc6` (logs), `e194b4d` (proxy).
 
 ## Sesión 2026-09-29 (4ª) — Proxy de salida para la API de GANAMOS
 
