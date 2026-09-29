@@ -580,6 +580,13 @@ girox.setKeyResolver(async (username) => {
 // nace pendiente (nota al agente en el chat) o se marca hecha/rechazada (aviso al
 // cliente por /sys_ganamos_acreditado, nota en el chat, socket al panel).
 const PLATFORM_MANUAL = !!girox.MANUAL_MODE;
+// #191 modo API de agente GANAMOS: es una plataforma REAL (carga/descuenta por API, sin
+// bandeja), pero SIN netwin (reembolsos/VIP/cashback off) y SIN SSO (casino en pestaña),
+// y el alta de jugador la sigue haciendo el agente (no hay endpoint de alta mapeado).
+const PLATFORM_GANAMOS_API = !!girox.GANAMOS_API_MODE;
+const PLATFORM_NO_STATS = PLATFORM_MANUAL || PLATFORM_GANAMOS_API; // sin netwin
+const PLATFORM_NO_SSO = PLATFORM_MANUAL || PLATFORM_GANAMOS_API;    // casino en pestaña
+const PLATFORM_NO_SELFSIGNUP = PLATFORM_MANUAL || PLATFORM_GANAMOS_API; // alta por agente
 const PUBLIC_REGISTER_ENABLED = String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === '1' || String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === 'true';
 function _taskKindLabel(kind) { return { deposit: 'CARGA', withdraw: 'RETIRO', gift: 'BONO/REGALO' }[kind] || String(kind || '').toUpperCase(); }
 function _taskFlowLabel(flow) {
@@ -3495,7 +3502,7 @@ app.post('/api/auth/register', authLimiter, registerIpLimiter, async (req, res) 
     // #190 GANAMOS: los clientes llegan derivados de WhatsApp con usuario YA creado en
     // GANAMOS; la cuenta de la web la crea el AGENTE desde el panel (mismo username)
     // y le manda el link de acceso. Registro público apagado salvo PUBLIC_REGISTER_ENABLED=1.
-    if (PLATFORM_MANUAL && !PUBLIC_REGISTER_ENABLED) {
+    if (PLATFORM_NO_SELFSIGNUP && !PUBLIC_REGISTER_ENABLED) {
       return res.status(410).json({ error: 'El registro lo hace un agente: escribinos por WhatsApp y te creamos el acceso con tu usuario de GANAMOS.', code: 'register_disabled' });
     }
     const { username, password, email, phone, referralCode, otpCode, campaignCode, utm, fbc, fbp, landingUrl } = req.body;
@@ -3987,7 +3994,7 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
     if (String(process.env.LANDING_SIGNUP_DISABLED || '').toLowerCase() === 'true') {
       return res.status(410).json({ error: 'El registro por landing está deshabilitado.' });
     }
-    if (PLATFORM_MANUAL && !PUBLIC_REGISTER_ENABLED) { // #190: alta sólo por agente (ver /api/auth/register)
+    if (PLATFORM_NO_SELFSIGNUP && !PUBLIC_REGISTER_ENABLED) { // #190/#191: alta sólo por agente
       return res.status(410).json({ error: 'El registro lo hace un agente por WhatsApp.', code: 'register_disabled' });
     }
 
@@ -5065,7 +5072,7 @@ async function platformSessionHandler(req, res) {
     // #190 Modo manual: no hay SSO. El botón CASINO abre la página de GANAMOS en una
     // pestaña (el jugador entra con su usuario y clave de GANAMOS). `openInTab`
     // le dice a la PWA que NO use el iframe (otro dominio, sin sesión compartida).
-    if (PLATFORM_MANUAL) {
+    if (PLATFORM_NO_SSO) {
       return res.json({ success: true, redirectUrl: girox.getPlayUrl(), platformUrl: girox.getPlayUrl(), manual: true, openInTab: true });
     }
 
@@ -7391,7 +7398,7 @@ setInterval(() => {
 }, 5 * 60 * 1000).unref();
 app.get('/api/cashback/status', authMiddleware, async (req, res) => {
   try {
-    if (PLATFORM_MANUAL) return res.json({ enabled: false, manual: true }); // #190 sin netwin
+    if (PLATFORM_NO_STATS) return res.json({ enabled: false, manual: true }); // #190/#191 sin netwin
     const cfg = await getInstantCashbackConfig();
     if (!cfg.enabled) return res.json({ enabled: false });
     let fresh = false;
@@ -7576,8 +7583,8 @@ app.get('/api/refunds/status', authMiddleware, async (req, res) => {
     const username = req.user.username;
     // #190 Modo manual: sin netwin no hay reembolsos (apagados por decisión del owner
     // 2026-09-29). La PWA oculta el bloque cuando enabled=false.
-    if (PLATFORM_MANUAL) return res.json({ enabled: false, manual: true });
-    
+    if (PLATFORM_NO_STATS) return res.json({ enabled: false, manual: true });
+
     const userInfo = await girox.getUserInfoByName(username);
     const currentBalance = userInfo ? userInfo.balance : 0;
     
@@ -8258,7 +8265,7 @@ function _vipLevelsPublic() {
 
 app.get('/api/vip/status', authMiddleware, async (req, res) => {
   try {
-    if (PLATFORM_MANUAL) return res.json({ enabled: false, manual: true }); // #190 sin apostado no hay niveles
+    if (PLATFORM_NO_STATS) return res.json({ enabled: false, manual: true }); // #190/#191 sin apostado no hay niveles
     if (await vipLevelService.isDisabled(Config)) return res.json({ enabled: false });
     const userId = req.user.userId;
 
@@ -10662,6 +10669,10 @@ async function initializeData() {
   // que se vea fuerte en los logs del arranque y no recién con el primer cliente.
   if (PLATFORM_MANUAL) {
     console.log(`✅ Plataforma en MODO MANUAL (GANAMOS sin API): cargas/retiros/bonos van a la bandeja "Pendientes GANAMOS" del panel. Casino: ${girox.getPlayUrl()}. Registro público: ${PUBLIC_REGISTER_ENABLED ? 'ABIERTO' : 'apagado (alta por agente)'}.`);
+  } else if (PLATFORM_GANAMOS_API) {
+    console.log(girox.isEnabled()
+      ? `✅ Plataforma en MODO API DE AGENTE GANAMOS (${girox.getBaseUrl()}): cargas/retiros AUTOMÁTICOS por API, saldo real, reembolsos/VIP off (sin netwin), casino en pestaña. ⚠️ Pagos SIN idempotencia (un intento).`
+      : `❌ MODO API GANAMOS sin credenciales: faltan GANAMOS_AGENT_USER / GANAMOS_AGENT_PASS. Cargas y retiros NO van a funcionar.`);
   } else if (girox.isEnabled()) {
     console.log(`✅ 1girox configurado (${girox.getBaseUrl()})`);
   } else {

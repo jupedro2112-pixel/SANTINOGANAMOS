@@ -6,6 +6,61 @@
 >
 > **Última actualización: 2026-09-29**
 
+## Sesión 2026-09-29 (2ª) — GANAMOS con API: cliente automático contra el panel de agente
+
+### 191. `ganamosApiService` — carga/retiro AUTOMÁTICOS por la API del panel de agente (agents.ganamos.co), tercer PLATFORM_MODE
+- **Hallazgo (owner pasó capturas del panel):** el panel de agente `agents.ganamos.co`
+  SÍ tiene una API JSON (la misma que usa el bot automático de GANAMOS). Endpoints
+  confirmados: `POST /api/sign/login` {username,password,language} → cookie `session`
+  (JWT); `GET /api/agent_admin/user/search/?username=`; `GET /api/agent_admin/user/{id}/`
+  (detalle+saldo); `POST /api/agent_admin/user/{id}/payment/` {operation,amount}
+  (operation 0 = carga; retiro se probó como 1, A CONFIRMAR); `GET /api/agent_admin/
+  payment/requests/` (reporte). ⚠️ Las capturas traían cookies de sesión VIVAS de la
+  cuenta del agente (se le avisó al owner que cierre sesión para invalidarlas).
+- **`src/services/ganamosApiService.js` (nuevo):** mismo contrato que giroxService.
+  Login automático con `GANAMOS_AGENT_USER`/`GANAMOS_AGENT_PASS` (SSM), cookie en
+  memoria con mutex de login (N requests → un solo login) y re-login al 401.
+  `getUserInfoByName` = search + detalle por id (mapeo de saldo/id/username tolerante
+  a alias, con `GANAMOS_DEBUG_SHAPES=1` que loguea el JSON crudo — VERIFICAR contra una
+  respuesta real, las capturas no traían body). `depositToUser`/`withdrawFromUser` →
+  POST payment con `_opDeposit()`/`_opWithdraw()` (configurables `GANAMOS_OP_DEPOSIT`/
+  `GANAMOS_OP_WITHDRAW`). Regalos → carga directa (el panel no expone bono con rollover
+  por API; el rollover pedido se ignora → conviene rollover global de bonos APAGADO en
+  este modo). Stats/netwin, alta de jugador, cambio de clave y SSO: NO soportados por
+  esta API (createPlatformUser `create_not_supported`; el agente crea el jugador en el
+  panel y la web lo vincula).
+- **❗ SIN IDEMPOTENCIA (lo más importante):** el body del pago es {operation,amount},
+  sin `reference`. El cliente hace UN solo intento del pago; si la respuesta se pierde
+  (timeout/red/5xx) devuelve `{success:false, indeterminate:true, code:'unknown_result'}`
+  y el caller NO reintenta (verifica saldo/reporte; si duda, a revisión). Las LECTURAS
+  sí reintentan. Un 401 en el pago sí re-loguea y reintenta (401 = no tocó plata).
+- **Cloudflare:** el dominio está detrás de Cloudflare con anti-bot (un curl desde
+  fuera del navegador da 403). Desde el server (AWS EB) el login PUEDE bloquearse →
+  se detecta con `code:'cloudflare_blocked'` y log claro ("NO es la clave"). Solución
+  si bloquea: whitelistear la IP del server en GANAMOS o usar proxy.
+- **Selector (`platformService.js`):** tercer modo `PLATFORM_MODE=ganamos_api` →
+  `ganamosApiService` (`GANAMOS_API_MODE=true`, `MANUAL_MODE=false` → el server lo trata
+  como plataforma real: carga/descuenta por API, SIN bandeja). `manual` (default) y
+  `girox` intactos.
+- **server.js:** flags derivados `PLATFORM_GANAMOS_API`, `PLATFORM_NO_STATS`,
+  `PLATFORM_NO_SSO`, `PLATFORM_NO_SELFSIGNUP` (= manual || ganamos_api). En modo API:
+  reembolsos/VIP/cashback off (sin netwin), casino en pestaña (sin SSO), alta por
+  agente (registro público 410 salvo `PUBLIC_REGISTER_ENABLED=1`). El SALDO sí es real
+  (no se oculta). Boot loguea "MODO API DE AGENTE GANAMOS".
+- **Envs nuevas:** `GANAMOS_AGENT_USER`, `GANAMOS_AGENT_PASS` (SSM), `GANAMOS_AGENT_API_URL`
+  (default `https://agents.ganamos.co`), `GANAMOS_OP_DEPOSIT` (0), `GANAMOS_OP_WITHDRAW`
+  (1, A CONFIRMAR), `GANAMOS_TIMEOUT_MS`, `GANAMOS_SESSION_TTL_MS`, `GANAMOS_UA`,
+  `GANAMOS_DEBUG_SHAPES`.
+- **Validado:** `node --check` en todo; `check-tdz` ✅; **`node scripts/test-ganamos-api.js`
+  ✅** (contrato, login único, operation 0/1, pago no reintenta + indeterminate, lectura
+  reintenta, 401→re-login, Cloudflare). El modo NO se activa solo (sigue en `manual`).
+- **ANTES DE USAR CON PLATA REAL (pendiente del owner):**
+  1. Confirmar el `operation` del RETIRO con un monto chico (probar $1, ver que descuente).
+  2. Correr una carga real de prueba con `GANAMOS_DEBUG_SHAPES=1` y pasarme el JSON de
+     `user/{id}/` y de `payment/` para AJUSTAR los nombres de campo (saldo/id/txId).
+  3. Ver si Cloudflare deja loguear desde AWS. Si no, whitelisting/proxy.
+  4. Recién ahí `PLATFORM_MODE=ganamos_api` + `GANAMOS_AGENT_USER/PASS` en SSM y redeploy.
+
 ## Sesión 2026-09-29 — GANAMOS: el repo pasa a MODO MANUAL (plataforma SIN API)
 
 ### 190. Adaptador manual `ganamosPlatformService` + bandeja "Pendientes GANAMOS" + PWA sin saldo/SSO/reembolsos + registro sólo por agente

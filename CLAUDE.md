@@ -15,6 +15,13 @@
 > cualquier flujo de plata.** Todo lo que sigue sobre "1girox" es el diseño heredado
 > (sigue vigente como modelo de flujos; el cliente real de 1girox queda para
 > `PLATFORM_MODE=girox`). Test del adaptador: `node scripts/test-ganamos-adapter.js`.
+> 
+> 🔵 **También existe `PLATFORM_MODE=ganamos_api` (#191):** cliente AUTOMÁTICO contra
+> la API del panel de agente `agents.ganamos.co` (`ganamosApiService`, login por
+> credenciales del agente en SSM). Carga/retira por API (saldo real, sin bandeja), pero
+> ⚠️ SIN idempotencia (pago de un intento) y detrás de Cloudflare. NO activarlo con
+> plata real hasta confirmar el `operation` del retiro y los campos del saldo
+> (`GANAMOS_DEBUG_SHAPES=1`). Test: `node scripts/test-ganamos-api.js`. Ver ARCHITECTURE §0.1.
 
 > ⚠️ **LEER PRIMERO (continuidad entre sesiones).** El owner trabaja en **Tails sin
 > almacenamiento persistente**: al reiniciar la PC se borra TODO lo local y vuelve a
