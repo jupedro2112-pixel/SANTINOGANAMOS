@@ -57,6 +57,31 @@
 
 ---
 
+## Sesión 2026-09-29 (4ª) — Proxy de salida para la API de GANAMOS
+
+### 193. `GANAMOS_PROXY_URL` / `PROXY_URL`: todo el tráfico del cliente API sale por un proxy (contra el 403 de Cloudflare)
+- **Contexto:** tras el 403 de Cloudflare desde Render (#192), el owner ya tiene un
+  proxy residencial ARGENTINO comprado y preguntó si alcanza con cargarlo como
+  `PROXY_URL`. El cliente no lo soportaba; ahora sí, con ese MISMO nombre (era el de
+  los clientes JUGAYGANA muertos) o `GANAMOS_PROXY_URL` (tiene prioridad).
+- **Implementación (`ganamosApiService`):** `_proxyAgent()` lazy (SSM carga después
+  del require; `require('https-proxy-agent')` dentro de try/catch → sin la lib o con
+  URL rota loguea error y sale SIN proxy) con cache por URL; en el login y en `_req`
+  se pasa `httpsAgent`+`httpAgent`+**`proxy:false`** (sin eso axios ignora el agent).
+  `getProxySummary()` (host:puerto, SIN credenciales) va en el boot ("MODO API DE
+  AGENTE GANAMOS (url, proxy host:puerto)"), en el "login OK" y en el error de
+  Cloudflare. `https-proxy-agent` ya era dependencia directa: `package.json` intacto.
+- **Límite honesto:** si el bloqueo es por la huella TLS de Node y no por la IP, el
+  proxy NO alcanza (mismo 403 desde una IP argentina) y queda solo el whitelisting.
+  Se le dio al owner un curl de diagnóstico desde la Windows remota (misma IP que el
+  navegador que sí entra) para distinguirlo. Igual conviene pedir whitelisting en
+  paralelo: con proxy, toda carga/retiro depende de que el proxy esté vivo.
+- **Validado:** `node --check` (service, server), `check-tdz` ✅, `test-ganamos-api`
+  ✅ (también con `PROXY_URL` seteada y sin node_modules → cae limpio a sin proxy),
+  `test-ganamos-adapter` ✅. Para el owner: cargar `PROXY_URL` en Render, redeploy del
+  último commit, y en el log buscar `proxy host:puerto` en la línea de boot y después
+  `login OK` o `LOGIN bloqueado`.
+
 ## Sesión 2026-09-29 (3ª) — Preparación de la PRUEBA REAL del modo API (sin clientes)
 
 ### 192. Logs del cliente API visibles en AWS (console) + volcado del login con GANAMOS_DEBUG_SHAPES

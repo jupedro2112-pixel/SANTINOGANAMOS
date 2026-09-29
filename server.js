@@ -10671,7 +10671,7 @@ async function initializeData() {
     console.log(`✅ Plataforma en MODO MANUAL (GANAMOS sin API): cargas/retiros/bonos van a la bandeja "Pendientes GANAMOS" del panel. Casino: ${girox.getPlayUrl()}. Registro público: ${PUBLIC_REGISTER_ENABLED ? 'ABIERTO' : 'apagado (alta por agente)'}.`);
   } else if (PLATFORM_GANAMOS_API) {
     console.log(girox.isEnabled()
-      ? `✅ Plataforma en MODO API DE AGENTE GANAMOS (${girox.getBaseUrl()}): cargas/retiros AUTOMÁTICOS por API, saldo real, reembolsos/VIP off (sin netwin), casino en pestaña. ⚠️ Pagos SIN idempotencia (un intento).`
+      ? `✅ Plataforma en MODO API DE AGENTE GANAMOS (${girox.getBaseUrl()}, ${typeof girox.getProxySummary === 'function' ? girox.getProxySummary() : 'sin proxy'}): cargas/retiros AUTOMÁTICOS por API, saldo real, reembolsos/VIP off (sin netwin), casino en pestaña. ⚠️ Pagos SIN idempotencia (un intento).`
       : `❌ MODO API GANAMOS sin credenciales: faltan GANAMOS_AGENT_USER / GANAMOS_AGENT_PASS. Cargas y retiros NO van a funcionar.`);
   } else if (girox.isEnabled()) {
     console.log(`✅ 1girox configurado (${girox.getBaseUrl()})`);

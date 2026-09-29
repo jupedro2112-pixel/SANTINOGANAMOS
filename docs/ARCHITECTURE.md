@@ -133,7 +133,9 @@ en el cliente:
 - **Sesión, no API key:** login por credenciales, cookie en memoria con mutex y
   re-login al 401. Nunca hardcodear la cookie (vence, es secreto de la cuenta).
 - **Cloudflare:** anti-bot; el login desde el server puede dar 403 →
-  `code:'cloudflare_blocked'` (whitelisting de IP o proxy).
+  `code:'cloudflare_blocked'` (whitelisting de IP o proxy). **Confirmado el 2026-09-29
+  desde Render (IP 74.220.49.198): 403 directo.** Con `GANAMOS_PROXY_URL`/`PROXY_URL`
+  todo el tráfico del cliente sale por ese proxy (`httpsAgent` + `proxy:false` en axios).
 En este modo `PLATFORM_NO_STATS/NO_SSO/NO_SELFSIGNUP` (server.js) apagan reembolsos/VIP
 (sin netwin), abren el casino en pestaña (sin SSO) y dejan el alta al agente (no hay
 endpoint de alta mapeado). El saldo SÍ es real. Test: `scripts/test-ganamos-api.js`.
@@ -632,6 +634,7 @@ tenían los 4 clientes viejos.
 | `PLATFORM_MODE` | `manual` | `manual` = GANAMOS sin API/bandeja (§0); **#191** `ganamos_api` = API del panel de agente (§0.1); `girox` = Partner API de 1girox |
 | `GANAMOS_AGENT_USER` / `GANAMOS_AGENT_PASS` | — | **#191** Usuario y clave del AGENTE para `PLATFORM_MODE=ganamos_api`. **SSM, nunca en el repo** |
 | `GANAMOS_AGENT_API_URL` | `https://agents.ganamos.co` | Base de la API del panel de agente |
+| `GANAMOS_PROXY_URL` (o `PROXY_URL`) | — | **#193** Proxy de salida SOLO para el tráfico a la API de GANAMOS (`http://user:pass@host:port`, via `https-proxy-agent`). Cloudflare bloquea las IPs de datacenter (Render/AWS) con 403 → un proxy residencial argentino puede pasar. El boot y el "login OK" dicen `proxy host:puerto` |
 | `GANAMOS_OP_DEPOSIT` / `GANAMOS_OP_WITHDRAW` | `0` / `1` | Códigos de operación de `payment` (retiro A CONFIRMAR) |
 | `GANAMOS_PLAY_URL` | `https://ganamos.io` (placeholder) | URL pública de GANAMOS que abre el botón CASINO en modo manual. **Cargar la real en SSM** |
 | `PUBLIC_REGISTER_ENABLED` | — | `1`/`true` = reabre el registro público en modo manual (default: alta sólo por agente, 410) |

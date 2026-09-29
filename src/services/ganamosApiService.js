@@ -47,6 +47,37 @@
 const axios = require('axios');
 const _fileLogger = require('../utils/logger');
 
+// ============================================================
+// PROXY DE SALIDA (2026-09-29): Cloudflare bloqueó el login desde la IP de datacenter de
+// Render/AWS (403 directo). Con GANAMOS_PROXY_URL (o el histórico PROXY_URL, el mismo
+// nombre que usaban los clientes de JUGAYGANA) TODO el tráfico a agents.ganamos.co sale
+// por ese proxy (formato http://usuario:clave@host:puerto). Lazy: SSM carga después del
+// require y `https-proxy-agent` puede no estar en un entorno sin node_modules (tests).
+// ⚠️ `proxy:false` en axios es obligatorio: si no, axios ignora el agent y/o lee
+// HTTPS_PROXY del entorno por su cuenta.
+// ============================================================
+let _proxyAgentCache = { url: null, agent: null };
+function _proxyUrl() { return (process.env.GANAMOS_PROXY_URL || process.env.PROXY_URL || '').trim(); }
+function _proxyAgent() {
+  const url = _proxyUrl();
+  if (!url) return null;
+  if (_proxyAgentCache.url === url && _proxyAgentCache.agent) return _proxyAgentCache.agent;
+  try {
+    const { HttpsProxyAgent } = require('https-proxy-agent');
+    _proxyAgentCache = { url, agent: new HttpsProxyAgent(url) };
+    return _proxyAgentCache.agent;
+  } catch (e) {
+    logger.error(`[ganamos-api] PROXY configurado pero no se pudo crear el agent (${e.message}) — saliendo SIN proxy`);
+    return null;
+  }
+}
+/** Proxy sin credenciales, para logs: "host:puerto" o "sin proxy". */
+function getProxySummary() {
+  const url = _proxyUrl();
+  if (!url) return 'sin proxy';
+  try { const u = new URL(url); return `proxy ${u.hostname}:${u.port || '(default)'}`; } catch (_) { return 'proxy (URL inválida)'; }
+}
+
 // ⚠️ En producción winston escribe SOLO a archivo (logs/*.log), que EB no muestra. Todo lo
 // que el owner necesita ver en el log de AWS (login OK, JSON crudo con GANAMOS_DEBUG_SHAPES)
 // va TAMBIÉN por console.log — si no, el diagnóstico del modo API es invisible.
@@ -102,11 +133,13 @@ async function _login(force = false) {
   if (_loginInFlight) return _loginInFlight; // mutex: un solo login concurrente
   _loginInFlight = (async () => {
     try {
+      const agent = _proxyAgent();
       const resp = await axios.post(`${getBaseUrl()}/api/sign/login`,
         { username: _agentUser(), password: _agentPass(), language: 'es' },
         {
           timeout: TIMEOUT_MS,
           validateStatus: () => true,
+          ...(agent ? { httpsAgent: agent, httpAgent: agent, proxy: false } : {}),
           headers: {
             'content-type': 'application/json;charset=UTF-8',
             'accept': 'application/json, text/plain, */*',
@@ -120,8 +153,8 @@ async function _login(force = false) {
         logger.info(`[ganamos-api] SHAPE LOGIN (HTTP ${resp.status}) set-cookie=${Array.isArray(sc) ? sc.map((c) => c.split('=')[0]).join(',') : 'ninguna'} body=${JSON.stringify(resp.data).slice(0, 1500)}`);
       }
       if (_isCloudflareBlock(resp.status, resp.data)) {
-        logger.error('[ganamos-api] LOGIN bloqueado por Cloudflare (403). La IP del server no pasa el anti-bot. ' +
-          'Pedir whitelisting de la IP a GANAMOS o usar proxy. NO es la clave.');
+        logger.error(`[ganamos-api] LOGIN bloqueado por Cloudflare (403) [${getProxySummary()}]. La IP del server no pasa el anti-bot. ` +
+          'Pedir whitelisting de la IP a GANAMOS o usar proxy (GANAMOS_PROXY_URL / PROXY_URL). NO es la clave.');
         return { success: false, code: 'cloudflare_blocked', error: 'Cloudflare bloqueó el login del servidor (403).' };
       }
       const setCookie = resp.headers && resp.headers['set-cookie'];
@@ -137,7 +170,7 @@ async function _login(force = false) {
       }
       if (resp.status >= 200 && resp.status < 300 && cookie) {
         _sessionCookie = cookie; _sessionAt = Date.now();
-        logger.info(`[ganamos-api] login OK como ${_agentUser()}`);
+        logger.info(`[ganamos-api] login OK como ${_agentUser()} (${getProxySummary()})`);
         return { success: true };
       }
       logger.error(`[ganamos-api] login falló (status ${resp.status}) — ${JSON.stringify(resp.data).slice(0, 200)}`);
@@ -161,12 +194,14 @@ async function _req(method, path, { body = null, idempotent = true, referer = nu
   const lg = await _login();
   if (!lg.success) return { ok: false, code: lg.code, error: lg.error, httpStatus: lg.httpStatus, indeterminate: false };
 
+  const agent = _proxyAgent();
   const doCall = async () => {
     return axios({
       method, url: `${getBaseUrl()}${path}`,
       data: body || undefined,
       timeout: TIMEOUT_MS,
       validateStatus: () => true,
+      ...(agent ? { httpsAgent: agent, httpAgent: agent, proxy: false } : {}),
       headers: {
         'accept': 'application/json, text/plain, */*',
         'content-type': 'application/json;charset=UTF-8',
@@ -403,7 +438,7 @@ function getMasterMaxRpm() { return 0; }
 function getPlayerCacheTtlMs() { return 0; }
 
 module.exports = {
-  errToString, setCashierBalanceHook, isEnabled, getPlayUrl, getBaseUrl, validateUsername,
+  errToString, setCashierBalanceHook, isEnabled, getPlayUrl, getBaseUrl, validateUsername, getProxySummary,
   setKeyResolver, createPlatformUser, getUserInfoByName, readPlayerWithKey, checkUserExists,
   ping, syncUserToPlatform, validateCredentials, changeUserPassword, createSession,
   depositToUser, creditGift, setRolloverResolver, withdrawFromUser, creditUserBalance,
