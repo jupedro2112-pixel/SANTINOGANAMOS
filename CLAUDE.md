@@ -189,7 +189,9 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 - **Ruleta diaria = CON RECLAMO y vencimiento (#197, 2026-09-29):** ningún premio se
   acredita solo. Nace `claim_pending` y el cliente tiene las horas del comando
   `/sys_roulette_claim_hours` (COMANDOS, default 24) para tocar RECLAMAR en la app, si
-  no pasa a `expired` (barrido perezoso `_rouletteExpireStale`, sin cron). Dinero
+  no pasa a `expired` (barrido perezoso `_rouletteExpireStale`, sin cron). Elegibilidad
+  (#200): `minCargas30d` en `minCargasDays`, `spinsPerDay` (índice único
+  userId+dateKey+seq) y `testUsers` que giran sin app para probar como cliente. Dinero
   reclamado → `creditGift` (manual: PlatformTask pendiente, spin `claimed` →
   `credited` cuando el agente marca ✅; el listener de tareas lo refleja). % reclamado
   → `percent_pending` en el usuario (se aplica en su próxima carga o "Marcar aplicado"

@@ -62,7 +62,7 @@
             // le falta (antes desaparecía y el cliente no sabía por qué).
             if (_state && _state.needsActive && _state.minCargas > 0) {
                 const faltan = Math.max(1, (_state.minCargas + 1) - (Number(_state.cargas30d) || 0));
-                c.innerHTML = '<div class="dash-roulette" style="opacity:.55;" onclick="VIP.ui&&VIP.ui.showToast&&VIP.ui.showToast(\'🎰 La ruleta diaria es para clientes activos: necesitás más de ' + _state.minCargas + ' cargas en los últimos 30 días (llevás ' + (Number(_state.cargas30d) || 0) + ').\',\'info\')">'
+                c.innerHTML = '<div class="dash-roulette" style="opacity:.55;" onclick="VIP.ui&&VIP.ui.showToast&&VIP.ui.showToast(\'🎰 La ruleta diaria es para clientes activos: necesitás más de ' + _state.minCargas + ' cargas en los últimos ' + (_state.minCargasDays || 30) + ' días (llevás ' + (Number(_state.cargas30d) || 0) + ').\',\'info\')">'
                     + '<span class="dash-roulette-avatar">🔒</span>'
                     + '<span class="dash-roulette-label">RULETA</span>'
                     + '<span class="dash-roulette-sub">Faltan ' + faltan + ' carga' + (faltan === 1 ? '' : 's') + '</span>'
@@ -99,8 +99,10 @@
             subText = subFor(open);
         } else if (_state.alreadySpun && spin) {
             subText = subFor(spin) || 'Volvé mañana';
+        } else if (spin && subFor(spin) && Number(_state.spinsLeft) > 0) {
+            subText = subFor(spin); // #200 ganó y todavía le quedan giros
         } else {
-            subText = '¡GIRÁ HOY!';
+            subText = Number(_state.spinsLeft) > 1 ? _state.spinsLeft + ' GIROS HOY' : '¡GIRÁ HOY!';
         }
 
         c.innerHTML = '<div class="dash-roulette" onclick="VIP.roulette && VIP.roulette.open()">'
@@ -335,14 +337,22 @@
         let html = '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #ffd700;border-radius:16px;padding:20px 16px;color:#fff;max-width:560px;width:100%;margin:14px auto;position:relative;">';
         html += '<button onclick="VIP.roulette.close()" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.20);color:#fff;font-size:18px;cursor:pointer;line-height:1;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">✕</button>';
         html += '<h2 style="color:#ffd700;text-align:center;margin:0 0 4px;font-size:22px;font-weight:900;letter-spacing:1.5px;padding-right:36px;">🎰 RULETA DIARIA</h2>';
-        html += '<p style="color:#ddd;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.4;">1 giro por día · si ganás, tenés ' + _esc(claimHours) + ' h para reclamar tu premio</p>';
+        const spd = Number(_state.spinsPerDay) || 1; // #200 giros por día
+        const spinsLeft = _state.spinsLeft != null ? Number(_state.spinsLeft) : (alreadySpun ? 0 : spd);
+        html += '<p style="color:#ddd;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.4;">' + (spd > 1 ? spd + ' giros por día' : '1 giro por día') + ' · si ganás, tenés ' + _esc(claimHours) + ' h para reclamar tu premio</p>';
 
         // #197 Premio de OTRO día que sigue abierto (por reclamar / en carga / % pendiente):
         // se muestra arriba del giro de hoy para que no se lo pierda.
         if (openPrize && (!alreadySpun || (spin && openPrize.id !== spin.id))) html += _prizeBox(openPrize, claimHours);
 
-        if (alreadySpun) {
-            // Estado: ya giró hoy.
+        // #200 con varios giros por día: si ya giró pero le quedan giros, muestra el último
+        // resultado (si ganó) y abajo el botón para volver a girar.
+        if (alreadySpun && spinsLeft > 0) {
+            const wonL = Number(spin.prizeARS || 0) > 0 || (spin.prizeType === 'percent' && Number(spin.prizePct) > 0);
+            if (wonL) html += _prizeBox(spin, claimHours);
+        }
+        if (alreadySpun && spinsLeft <= 0) {
+            // Estado: ya usó todos sus giros de hoy.
             const won = Number(spin.prizeARS || 0) > 0;
             const isPct = spin.prizeType === 'percent' && Number(spin.prizePct) > 0;
             if (won || isPct) {
@@ -361,7 +371,7 @@
             // de probabilidades (el reparto ahora es por monto diario).
             html += '<div id="rouletteResultBox" style="background:linear-gradient(135deg,#4a0080,#7c00cc);border:2px solid #ffd700;border-radius:14px;padding:28px 16px;text-align:center;margin-bottom:12px;box-shadow:inset 0 0 30px rgba(255,215,0,0.20);">';
             html += '<div style="font-size:72px;line-height:1;margin-bottom:6px;animation:rouletteIcon 2s ease-in-out infinite;">🎰</div>';
-            html += '<div style="color:#ffd700;font-size:16px;font-weight:900;letter-spacing:1px;margin-bottom:4px;">Tu giro de hoy te espera</div>';
+            html += '<div style="color:#ffd700;font-size:16px;font-weight:900;letter-spacing:1px;margin-bottom:4px;">' + (spd > 1 ? 'Te quedan ' + spinsLeft + ' giro' + (spinsLeft === 1 ? '' : 's') + ' hoy' : 'Tu giro de hoy te espera') + '</div>';
             html += '<div style="color:#fff;font-size:13px;margin-bottom:14px;opacity:0.92;">Tocá <strong>GIRAR</strong> y la suerte decide. Si ganás, reclamá tu premio dentro de las ' + _esc(claimHours) + ' horas.</div>';
             html += '<button id="rouletteSpinBtn" onclick="VIP.roulette.spin()" style="background:linear-gradient(135deg,#ffd700,#f7931e);color:#000;border:none;padding:16px 40px;border-radius:12px;font-weight:900;font-size:18px;cursor:pointer;letter-spacing:2px;box-shadow:0 4px 16px rgba(255,215,0,0.50);">🎰 GIRAR</button>';
             html += '</div>';
@@ -435,6 +445,7 @@
             if (!resp.ok) {
                 if (d && d.alreadySpun) {
                     _state.alreadySpun = true;
+                    _state.spinsLeft = 0;
                     _state.spin = d.spin;
                     _renderModal();
                 } else if (d && d.needsAppNotifs) {
@@ -448,6 +459,7 @@
                 return;
             }
             // Construimos un "spin" del shape que espera _renderModal y refrescamos.
+            _state.spinsLeft = d.spinsLeft != null ? Number(d.spinsLeft) : 0; // #200
             _state.alreadySpun = true;
             _state.spin = d.prize; // #197 forma pública del spin (id, status, claimExpiresAt…)
             if (d.prize && d.prize.claimHours) _state.claimHours = d.prize.claimHours;
@@ -520,7 +532,7 @@
         if (!_state) await loadStatus();
         if (_state && _state.needsAppNotifs) return _showNeedsAppModal();
         if (_state && _state.needsActive && VIP.ui && VIP.ui.showToast) {
-            return VIP.ui.showToast('🎰 La ruleta diaria es para clientes activos: necesitás más de ' + _state.minCargas + ' cargas en los últimos 30 días (llevás ' + (Number(_state.cargas30d) || 0) + ').', 'info');
+            return VIP.ui.showToast('🎰 La ruleta diaria es para clientes activos: necesitás más de ' + _state.minCargas + ' cargas en los últimos ' + (_state.minCargasDays || 30) + ' días (llevás ' + (Number(_state.cargas30d) || 0) + ').', 'info');
         }
         open();
     }

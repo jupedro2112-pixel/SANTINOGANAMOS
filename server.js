@@ -11088,6 +11088,13 @@ async function initializeData() {
     if (fixed) console.log(`✅ GANAMOS: ${fixed} comando(s) con texto heredado de 1girox/reembolsos/rollover actualizados`);
   }
 
+  // #200 Ruleta: giros por día configurables → el índice único pasa a (userId, dateKey, seq).
+  // Los índices viejos de "1 por día" se borran (idempotente: si no existen, no pasa nada).
+  for (const ix of ['unique_userid_datekey', 'unique_username_datekey']) {
+    try { await DailyRouletteSpin.collection.dropIndex(ix); console.log(`✅ Ruleta: índice viejo ${ix} eliminado (giros por día configurables)`); }
+    catch (e) { if (!/index not found|ns not found/i.test(String(e.message))) console.warn(`⚠️ Ruleta: no se pudo borrar el índice ${ix}: ${e.message}`); }
+  }
+
   console.log('✅ Datos inicializados correctamente');
 }
 
@@ -18210,6 +18217,9 @@ function _rouletteDefaultConfig() {
   return {
     prizes: ROULETTE_PRIZES.map(p => ({ label: p.label, emoji: p.emoji, type: Number(p.value) > 0 ? 'cash' : 'none', value: Number(p.value) || 0, rolloverX: 0, weight: p.weight })),
     minCargas30d: ROULETTE_MIN_CARGAS_30D,
+    minCargasDays: 30, // #200 lapso (días) en el que se cuentan las cargas
+    spinsPerDay: 1,    // #200 giros por día
+    testUsers: [],     // #200 usernames que giran SIN app ni cargas mínimas (para probar como cliente)
     requireApp: true
   };
 }
@@ -18240,9 +18250,14 @@ async function getDailyRouletteConfig() {
       let prizes = d.prizes;
       try { prizes = _rouletteNormalizePrizes(raw.prizes); } catch (e) { logger.warn(`[roulette] config de premios inválida, se usa la default: ${e.message}`); }
       const mc = Math.round(Number(raw.minCargas30d));
+      const md = Math.round(Number(raw.minCargasDays));
+      const sp = Math.round(Number(raw.spinsPerDay));
       return {
         prizes,
         minCargas30d: Number.isFinite(mc) && mc >= 0 && mc <= 1000 ? mc : d.minCargas30d,
+        minCargasDays: Number.isFinite(md) && md >= 1 && md <= 365 ? md : d.minCargasDays, // #200
+        spinsPerDay: Number.isFinite(sp) && sp >= 1 && sp <= 20 ? sp : d.spinsPerDay,       // #200
+        testUsers: Array.isArray(raw.testUsers) ? raw.testUsers.map(u => String(u || '').trim().toLowerCase()).filter(Boolean).slice(0, 50) : [], // #200
         requireApp: raw.requireApp !== false
       };
     }
@@ -18410,16 +18425,17 @@ function _rouletteHasAppInstalled(u) {
 // (deposits, sin contar regalos/devoluciones) en los últimos 30 días. Devuelve
 // { active, count }. Ante error de lectura NO bloquea (no castiga por un fallo de DB).
 const ROULETTE_MIN_CARGAS_30D = 10; // "más de" esto → activo (11+)
-async function _rouletteIsActiveClient(userId, username, minCargas = ROULETTE_MIN_CARGAS_30D) {
+async function _rouletteIsActiveClient(userId, username, minCargas = ROULETTE_MIN_CARGAS_30D, days = 30) {
   try {
-    const since = new Date(Date.now() - 30 * 24 * 3600 * 1000);
+    const d = Number(days) >= 1 ? Number(days) : 30; // #200 lapso editable
+    const since = new Date(Date.now() - d * 24 * 3600 * 1000);
     const count = await Transaction.countDocuments({
       $or: [{ userId: userId }, { username: username }],
       type: 'deposit',
       'metadata.source': { $nin: ['install_bonus', 'welcome_gift', 'payout_refund'] },
       timestamp: { $gte: since }
     });
-    return { active: count > minCargas, count, minCargas };
+    return { active: count > minCargas, count, minCargas, days: d };
   } catch (e) {
     logger.warn(`[roulette] chequeo cliente activo falló: ${e.message}`);
     return { active: true, count: null }; // fail-open: no bloquear por un error de DB
@@ -18448,6 +18464,10 @@ async function _recordRouletteTransaction(spinId, userId, username, prizeARS, la
   }
 }
 
+// #200 ¿Es un usuario de prueba de la ruleta? (config → gira sin app ni cargas mínimas)
+function _rouletteIsTestUser(rcfg, username) {
+  return Array.isArray(rcfg.testUsers) && rcfg.testUsers.includes(String(username || '').toLowerCase());
+}
 // GET /api/roulette/status — estado del giro de HOY del user actual.
 app.get('/api/roulette/status', authMiddleware, async (req, res) => {
   try {
@@ -18458,11 +18478,15 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
     // ACTIVO (más de N cargas reales en 30 días; N editable en el panel, #188).
     const rcfg = await getDailyRouletteConfig();
     const u = await User.findOne({ id: userId }, { fcmTokenContext: 1, fcmTokens: 1, dailyRoulettePendingPct: 1, dailyRoulettePendingLabel: 1 }).lean();
-    const appOk = !rcfg.requireApp || _rouletteHasAppInstalled(u);
-    const act = await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d);
+    const isTest = _rouletteIsTestUser(rcfg, username); // #200 salta app y cargas mínimas
+    const appOk = isTest || !rcfg.requireApp || _rouletteHasAppInstalled(u);
+    const act = isTest ? { active: true, count: null, minCargas: rcfg.minCargas30d, days: rcfg.minCargasDays } : await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d, rcfg.minCargasDays);
     const eligible = appOk && act.active;
     await _rouletteExpireStale({ userId }); // #197
-    const spin = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
+    // #200 giros por día: el "spin de hoy" es el ÚLTIMO; alreadySpun = no quedan giros.
+    const spinsToday = await DailyRouletteSpin.countDocuments({ userId, dateKey });
+    const spinsLeft = Math.max(0, (rcfg.spinsPerDay || 1) - spinsToday);
+    const spin = await DailyRouletteSpin.findOne({ userId, dateKey }).sort({ spunAt: -1 }).lean();
     // #197 un premio de OTRO día que sigue por reclamar / reclamado (para mostrarlo
     // aunque hoy todavía no haya girado).
     const openPrize = (spin && ['claim_pending', 'claimed', 'percent_pending'].includes(spin.status)) ? spin
@@ -18473,14 +18497,19 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
       needsAppNotifs: !appOk,
       needsActive: appOk && !act.active, // app OK pero no llega a las cargas mínimas
       minCargas: rcfg.minCargas30d,
+      minCargasDays: rcfg.minCargasDays, // #200
       cargas30d: act.count,
       requireApp: rcfg.requireApp,
+      isTestUser: isTest, // #200
+      spinsPerDay: rcfg.spinsPerDay || 1, // #200
+      spinsToday,
+      spinsLeft,
       dateKey,
       prizes: _roulettePublicPrizes(rcfg),
       claimHours: await getRouletteClaimHours(), // #197
       pendingPct: (u && u.dailyRoulettePendingPct) || 0,
       pendingLabel: (u && u.dailyRoulettePendingLabel) || null,
-      alreadySpun: !!spin,
+      alreadySpun: spinsLeft === 0,
       spin: _rouletteSpinPublic(spin),
       openPrize: openPrize && (!spin || openPrize.id !== spin.id) ? _rouletteSpinPublic(openPrize) : null
     });
@@ -18550,7 +18579,7 @@ app.get('/api/admin/roulette/config', authMiddleware, adminMiddleware, async (re
     const cfg = await getDailyRouletteConfig();
     let globalRollover = null;
     try { const g = await getGlobalBonusRollover(); globalRollover = g.enabled ? g.effective : null; } catch (_) {}
-    res.json({ success: true, prizes: _roulettePublicPrizes(cfg), minCargas30d: cfg.minCargas30d, requireApp: cfg.requireApp, globalRollover, defaults: _rouletteDefaultConfig() });
+    res.json({ success: true, prizes: _roulettePublicPrizes(cfg), minCargas30d: cfg.minCargas30d, minCargasDays: cfg.minCargasDays, spinsPerDay: cfg.spinsPerDay, testUsers: cfg.testUsers, requireApp: cfg.requireApp, globalRollover, defaults: _rouletteDefaultConfig() });
   } catch (err) { res.status(500).json({ error: 'Error del servidor' }); }
 });
 app.put('/api/admin/roulette/config', authMiddleware, adminMiddleware, async (req, res) => {
@@ -18561,11 +18590,17 @@ app.put('/api/admin/roulette/config', authMiddleware, adminMiddleware, async (re
     try { prizes = _rouletteNormalizePrizes(b.prizes); } catch (e) { return res.status(400).json({ error: e.message }); }
     const mc = Math.round(Number(b.minCargas30d));
     if (!Number.isFinite(mc) || mc < 0 || mc > 1000) return res.status(400).json({ error: 'Cargas mínimas: un número entre 0 y 1000 (0 = todos los clientes).' });
-    const value = { prizes, minCargas30d: mc, requireApp: b.requireApp !== false };
+    // #200 lapso de días, giros por día y usuarios de prueba
+    const md = Math.round(Number(b.minCargasDays));
+    if (!Number.isFinite(md) || md < 1 || md > 365) return res.status(400).json({ error: 'Lapso de las cargas: entre 1 y 365 días.' });
+    const sp = Math.round(Number(b.spinsPerDay));
+    if (!Number.isFinite(sp) || sp < 1 || sp > 20) return res.status(400).json({ error: 'Giros por día: entre 1 y 20.' });
+    const testUsers = Array.from(new Set(String(b.testUsers || '').split(/[\s,;]+/).map(u => u.trim().toLowerCase()).filter(Boolean))).slice(0, 50);
+    const value = { prizes, minCargas30d: mc, minCargasDays: md, spinsPerDay: sp, testUsers, requireApp: b.requireApp !== false };
     await Config.set(ROULETTE_CFG_KEY, value, req.user.username);
-    logger.info(`[ROULETTE] config guardada por ${req.user.username}: ${prizes.length} premios, minCargas30d=${mc}, requireApp=${value.requireApp}`);
+    logger.info(`[ROULETTE] config guardada por ${req.user.username}: ${prizes.length} premios, minCargas=${mc} en ${md} días, giros/día=${sp}, testUsers=${testUsers.length}, requireApp=${value.requireApp}`);
     const cfg = await getDailyRouletteConfig();
-    res.json({ success: true, prizes: _roulettePublicPrizes(cfg), minCargas30d: cfg.minCargas30d, requireApp: cfg.requireApp });
+    res.json({ success: true, prizes: _roulettePublicPrizes(cfg), minCargas30d: cfg.minCargas30d, minCargasDays: cfg.minCargasDays, spinsPerDay: cfg.spinsPerDay, testUsers: cfg.testUsers, requireApp: cfg.requireApp });
   } catch (err) { res.status(500).json({ error: 'Error del servidor' }); }
 });
 
@@ -18736,62 +18771,23 @@ app.get('/api/claims-feed', async (req, res) => {
   }
 });
 
-// POST /api/admin/roulette/test-spin — simula un giro para un username
-// específico sin afectar su spin real del día. Pick weighted con la misma
-// tabla ROULETTE_PRIZES. Devuelve qué le habría salido. NO escribe nada
-// en DailyRouletteSpin ni acredita plata. Para que el owner pueda probar
-// el flow y el visual sin gastar dinero real.
-app.post('/api/admin/roulette/test-spin', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    const username = String((req.body && req.body.username) || '').trim();
-    if (!username) {
-      return res.status(400).json({ error: 'Falta username' });
-    }
-    // Verificar que el user exista (para que el owner sepa si tipeó mal).
-    const u = await findUserByUsernameCI(username, { select: '_id username', lean: true });
-    if (!u) {
-      return res.status(404).json({ error: `Usuario "${username}" no encontrado` });
-    }
-    const rcfg = await getDailyRouletteConfig();
-    const pick = _rouletteWeightedPick(rcfg.prizes);
-    res.json({
-      success: true,
-      simulation: true,
-      username: u.username,
-      prize: {
-        prizeARS: pick.type === 'cash' ? (Number(pick.value) || 0) : 0,
-        prizeType: pick.type, prizePct: pick.type === 'percent' ? pick.value : 0,
-        prizeLabel: pick.label,
-        emoji: pick.emoji,
-        weight: pick.weight
-      },
-      prizes: _roulettePublicPrizes(rcfg),
-      note: 'Esto es solo simulación — no se escribió nada ni se acreditó plata.'
-    });
-  } catch (err) {
-    logger.error(`/api/admin/roulette/test-spin: ${err.message}`);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
-
-// #199 Núcleo del giro (sin gates): lo usa POST /api/roulette/spin y el "girar por un
-// usuario" del panel (POST /api/admin/roulette/spin-as, prueba sin la app instalada).
-// Devuelve { http, body }.
+// #199/#200 Núcleo del giro (sin gates: app/cargas mínimas las valida el endpoint). Lo usa
+// POST /api/roulette/spin. Devuelve { http, body }.
 async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
-  // Pre-check: ya giró hoy? (el unique index igual cubre el race)
-  const already = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
-  if (already) {
+  // #200 Pre-check: ¿le quedan giros hoy? (spinsPerDay de la config; el unique index
+  // (userId, dateKey, seq) igual cubre el race)
+  const spinsPerDay = Math.max(1, Number(rcfg.spinsPerDay) || 1);
+  const spinsToday = await DailyRouletteSpin.countDocuments({ userId, dateKey });
+  if (spinsToday >= spinsPerDay) {
+    const already = await DailyRouletteSpin.findOne({ userId, dateKey }).sort({ spunAt: -1 }).lean();
     return { http: 409, body: {
-      error: 'Ya giraste la ruleta hoy. Volvé mañana.',
+      error: spinsPerDay > 1 ? `Ya usaste tus ${spinsPerDay} giros de hoy. Volvé mañana.` : 'Ya giraste la ruleta hoy. Volvé mañana.',
       alreadySpun: true,
-      spin: {
-        prizeARS: already.prizeARS,
-        prizeLabel: already.prizeLabel,
-        status: already.status,
-        spunAt: already.spunAt
-      }
+      spinsLeft: 0,
+      spin: _rouletteSpinPublic(already)
     } };
   }
+  const seq = spinsToday + 1;
 
   // Pick + insert (status='won' | 'percent_pending' | 'no_prize') con unique index protegiendo race.
   let pick = _rouletteWeightedPick(rcfg.prizes);
@@ -18849,6 +18845,7 @@ async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
       userId,
       username: String(username || '').toLowerCase(),
       dateKey,
+      seq, // #200
       spunAt: new Date(),
       prizeARS,
       prizeType: prizeARS > 0 ? 'cash' : (prizePct > 0 ? 'percent' : 'none'),
@@ -18864,15 +18861,18 @@ async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
   } catch (e) {
     // El unique index disparó (otro tab del mismo user llegó primero).
     if (String(e.message || '').includes('duplicate key')) {
-      const existing = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
-      return { http: 409, body: { error: 'Ya giraste la ruleta hoy.', alreadySpun: true, spin: _rouletteSpinPublic(existing) } };
+      const existing = await DailyRouletteSpin.findOne({ userId, dateKey }).sort({ spunAt: -1 }).lean();
+      const cnt = await DailyRouletteSpin.countDocuments({ userId, dateKey });
+      const left = Math.max(0, spinsPerDay - cnt);
+      return { http: 409, body: { error: left > 0 ? 'Se cruzaron dos giros. Probá de nuevo.' : 'Ya giraste la ruleta hoy.', alreadySpun: left === 0, spinsLeft: left, spin: _rouletteSpinPublic(existing) } };
     }
     throw e;
   }
+  const _spinsLeftNow = Math.max(0, spinsPerDay - seq); // #200 para que la app sepa si puede seguir girando
 
   if (!hasPrize) {
     logger.info(`[ROULETTE] ${username} → SIN PREMIO (${dateKey})`);
-    return { http: 200, body: { success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji } } };
+    return { http: 200, body: { success: true, spinsLeft: _spinsLeftNow, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji } } };
   }
 
   const premioTxt = _roulettePrizeText(spinDoc);
@@ -18887,42 +18887,8 @@ async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
   await _emitAdminOnlyChatNote(userId, username,
     `🎡 RULETA DIARIA: ganó ${premioTxt} (${pick.label}). Tiene ${claimHours} h para RECLAMARLO desde la app (vence ${venceTxt}). Cuando lo reclame: ${prizeARS > 0 ? 'la carga aparece en "Pendientes GANAMOS" y en Ruleta diaria' : 'te aparece en Ruleta diaria y el modal Depositar te sugiere el % en su próxima carga'}.`).catch(() => {});
   logger.info(`[ROULETTE] ${username} → ${premioTxt} POR RECLAMAR hasta ${claimExpiresAt.toISOString()} (${dateKey})`);
-  return { http: 200, body: { success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji, claimHours } } };
+  return { http: 200, body: { success: true, spinsLeft: _spinsLeftNow, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji, claimHours } } };
 }
-
-// #199 POST /api/admin/roulette/spin-as — GIRO REAL a nombre de un usuario, salteando
-// los requisitos (app instalada / cargas mínimas). Es para PROBAR el flujo completo
-// (mensaje "ganaste", reclamo, Pendientes GANAMOS) sin la app instalada. Escribe el
-// spin del día del usuario como si hubiera girado él. Con `reset:true` borra antes el
-// giro de HOY de ese usuario (para repetir la prueba). Sólo admin general.
-app.post('/api/admin/roulette/spin-as', authMiddleware, adminMiddleware, async (req, res) => {
-  try {
-    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin general puede girar por un usuario.' });
-    const username = String((req.body && req.body.username) || '').trim();
-    if (!username) return res.status(400).json({ error: 'Falta username' });
-    const u = await findUserByUsernameCI(username, { select: 'id username role', lean: true });
-    if (!u) return res.status(404).json({ error: `Usuario "${username}" no encontrado` });
-    if (u.role && u.role !== 'user') return res.status(400).json({ error: 'Solo se puede girar por cuentas de clientes.' });
-    const dateKey = _rouletteDateKeyART();
-    if (req.body && req.body.reset) {
-      const del = await DailyRouletteSpin.deleteOne({ userId: u.id, dateKey, status: { $in: ['no_prize', 'claim_pending', 'expired'] } });
-      if (!del.deletedCount) {
-        const exists = await DailyRouletteSpin.findOne({ userId: u.id, dateKey }).lean();
-        if (exists) return res.status(409).json({ error: `El giro de hoy de ${u.username} ya fue reclamado/cargado (${exists.status}); no se borra. Probá con otro usuario o mañana.` });
-      }
-    }
-    const rcfg = await getDailyRouletteConfig();
-    const r = await _rouletteSpinCore({ userId: u.id, username: u.username, dateKey, rcfg, ip: 'admin:' + req.user.username, ua: 'panel spin-as' });
-    if (r.http === 200) {
-      await _emitAdminOnlyChatNote(u.id, u.username, `🧪 GIRO DE PRUEBA desde el panel por ${req.user.username}: ${r.body.prize && r.body.prize.prizeLabel ? r.body.prize.prizeLabel : '—'}. Es un giro REAL a nombre del cliente (salteó el requisito de la app).`).catch(() => {});
-      logger.info(`[ROULETTE] spin-as ${u.username} por ${req.user.username}: ${JSON.stringify(r.body.prize || {})}`);
-    }
-    return res.status(r.http).json({ ...r.body, username: u.username, spinAs: true });
-  } catch (err) {
-    logger.error(`/api/admin/roulette/spin-as: ${err.message}`);
-    res.status(500).json({ error: 'Error del servidor' });
-  }
-});
 
 // POST /api/roulette/spin — el user gira la ruleta del día.
 app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
@@ -18934,17 +18900,18 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
     // Gate: PWA instalada (token FCM en contexto standalone), si la config lo exige.
     const rcfg = await getDailyRouletteConfig();
     const u = await User.findOne({ id: userId }, { fcmTokenContext: 1, fcmTokens: 1 }).lean();
-    if (rcfg.requireApp && !_rouletteHasAppInstalled(u)) {
+    const isTest = _rouletteIsTestUser(rcfg, username); // #200
+    if (!isTest && rcfg.requireApp && !_rouletteHasAppInstalled(u)) {
       return res.status(403).json({
         error: 'Solo podés girar si tenés la app instalada con notificaciones aceptadas.',
         needsAppNotifs: true
       });
     }
     // Gate: solo clientes ACTIVOS (más de N cargas en los últimos 30 días; N del panel).
-    const act = await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d);
+    const act = isTest ? { active: true, count: null } : await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d, rcfg.minCargasDays);
     if (!act.active) {
       return res.status(403).json({
-        error: `La ruleta es solo para clientes activos. Necesitás más de ${rcfg.minCargas30d} cargas en los últimos 30 días (llevás ${act.count == null ? '?' : act.count}).`,
+        error: `La ruleta es solo para clientes activos. Necesitás más de ${rcfg.minCargas30d} cargas en los últimos ${rcfg.minCargasDays} días (llevás ${act.count == null ? '?' : act.count}).`,
         needsActive: true,
         minCargas: rcfg.minCargas30d,
         cargas30d: act.count

@@ -21,6 +21,9 @@ const spinSchema = new mongoose.Schema({
 
   // YYYY-MM-DD en hora Argentina (ART, UTC-3). Computado server-side.
   dateKey: { type: String, required: true, index: true },
+  // #200 número de giro del día (1..spinsPerDay de la config). El índice único es
+  // (userId, dateKey, seq): con spinsPerDay=1 sigue siendo 1 giro por día.
+  seq: { type: Number, default: 1, min: 1 },
 
   spunAt: { type: Date, default: Date.now, immutable: true, index: true },
 
@@ -68,15 +71,14 @@ const spinSchema = new mongoose.Schema({
   creditAttempts: { type: Number, default: 0 }
 }, { timestamps: true });
 
-// Garantiza 1 spin/día por user — incluso con race / reinstall.
+// #200 Garantiza spinsPerDay giros/día por user — incluso con race / reinstall. Los
+// índices viejos `unique_userid_datekey` / `unique_username_datekey` (1/día fijo) los
+// borra server.js al arrancar (migración one-shot).
 spinSchema.index(
-  { userId: 1, dateKey: 1 },
-  { name: 'unique_userid_datekey', unique: true }
+  { userId: 1, dateKey: 1, seq: 1 },
+  { name: 'unique_userid_datekey_seq', unique: true }
 );
-spinSchema.index(
-  { username: 1, dateKey: 1 },
-  { name: 'unique_username_datekey', unique: true }
-);
+spinSchema.index({ username: 1, dateKey: 1 });
 
 module.exports = mongoose.models['DailyRouletteSpin'] ||
   mongoose.model('DailyRouletteSpin', spinSchema);

@@ -10236,69 +10236,6 @@ async function resetRouletteDaily() {
 // Probar el giro de la ruleta a nombre de un user (simulación) — no
 // afecta el spin real ni acredita plata. Solo muestra qué premio le
 // habría salido con la tabla de probabilidades vigente.
-// #199 Giro REAL a nombre de un usuario (prueba del flujo sin la app instalada).
-async function rouletteSpinAs() {
-    const username = (document.getElementById('rouletteSpinAsUsername')?.value || '').trim();
-    const reset = !!document.getElementById('rouletteSpinAsReset')?.checked;
-    const box = document.getElementById('rouletteSpinAsResult');
-    if (!username) { if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Falta el username</div>'; return; }
-    if (!confirm('¿Hacer el giro de HOY a nombre de @' + username + '? Es un giro REAL: si gana, el cliente ve el premio y puede reclamarlo.' + (reset ? '\n\nSe borra antes su giro de hoy (si no fue reclamado).' : ''))) return;
-    if (box) box.innerHTML = '<div style="color:#aaa;text-align:center;padding:6px;font-size:12px;">⏳ Girando…</div>';
-    try {
-        const r = await rouletteAuthFetch('/api/admin/roulette/spin-as', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, reset }) });
-        const d = await r.json();
-        if (!r.ok || !d.success) { if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>'; return; }
-        const p = d.prize || {};
-        const won = (p.prizeARS || 0) > 0 || (p.prizeType === 'percent' && p.prizePct > 0);
-        const premio = p.prizeType === 'percent' ? '+' + p.prizePct + '% próx. carga' : (p.prizeARS > 0 ? '$' + Number(p.prizeARS).toLocaleString('es-AR') : 'SIN PREMIO');
-        if (box) box.innerHTML = '<div style="background:' + (won ? 'rgba(255,215,0,0.10)' : 'rgba(255,255,255,0.04)') + ';border:1.5px solid ' + (won ? '#ffd700' : 'rgba(255,255,255,0.18)') + ';border-radius:9px;padding:10px 12px;display:flex;align-items:center;gap:10px;">' +
-            '<div style="font-size:30px;line-height:1;">' + (p.emoji || '🎲') + '</div><div style="flex:1;">' +
-            '<div style="color:' + (won ? '#ffd700' : '#888') + ';font-weight:900;font-size:14px;">' + escapeHtml(p.prizeLabel || premio) + ' · ' + escapeHtml(premio) + '</div>' +
-            '<div style="color:#aaa;font-size:11px;">Giro REAL a nombre de <strong>@' + escapeHtml(d.username) + '</strong>' + (won ? ' · por reclamar hasta ' + escapeHtml(p.claimExpiresAt ? fmtFechaHoraAR(p.claimExpiresAt) : '') + ' (le llegó el mensaje al chat)' : '') + '</div></div></div>';
-        showToast(won ? '🎡 Ganó ' + premio + ' — ahora tiene que RECLAMAR desde la app' : '🎡 Sin premio', won ? 'success' : 'info');
-        loadRouletteAdmin();
-    } catch (e) { if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Error: ' + escapeHtml(e.message || '') + '</div>'; }
-}
-window.rouletteSpinAs = rouletteSpinAs;
-
-async function rouletteTestSpin() {
-    const username = (document.getElementById('rouletteTestUsername')?.value || '').trim();
-    const box = document.getElementById('rouletteTestResult');
-    if (!username) {
-        if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Falta el username</div>';
-        return;
-    }
-    if (box) box.innerHTML = '<div style="color:#aaa;text-align:center;padding:6px;font-size:12px;">⏳ Girando…</div>';
-    try {
-        const r = await rouletteAuthFetch('/api/admin/roulette/test-spin', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ username })
-        });
-        const d = await r.json();
-        if (!r.ok || !d.success) {
-            if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>';
-            return;
-        }
-        const won = (d.prize.prizeARS || 0) > 0;
-        const color = won ? '#ffd700' : '#888';
-        const bg = won ? 'rgba(255,215,0,0.10)' : 'rgba(255,255,255,0.04)';
-        const border = won ? '#ffd700' : 'rgba(255,255,255,0.18)';
-        if (box) {
-            box.innerHTML =
-                '<div style="background:' + bg + ';border:1.5px solid ' + border + ';border-radius:9px;padding:10px 12px;display:flex;align-items:center;gap:10px;">' +
-                    '<div style="font-size:30px;line-height:1;">' + (d.prize.emoji || '🎲') + '</div>' +
-                    '<div style="flex:1;">' +
-                        '<div style="color:' + color + ';font-weight:900;font-size:14px;">' + escapeHtml(d.prize.prizeLabel) + (won ? ' · $' + Number(d.prize.prizeARS).toLocaleString('es-AR') : '') + '</div>' +
-                        '<div style="color:#aaa;font-size:11px;">A nombre de <strong>@' + escapeHtml(d.username) + '</strong> · peso ' + d.prize.weight + ' · simulación, no afecta nada real.</div>' +
-                    '</div>' +
-                '</div>';
-        }
-    } catch (e) {
-        if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Error: ' + escapeHtml(e.message || '') + '</div>';
-    }
-}
-
 // #188 ===== Premios y elegibilidad de la ruleta (editables) =====
 let _rouletteGlobalRollover = null;
 function _rpRowHtml(p) {
@@ -10359,6 +10296,9 @@ async function loadRoulettePrizes() {
         tb.innerHTML = '';
         (d.prizes || []).forEach(p => tb.insertAdjacentHTML('beforeend', _rpRowHtml(p)));
         const mc = document.getElementById('rouletteMinCargas'); if (mc) mc.value = d.minCargas30d;
+        const md = document.getElementById('rouletteMinCargasDays'); if (md) md.value = d.minCargasDays || 30; // #200
+        const sp = document.getElementById('rouletteSpinsPerDay'); if (sp) sp.value = d.spinsPerDay || 1;      // #200
+        const tu = document.getElementById('rouletteTestUsers'); if (tu) tu.value = (d.testUsers || []).join(', '); // #200
         const ra = document.getElementById('rouletteRequireApp'); if (ra) ra.checked = d.requireApp !== false;
         roulettePrizesChanged();
     } catch (_) {}
@@ -10367,7 +10307,14 @@ async function saveRoulettePrizes() {
     const prizes = _rpRead();
     if (!prizes.length) { showToast('Agregá al menos un premio', 'error'); return; }
     if (!prizes.some(p => p.type === 'none')) { if (!confirm('No hay ningún "Sin premio": TODOS los giros van a ganar algo. ¿Guardar igual?')) return; }
-    const body = { prizes, minCargas30d: Number((document.getElementById('rouletteMinCargas') || {}).value) || 0, requireApp: !!(document.getElementById('rouletteRequireApp') || {}).checked };
+    const body = {
+        prizes,
+        minCargas30d: Number((document.getElementById('rouletteMinCargas') || {}).value) || 0,
+        minCargasDays: Number((document.getElementById('rouletteMinCargasDays') || {}).value) || 30, // #200
+        spinsPerDay: Number((document.getElementById('rouletteSpinsPerDay') || {}).value) || 1,      // #200
+        testUsers: (document.getElementById('rouletteTestUsers') || {}).value || '',                  // #200
+        requireApp: !!(document.getElementById('rouletteRequireApp') || {}).checked
+    };
     try {
         const r = await rouletteAuthFetch('/api/admin/roulette/config', { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
         const d = await r.json().catch(() => ({}));

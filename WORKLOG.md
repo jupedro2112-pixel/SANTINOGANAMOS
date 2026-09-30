@@ -37,6 +37,37 @@
 
 ---
 
+## Sesión 2026-09-30 (2ª) — Ruleta: probar como cliente (usuarios de prueba) + elegibilidad configurable (cargas en N días, giros por día)
+
+### 200. Se van los giros desde el panel; "usuarios de prueba" giran desde la app sin PWA; cargas mínimas en un lapso editable; giros por día
+- **Pedido:** "quiero girar y ver la ruleta como se ve del lado del usuario, no un giro del
+  admin (eso sacalo)" + "cambiar el lapso de días, la cantidad de giros y la cantidad de
+  cargas en el lapso que elijamos".
+- **Fuera:** `POST /api/admin/roulette/spin-as` (#199) y el simulador `test-spin` con sus
+  dos bloques del panel (`rouletteSpinAs`, `rouletteTestSpin`).
+- **Usuarios de prueba:** `Config['dailyRoulette'].testUsers` (textarea en la card de
+  premios/elegibilidad, hasta 50 usernames). `_rouletteIsTestUser`: en `status` y `spin`
+  saltan el requisito de la app y las cargas mínimas → el owner entra a la app con ese
+  usuario (aunque sea en el navegador/Tor) y gira de verdad, viendo exactamente lo que ve
+  el cliente. Para repetir: "Reiniciar ruleta diaria" o subir los giros por día.
+- **Elegibilidad:** `minCargasDays` (1–365, default 30) — `_rouletteIsActiveClient(userId,
+  username, minCargas, days)`; el panel dice "Cargas mínimas (más de) N en los últimos D
+  días"; la app y el 403 del spin muestran el lapso real (`minCargasDays`).
+- **Giros por día:** `spinsPerDay` (1–20, default 1). `DailyRouletteSpin.seq` nuevo y el
+  índice único pasa a `(userId, dateKey, seq)` (`unique_userid_datekey_seq`); los índices
+  viejos `unique_userid_datekey`/`unique_username_datekey` se borran al arrancar
+  (migración idempotente). `status` devuelve `spinsPerDay`, `spinsToday`, `spinsLeft`,
+  `alreadySpun = spinsLeft === 0` y `spin` = el ÚLTIMO de hoy; el núcleo del giro cuenta
+  los de hoy, asigna `seq` y devuelve `spinsLeft`. PWA: "N giros por día", "Te quedan N
+  giros hoy", después de ganar con giros restantes muestra el premio y el botón de girar;
+  celda "N GIROS HOY".
+- **Validado:** `node --check` (server, modelo, roulette.js, admin.js, SWs), `check-tdz` ✅.
+  ⚠️ Durante la edición se borró por error la cola del handler `/api/claims-feed`; se
+  restauró desde HEAD antes de commitear (revisar en deploy que el ticker del login cargue).
+  **Probar en deploy:** panel → Ruleta → poner tu usuario en "Usuarios de PRUEBA" y
+  guardar → entrar a la app con ese usuario → RULETA → girar; cambiar giros por día a 3 y
+  ver "Te quedan 2 giros hoy"; cambiar lapso a 7 días y ver el texto en la celda bloqueada.
+
 ## Sesión 2026-09-30 — Ruleta en el menú, fila superior completa (usuario + banner) y giro de prueba desde el panel
 
 ### 199. Menú ☰ con "Ruleta diaria"; fila superior con RULETA + USUARIO (mi cuenta) + banner GANAMOS rotativo; "Girar por un usuario" en el panel
