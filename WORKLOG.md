@@ -37,6 +37,52 @@
 
 ---
 
+## Sesión 2026-09-29 (9ª) — Réplica #172/#173 del gemelo: lotes con tope del %, bono canjeado vence a las 24 h, resumen por lote
+
+### 198. Lotes con regalo %: tope con la regla del bono app, `useHours` tras el canje, mensaje de código ajeno, resumen canjeó/cargó/venció
+- **Origen:** paquete `~/Documents/AUTOREEMBOLSOSjygactivo/docs/replicas/README-2026-09-29-lotes.md`
+  + `.patch` (WORKLOG #172 y #173 del gemelo, plataforma JUGAYGANA). Portado sin nada de
+  JUGAYGANA: la acreditación va por el camino de este repo (bono en la propia carga).
+- **Adaptación clave (este repo NO tenía "lote % automático"):** acá el % de lote era sólo
+  cartel verde para que el agente lo sumara a mano. El equivalente fiel del gemelo es que
+  el SISTEMA lo aplique en la carga, igual que el bono app y la ruleta (#189): `_pendingBonusFor`
+  suma el PromoBonus de lote vigente con **`_loteBonusAmount(amount, pct, cfg)`** (cfg =
+  `getInstallBonusConfig()` → `{pct, capArs, excessPct}`; % del lote hasta `capArs`, el
+  excedente al `min(pct, excessPct)`; capArs 0 = sin tope) tanto en la carga manual como en
+  hgcash; `_settlePendingBonuses` marca el PromoBonus `used` (`cargaMonto`, **`bonoMonto`**
+  nuevo) y deja la nota "⚡ BONO DE LOTE AUTOMÁTICO aplicado… +100% (100% hasta $5.000, el
+  resto al 20%) = $X … No hay que marcar nada". **`_loteCapTxt`** en la nota, en el cartel
+  verde (`capTxt` en `GET /api/admin/promo-bonus`, que también devuelve `username` y
+  `sourceRuleId`) y en la sugerencia del modal Depositar (parte 🎟️ "+X% del lote"). Cache
+  de módulo `_installBonusCfgCache` para los textos sync.
+- **Sin equivalente acá (no se inventó):** `_inDailyWindow` (franja horaria) y `applyMode
+  auto/agent` no existen en este repo → no hay nada que tocar; queda documentado.
+- **`_tryClaimNotifBatchCode`:** cuenta fuera de la lista → "Este código no es para tu
+  cuenta: el lote se envió a otros usuarios." (antes "no es válido").
+- **`NotifBatch.useHours`** (default 24, 1–168; POST lee `b.useHours`). `_nbBonusExpiresAt`:
+  en modo código el PromoBonus vence a `canje + useHours`; en 'window' sigue el lote. El
+  mensaje de canje dice "Válido hasta" con la fecha real del bono; el aviso del código con %
+  agrega "(una vez canjeado, tenés Xhs para usarlo en tu carga)" dentro de `{gift}`.
+- **`GET /api/admin/notif-batches`:** proyecta `useHours` y suma por lote (aggregate de
+  PromoBonus `sourceRuleCode:'lote'`) `usados` (status used), `activos`, `vencidos`,
+  `bonoTotal` (Σ bonoMonto). **`GET …/:id`:** vence en DB los bonos pasados, cada
+  destinatario trae `outcome` (used|active|expired|cancelled), `bonusExpiresAt`,
+  `cargaMonto`, `bonoMonto`, y `summary` {total, canjearon, usaron, activos, vencidos,
+  cancelados, bonoTotal}. (Este repo no tiene `usesCount/usesTotalBonus`: usado = status.)
+- **Panel (admin-sw v45):** input `nbUseHours` ("⏱ Horas para usarlo tras canjear", sólo
+  código + %), enviado como `useHours`; fila del lote (% ) con "N cargaron ($X) · N activos ·
+  N vencidos sin usar · ⏱ Nhs para usar"; "Ver lote" arranca con el resumen y cada fila
+  usa `outcome` ("canjeó dd/mm hh:mm · cargó con el bono … · carga $X · bono $Y · lo aplicó
+  Z" / "activo · vence …" / "venció sin usar (…)" / "cancelado o reemplazado"); cartel verde
+  con el tope y "lo aplica el SISTEMA solo al cargar"; ayuda del lote actualizada.
+- **Validado:** `node --check` (server.js, modelos, admin.js, admin-sw), `check-tdz` ✅.
+  Sin server local. **Checklist post-deploy:** lote % 100% + carga manual de $10.000 con
+  tope $5.000/20% → bono sugerido y aplicado $6.000, nota "(100% hasta $5.000, el resto al
+  20%)"; lote código + % con horas=1 → canjear → "Válido hasta" una hora después → sin
+  cargar, "Ver lote" lo marca "venció sin usar"; canjear y cargar → "1 cargaron ($X)" y
+  "cargó con el bono"; canjear con cuenta fuera de la lista → "Este código no es para tu
+  cuenta…"; transferencia hgcash con lote vigente → bono con tope y PromoBonus usado.
+
 ## Sesión 2026-09-29 (8ª) — Ruleta diaria: RECLAMO del premio con vencimiento + vista del agente
 
 ### 197. La ruleta está activa; premios "por reclamar" (N horas desde COMANDOS), requisito app+notifs visible, sección admin con reclamos por tipo y acciones del agente

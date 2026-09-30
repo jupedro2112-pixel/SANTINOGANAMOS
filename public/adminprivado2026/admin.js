@@ -4656,6 +4656,16 @@ function renderDepositPendingBonus() {
         suggested += b;
         parts.push('🎡 <b>+' + u.dailyRoulettePendingPct + '% de la ruleta diaria</b> (pendiente)' + (amount > 0 ? ' → <b>' + money(b) + '</b>' : ''));
     }
+    // #198 (réplica #172): % de LOTE vigente → lo aplica el sistema con el tope del bono app.
+    const lb = window._chatPromoBonus;
+    if (lb && lb.sourceRuleCode === 'lote' && Number(lb.percent) > 0 && (!lb.username || !u.username || String(lb.username).toLowerCase() === String(u.username).toLowerCase())) {
+        const r = u.installBonusRule || { pct: 100, capArs: 5000, excessPct: 20 };
+        const p = Number(lb.percent), cap = r.capArs > 0 ? r.capArs : amount, exPct = Math.min(p, Number(r.excessPct) || 0);
+        const base = Math.min(amount, cap), excess = Math.max(0, amount - cap);
+        const b = Math.round(base * p / 100 + excess * exPct / 100);
+        suggested += b;
+        parts.push('🎟️ <b>+' + p + '% del lote</b>' + escapeHtml(lb.capTxt || '') + ' (vigente)' + (amount > 0 ? ' → <b>' + money(b) + '</b>' + (excess > 0 && exPct < p ? ' (' + money(base) + ' al ' + p + '% + ' + money(excess) + ' al ' + exPct + '%)' : '') : ''));
+    }
     if (!parts.length) { group.style.display = 'none'; _depositSuggestedBonus = null; return; }
     group.style.display = '';
     hint.innerHTML = parts.join('<br>') + (amount > 0 ? '<div style="margin-top:6px;color:#7fffb0;font-weight:800;">Bono: ' + money(suggested) + ' — lo aplica el SISTEMA solo al cargar (aunque pongas otro bono o ninguno) y queda marcado como usado.</div>' : '<div style="margin-top:4px;color:#aaa;">Escribí el monto y te muestro el bono que va a aplicar el sistema.</div>');
@@ -7155,7 +7165,7 @@ function toggleNbHelp() {
 function _nbHelpHtml() {
     return '<strong style="color:#d4af37">❓ Cómo funciona el lote con regalo</strong><br><br>' +
         '<strong>💸 ¿Quién pone la plata?</strong><br>' +
-        '· <strong>％ en la carga</strong>: el regalo lo aplicás VOS — al activarse, en el chat del cliente te aparece el CARTEL VERDE de siempre: sumale el % en su próxima carga y tocá "✓ Marcar usado".<br>' +
+        '· <strong>％ en la carga</strong>: lo aplica el SISTEMA solo al cargar (carga manual o transferencia automática), con el MISMO tope del bono por instalar la app (el % del lote hasta el tope; el resto de la carga al % menor). El cartel verde del chat te lo muestra y el modal Depositar te sugiere el monto. Con código, una vez canjeado el cliente tiene las "⏱ horas para usarlo" (default 24) o el bono vence.<br>' +
         (window._platformMode === 'manual'
             ? '· <strong>💵 Fichas</strong>: quedan como tarea PENDIENTE en "Pendientes GANAMOS" para que un agente las cargue en el panel de GANAMOS; el cliente recibe el aviso cuando la marcás ✅ Hecha.<br><br>'
             : '· <strong>💵 Fichas</strong>: se acreditan SOLAS por la API (con el rollover que elijas). No tenés que hacer NADA — te llega una nota gris al chat avisando.<br><br>') +
@@ -7191,6 +7201,7 @@ function nbFormChanged() {
     const mode = document.querySelector('input[name="nbMode"]:checked')?.value || 'code';
     const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
     show('nbCodeWrap', mode === 'code');
+    show('nbUseHoursWrap', mode === 'code' && gift === 'percent'); // #198 horas para usar el bono tras canjear (solo código + %)
     show('nbRolloverWrap', gift === 'fixed' && window._platformMode !== 'manual'); // #196 GANAMOS sin rollover
     const lbl = document.getElementById('nbAmountLabel');
     if (lbl) lbl.textContent = gift === 'fixed' ? 'Monto ($ fichas)' : 'Monto (%)';
@@ -7219,6 +7230,7 @@ function _nbCollectBody() {
         giftType: gift,
         amount: Number(document.getElementById('nbAmount')?.value || 0),
         validHours: Number(document.getElementById('nbValidHours')?.value || 24),
+        useHours: Number(document.getElementById('nbUseHours')?.value) || 24, // #198
         title: document.getElementById('nbTitle')?.value.trim() || '',
         message: document.getElementById('nbMessage')?.value.trim() || '',
         audienceType: aud
@@ -7383,6 +7395,11 @@ function _nbBatchRowHtml(b) {
                 (b.name ? ' · ' + escapeHtml(b.name) : '') +
                 (b.isPublic ? '' : ' · 👥 ' + (b.total || 0) + ' · entregadas ' + (b.delivered || 0) + ' · canjes ' + (b.claimed || 0) +
                     (b.giftType === 'fixed' ? ' · 💰 ' + (b.credited || 0) + ' acreditados' : '')) +
+                // #198 (réplica #173) resultado de los bonos %: cargaron con él / todavía activos / vencidos sin usar
+                (b.giftType === 'percent' ? ' · <span style="color:#7fd7ff;">' + (b.usados || 0) + ' cargaron' + (b.bonoTotal > 0 ? ' ($' + Number(b.bonoTotal).toLocaleString('es-AR') + ')' : '') + '</span>' +
+                    ' · <span style="color:#00ff88;">' + (b.activos || 0) + ' activos</span>' +
+                    ' · <span style="color:#ff9d76;">' + (b.vencidos || 0) + ' vencidos sin usar</span>' +
+                    (b.mode === 'code' && b.useHours ? ' · ⏱ ' + b.useHours + 'hs para usar' : '') : '') +
                 progreso + sinNotis + '</div>' +
         '</div>' +
         '<button class="btn btn-secondary btn-sm" onclick="nbShowDetail(\'' + b.id + '\')">👥 Ver lote</button>' +
@@ -7399,6 +7416,8 @@ async function nbShowDetail(id) {
         if (!r.ok) { cont.innerHTML = '<span style="color:#ff6b6b">' + escapeHtml(j.error || 'Error') + '</span>'; return; }
         const b = j.batch;
         const all = b.recipients || [];
+        const sm = j.summary || {};
+        const fx = (d) => d ? new Date(d).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : '';
         // Render capado a 400 filas para no colgar el DOM con lotes gigantes.
         const rows = all.slice(0, 400);
         const more = all.length - rows.length;
@@ -7417,15 +7436,29 @@ async function nbShowDetail(id) {
                 if (rcp.claimedAt) return '⏳ acreditando';
                 return b.mode === 'code' ? 'sin canjear' : '⏳';
             }
-            if (rcp.bonusStatus === 'active') return '🎁 bono ACTIVO';
-            if (rcp.bonusStatus === 'used') return '✔ usado por ' + escapeHtml(rcp.usedBy || '-');
-            if (rcp.bonusStatus === 'expired') return '⏰ vencido';
-            return rcp.claimedAt ? 'canjeado' : 'sin canjear';
+            // #198 (réplica #173): canjeó · cargó con el bono · activo · venció sin usar · cancelado.
+            const canje = rcp.claimedAt ? '<span style="color:#aaa;">canjeó ' + fx(rcp.claimedAt) + '</span> · ' : '';
+            const usoTxt = (rcp.usedAt ? ' ' + fx(rcp.usedAt) : '') + (rcp.cargaMonto > 0 ? ' · carga $' + Number(rcp.cargaMonto).toLocaleString('es-AR') : '') + (rcp.bonoMonto > 0 ? ' · bono $' + Number(rcp.bonoMonto).toLocaleString('es-AR') : '');
+            if (rcp.outcome === 'used') return canje + '<span style="color:#7fd7ff;">✔ cargó con el bono · lo aplicó ' + escapeHtml(rcp.usedBy || '-') + usoTxt + '</span>';
+            if (rcp.outcome === 'active') return canje + '<span style="color:#00ff88;">🎁 bono ACTIVO · vence ' + fx(rcp.bonusExpiresAt) + '</span>';
+            if (rcp.outcome === 'expired') return canje + '<span style="color:#ff9d76;">⏰ venció sin usar (' + fx(rcp.bonusExpiresAt) + ')</span>';
+            if (rcp.outcome === 'cancelled') return canje + '<span style="color:#888;">✕ cancelado o reemplazado por otro bono</span>';
+            return rcp.claimedAt ? 'canjeado ' + fx(rcp.claimedAt) : 'sin canjear';
         };
+        const resumen = (b.giftType === 'percent')
+            ? '<div style="display:flex;gap:.6rem;flex-wrap:wrap;font-size:.78rem;margin-bottom:.4rem;">' +
+                '<span style="color:#ccc;">🔑 canjearon <b>' + (sm.canjearon || 0) + '</b></span>' +
+                '<span style="color:#7fd7ff;">⚡ cargaron con el bono <b>' + (sm.usaron || 0) + '</b>' + (sm.bonoTotal > 0 ? ' ($' + Number(sm.bonoTotal).toLocaleString('es-AR') + ' regalados)' : '') + '</span>' +
+                '<span style="color:#00ff88;">🎁 activos <b>' + (sm.activos || 0) + '</b></span>' +
+                '<span style="color:#ff9d76;">⏰ vencidos sin usar <b>' + (sm.vencidos || 0) + '</b></span>' +
+                (sm.cancelados ? '<span style="color:#888;">✕ cancelados/reemplazados <b>' + sm.cancelados + '</b></span>' : '') +
+                (b.mode === 'code' && b.useHours ? '<span style="color:#aaa;">⏱ ' + b.useHours + 'hs para usar tras canjear</span>' : '') +
+              '</div>'
+            : '';
         const head = '<div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.4rem;margin-bottom:.5rem">' +
             '<strong style="color:#d4af37">👥 Detalle: ' + escapeHtml(b.name || (b.code ? 'código ' + b.code : b.id.slice(0, 8))) + '</strong>' +
             '<button class="btn btn-secondary btn-sm" onclick="document.getElementById(\'nbDetailContainer\').innerHTML=\'\'">✕ Cerrar</button></div>';
-        cont.innerHTML = head +
+        cont.innerHTML = head + resumen +
             '<table class="data-table" style="font-size:.8rem"><thead><tr><th>Usuario</th><th>Canal</th><th>Entrega</th><th>Estado del regalo</th></tr></thead><tbody>' +
             rows.map((rcp) => '<tr><td>' + escapeHtml(rcp.username) + '</td><td>' + canalIc(rcp.channel) + '</td><td>' + entrega(rcp) + '</td><td>' + estado(rcp) + '</td></tr>').join('') +
             '</tbody></table>' +
@@ -11641,6 +11674,8 @@ async function loadChatPromoBonus(username) {
         const r = await authFetch('/api/admin/promo-bonus?username=' + encodeURIComponent(username));
         const j = await r.json();
         const b = j && j.bonus;
+        window._chatPromoBonus = b || null; // #198 lo usa el modal Depositar para sugerir el % de lote con tope
+        if (typeof renderDepositPendingBonus === 'function') { try { renderDepositPendingBonus(); } catch (_) {} }
         if (!b) {
             el.style.background = 'rgba(120,120,120,0.18)';
             el.innerHTML = '<span style="color:#bbb;">🚫 Sin promoción vigente para este cliente.</span>';
@@ -11659,12 +11694,12 @@ async function loadChatPromoBonus(username) {
         const esRegalo = Number(b.montoFijoARS) > 0 && !(Number(b.percent) > 0);
         const titulo = esRegalo
             ? 'REGALO PENDIENTE: $' + Number(b.montoFijoARS).toLocaleString('es-AR') + ' — sumáselo en su próxima carga'
-            : 'BONO VIGENTE: ' + b.percent + '% en la carga';
+            : 'BONO VIGENTE: ' + b.percent + '% en la carga' + escapeHtml(b.capTxt || ''); // #198 tope del % de lote
         el.style.background = 'linear-gradient(90deg,#0f8a2f,#0a6b25)';
         el.innerHTML = '<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;color:#fff;">' +
             '<span style="font-size:18px;">🎁</span>' +
             '<div style="flex:1;min-width:120px;"><strong style="font-size:13px;">' + titulo + '</strong>' +
-            '<div style="font-size:11px;opacity:0.9;">' + vence + ' · ' + origen + '</div></div>' +
+            '<div style="font-size:11px;opacity:0.9;">' + vence + ' · ' + origen + (b.sourceRuleCode === 'lote' && Number(b.percent) > 0 ? ' · ⚡ lo aplica el SISTEMA solo al cargar (con el tope)' : '') + '</div></div>' +
             '<button onclick="markChatPromoBonusUsed(\'' + b.id + '\')" style="background:#fff;color:#0a7a2f;border:none;border-radius:7px;padding:6px 11px;font-weight:800;font-size:11.5px;cursor:pointer;">✓ Marcar usado</button>' +
             '</div>';
     } catch (e) {

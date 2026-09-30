@@ -53,6 +53,10 @@ const notifBatchSchema = new mongoose.Schema({
   maxClaims: { type: Number, default: null },
   // UN solo reloj por lote: expiresAt = sentAt + validHours.
   validHours: { type: Number, required: true, min: 1 },
+  // #198 (réplica #173, owner 2026-09-29): en modo 'code' con % — horas que tiene el
+  // cliente para USAR el bono DESPUÉS de canjearlo (default 24). Vencido ese plazo el
+  // PromoBonus queda 'expired' aunque el lote siga vigente para canjear.
+  useHours: { type: Number, default: 24, min: 1 },
   sentAt: { type: Date, default: Date.now, index: true },
   expiresAt: { type: Date, required: true, index: true },
   title: { type: String, default: '', trim: true, maxlength: 100 },

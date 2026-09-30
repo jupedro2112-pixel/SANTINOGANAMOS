@@ -8902,7 +8902,7 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
         await _settlePendingBonuses(user, req.user.username, { amount: Number(amount), bonus: Number(bonus) });
         if (_autoBonus && _autoBonus.replaced) {
           await _emitAdminOnlyChatNote(user.id, user.username,
-            `🤖 BONO AUTOMÁTICO: la carga de $${Number(amount).toLocaleString('es-AR')} salió con $${Number(bonus).toLocaleString('es-AR')} de bono (${_autoBonus.parts.map(p => (p.kind === 'install' ? 'bono instalar app ' + p.pct + '%' : 'ruleta +' + p.pct + '%') + ' = $' + p.amount.toLocaleString('es-AR')).join(' + ')}) en vez de los $${Number(_autoBonus.agentBonus).toLocaleString('es-AR')} que había puesto ${req.user.username}. El bono pendiente lo calcula y aplica el sistema.`).catch(() => {});
+            `🤖 BONO AUTOMÁTICO: la carga de $${Number(amount).toLocaleString('es-AR')} salió con $${Number(bonus).toLocaleString('es-AR')} de bono (${_autoBonus.parts.map(p => (p.kind === 'install' ? 'bono instalar app ' + p.pct + '%' : p.kind === 'lote' ? 'lote +' + p.pct + '%' + (p.capTxt || '') : 'ruleta +' + p.pct + '%') + ' = $' + p.amount.toLocaleString('es-AR')).join(' + ')}) en vez de los $${Number(_autoBonus.agentBonus).toLocaleString('es-AR')} que había puesto ${req.user.username}. El bono pendiente lo calcula y aplica el sistema.`).catch(() => {});
         }
       }
 
@@ -11487,16 +11487,36 @@ const INSTALL_BONUS_AMOUNT = 5000;
 // Config['installBonus'] = { pct, capArs, excessPct }, editable desde el panel
 // (Config → "📲 Bono por instalar la app"). Sin cache (multi-instancia).
 const INSTALL_BONUS_RULE_DEFAULT = { pct: 100, capArs: 5000, excessPct: 20 };
+let _installBonusCfgCache = { ...INSTALL_BONUS_RULE_DEFAULT }; // #198 última config leída (para textos sync)
 async function getInstallBonusConfig() {
   const d = INSTALL_BONUS_RULE_DEFAULT;
   try {
     const raw = await getConfig('installBonus', null);
     if (raw && typeof raw === 'object') {
       const n = (v, def, max) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= max ? x : def; };
-      return { pct: n(raw.pct, d.pct, 500), capArs: n(raw.capArs, d.capArs, 100000000), excessPct: n(raw.excessPct, d.excessPct, 500) };
+      return (_installBonusCfgCache = { pct: n(raw.pct, d.pct, 500), capArs: n(raw.capArs, d.capArs, 100000000), excessPct: n(raw.excessPct, d.excessPct, 500) });
     }
   } catch (_) {}
-  return { ...d };
+  return (_installBonusCfgCache = { ...d });
+}
+// #198 (réplica #172 del gemelo, owner 2026-09-29): el % de un LOTE respeta el MISMO tope
+// que el bono por instalar la app: el % del lote aplica hasta `capArs` y el excedente de
+// la carga se bonifica al `excessPct`, nunca más que el % del lote. Ej.: lote 100%,
+// carga $10.000, tope $5.000/20% → $5.000 al 100% + $5.000 al 20% = $6.000 (antes
+// $10.000). Lote 20% → 20% de todo. capArs 0 = sin tope.
+function _loteBonusAmount(amount, pct, cfg) {
+  const a = Math.max(0, Number(amount) || 0), p = Math.max(0, Number(pct) || 0);
+  const c = cfg || _installBonusCfgCache;
+  const cap = Number(c && c.capArs) > 0 ? Number(c.capArs) : Infinity;
+  const exPct = Math.min(p, Number(c && c.excessPct) || 0);
+  return Math.round(Math.min(a, cap) * p / 100 + Math.max(0, a - cap) * exPct / 100);
+}
+// Texto corto de la regla del tope para un % de lote ('' si el tope no lo afecta).
+function _loteCapTxt(pct, cfg) {
+  const c = cfg || _installBonusCfgCache;
+  const p = Number(pct) || 0, cap = Number(c.capArs) || 0, ex = Number(c.excessPct) || 0;
+  if (!(cap > 0) || p <= ex) return '';
+  return ` (${p}% hasta $${cap.toLocaleString('es-AR')}, el resto al ${ex}%)`;
 }
 // Bono que corresponde a una carga con la regla: pct% hasta capArs + excessPct% del resto.
 function computeInstallBonus(amount, cfg) {
@@ -18307,6 +18327,17 @@ async function _pendingBonusFor(user, amount) {
     if (b > 0) out.parts.push({ kind: 'roulette', pct: rp, amount: b });
     out.total += b;
   }
+  // #198 (réplica #172): el % de un LOTE vigente lo aplica el SISTEMA en la carga, con el
+  // tope del bono app (`_loteBonusAmount`). Sólo PromoBonus de lote (sourceRuleCode 'lote').
+  try {
+    const lb = await _getActivePromoBonus(user.username);
+    if (lb && lb.sourceRuleCode === 'lote' && Number(lb.percent) > 0) {
+      const cfg = await getInstallBonusConfig();
+      const b = _loteBonusAmount(a, lb.percent, cfg);
+      if (b > 0) out.parts.push({ kind: 'lote', pct: Number(lb.percent), amount: b, promoBonusId: lb.id, label: lb.sourceRuleName || 'lote', capTxt: _loteCapTxt(lb.percent, cfg) });
+      out.total += b;
+    }
+  } catch (e) { logger.warn(`[deposit] % de lote no calculado (sigue sin él): ${e.message}`); }
   return out;
 }
 // Marca como USADOS los bonos pendientes tras una carga con bono (manual o hgcash).
@@ -18327,6 +18358,21 @@ async function _settlePendingBonuses(user, agent, ctx) {
     }
   } catch (e) { logger.warn(`[deposit] no se pudo marcar el bono de instalación: ${e.message}`); }
   try { const r = await _consumeRoulettePercent(user.id, agent, ctx); if (r) done.push('roulette'); } catch (e) { logger.warn(`[deposit] no se pudo consumir el % de ruleta: ${e.message}`); }
+  // #198 % de LOTE aplicado por el sistema → PromoBonus usado + nota "no hay que marcar nada".
+  try {
+    const cfg = await getInstallBonusConfig();
+    const lb = await PromoBonus.findOne({ username: String(user.username).toLowerCase(), status: 'active', sourceRuleCode: 'lote', percent: { $gt: 0 }, expiresAt: { $gt: new Date() } }).sort({ activatedAt: -1 }).lean();
+    if (lb) {
+      const loteAmt = _loteBonusAmount(ctx.amount, lb.percent, cfg);
+      const r = await PromoBonus.updateOne({ id: lb.id, status: 'active' }, { $set: { status: 'used', usedBy: agent, usedAt: new Date(), cargaMonto: Number(ctx.amount) || 0, bonoMonto: loteAmt } });
+      if (r.modifiedCount) {
+        done.push('lote');
+        await _emitAdminOnlyChatNote(user.id, user.username,
+          `⚡ BONO DE LOTE AUTOMÁTICO aplicado en esta carga: +${lb.percent}%${_loteCapTxt(lb.percent, cfg)} = $${loteAmt.toLocaleString('es-AR')} (${lb.sourceRuleName || 'lote'}) — ${agent === 'auto-hgcash' ? 'lo aplicó el sistema' : 'lo aplicó ' + agent}. El bono quedó USADO. No hay que marcar nada.`).catch(() => {});
+        logger.info(`[notif-batch] ${user.username} — % de lote ${lb.percent}% consumido por ${agent} ($${loteAmt})`);
+      }
+    }
+  } catch (e) { logger.warn(`[deposit] no se pudo marcar usado el % de lote: ${e.message}`); }
   return done;
 }
 // Consume el % de ruleta pendiente de un usuario (aplicado por un agente en una
@@ -20042,12 +20088,15 @@ app.get('/api/admin/promo-bonus', authMiddleware, adminMiddleware, async (req, r
     res.json({
       bonus: {
         id: b.id,
+        username: b.username,
         percent: b.percent,
         montoFijoARS: b.montoFijoARS || 0,
         activatedAt: b.activatedAt,
         expiresAt: b.expiresAt,
         sourceRuleCode: b.sourceRuleCode,
-        sourceRuleName: b.sourceRuleName
+        sourceRuleName: b.sourceRuleName,
+        sourceRuleId: b.sourceRuleId || null,
+        capTxt: (b.sourceRuleCode === 'lote' && Number(b.percent) > 0) ? _loteCapTxt(b.percent, await getInstallBonusConfig()) : '' // #198 tope del % de lote
       }
     });
   } catch (err) {
@@ -20129,6 +20178,13 @@ function _notifChannelOf(u) {
 // Activa el PromoBonus del regalo % de un lote. Antes VENCE todos los activos
 // del username (un cartel a la vez, igual que el motor de reglas). Devuelve el
 // id del PromoBonus creado.
+// #198 (réplica #173): en modo código el bono vale `useHours` (24 h default) desde el
+// CANJE, no hasta que venza el lote. En modo 'window' (activado al enviar) sigue la
+// vigencia del lote.
+function _nbBonusExpiresAt(batch) {
+  if (batch.mode === 'code') return new Date(Date.now() + (Number(batch.useHours) > 0 ? Number(batch.useHours) : 24) * 3600 * 1000);
+  return batch.expiresAt;
+}
 async function _activateBatchPromoBonus(uDoc, batch) {
   const uname = String(uDoc.username).toLowerCase();
   await PromoBonus.updateMany(
@@ -20146,7 +20202,7 @@ async function _activateBatchPromoBonus(uDoc, batch) {
     sourceRuleCode: 'lote',
     sourceRuleName: `Lote de ${batch.sentBy || 'admin'}${batch.name ? ' — ' + batch.name : ''}`,
     activatedAt: new Date(),
-    expiresAt: batch.expiresAt,
+    expiresAt: _nbBonusExpiresAt(batch), // #198
     status: 'active'
   });
   return id;
@@ -20312,6 +20368,8 @@ async function _nbChatText(batch, opts = {}) {
   let giftLine;
   if (batch.giftType === 'percent') {
     giftLine = `+${batch.amount}% EXTRA en tu PRÓXIMA CARGA`;
+    // #198 (réplica #173): con código, una vez canjeado tiene N horas para usarlo.
+    if (batch.mode === 'code') giftLine += ` (una vez canjeado, tenés ${Number(batch.useHours) > 0 ? batch.useHours : 24}hs para usarlo en tu carga)`;
   } else {
     const roll = _batchRoll > 0
       ? ` (para retirarlo apostá $${(batch.amount * _batchRoll).toLocaleString('es-AR')} — rollover x${_batchRoll})`
@@ -20596,7 +20654,7 @@ async function _tryClaimNotifBatchCode(reqUser, attempt) {
     ).lean();
     if (!membership || !membership.recipients || !membership.recipients.length) {
       logger.warn(`[notif-batch] ${reqUser.username} intentó canjear el código ${codeUp} sin estar en el lote`);
-      return { http: 400, body: { error: 'El código no es válido. Fijate bien cómo aparece en tu notificación.' } };
+      return { http: 400, body: { error: 'Este código no es para tu cuenta: el lote se envió a otros usuarios.' } }; // #198 (réplica #172)
     }
     if (membership.recipients[0].claimedAt) {
       return { http: 400, body: { error: 'Ya canjeaste este código. Es una sola vez.' } };
@@ -20713,7 +20771,8 @@ async function _tryClaimNotifBatchCode(reqUser, attempt) {
     { id: batch.id, recipients: { $elemMatch: { userId: uDoc.id } } },
     { $set: { 'recipients.$.promoBonusId': promoId } }
   ).catch(() => {});
-  const fechaFmt = _nbFechaART(batch.expiresAt);
+  const pbDoc = await PromoBonus.findOne({ id: promoId }).select('expiresAt').lean().catch(() => null);
+  const fechaFmt = _nbFechaART((pbDoc && pbDoc.expiresAt) || _nbBonusExpiresAt(batch)); // #198 vence a las useHours del canje
   // Editable desde COMANDOS (/sys_lote_canje_percent); vacío = no se envía.
   const contentPct = await renderSystemCommand('/sys_lote_canje_percent',
     '🎉 ¡Código canjeado! Tenés un +{amount}% EXTRA para tu PRÓXIMA CARGA.\n\n' +
@@ -20790,6 +20849,15 @@ app.post('/api/admin/notif-batches', authMiddleware, adminMiddleware, async (req
     const validHours = Math.round(Number(b.validHours));
     if (!Number.isFinite(validHours) || validHours < 1 || validHours > 168) {
       return res.status(400).json({ error: 'La vigencia tiene que ser de 1 a 168 horas.' });
+    }
+    // #198 horas para USAR el bono después de canjearlo (solo modo código con %). Default 24.
+    let useHours = 24;
+    if (b.useHours != null && b.useHours !== '') {
+      useHours = Number(b.useHours);
+      if (!Number.isFinite(useHours) || useHours < 1 || useHours > 168) {
+        return res.status(400).json({ error: 'Las horas para usar el bono (tras canjear) tienen que estar entre 1 y 168.' });
+      }
+      useHours = Math.round(useHours);
     }
     const message = String(b.message || '').trim();
     if (!isPublic && (message.length < 5 || message.length > 500)) {
@@ -20868,7 +20936,7 @@ app.post('/api/admin/notif-batches', authMiddleware, adminMiddleware, async (req
     const batch = await NotifBatch.create({
       id: uuidv4(),
       name, mode, giftType, amount, rolloverX,
-      code, isPublic, maxClaims, validHours,
+      code, isPublic, maxClaims, validHours, useHours,
       sentAt, expiresAt, title, message,
       sentBy: req.user.username || null,
       sentByRole: req.user.role || null,
@@ -20916,7 +20984,7 @@ app.get('/api/admin/notif-batches', authMiddleware, adminMiddleware, async (req,
       { $project: {
         _id: 0,
         id: 1, name: 1, mode: 1, giftType: 1, amount: 1, rolloverX: 1,
-        code: 1, isPublic: 1, maxClaims: 1, validHours: 1,
+        code: 1, isPublic: 1, maxClaims: 1, validHours: 1, useHours: 1,
         sentAt: 1, expiresAt: 1, sentBy: 1, sentByRole: 1,
         audienceType: 1, audienceDays: 1, audienceLimit: 1, sendDone: 1,
         total: { $size: recips },
@@ -20927,6 +20995,22 @@ app.get('/api/admin/notif-batches', authMiddleware, adminMiddleware, async (req,
         credited: { $size: { $filter: { input: recips, as: 'r', cond: { $ne: ['$$r.creditedAt', null] } } } }
       } }
     ]);
+    // #198 (réplica #173) resultado de los bonos % de cada lote: usados / activos / vencidos sin usar.
+    try {
+      const now = new Date();
+      const ids = rows.map(r => r.id);
+      const agg = ids.length ? await PromoBonus.aggregate([
+        { $match: { sourceRuleCode: 'lote', sourceRuleId: { $in: ids } } },
+        { $group: { _id: '$sourceRuleId',
+          usados: { $sum: { $cond: [{ $eq: ['$status', 'used'] }, 1, 0] } },
+          activos: { $sum: { $cond: [{ $and: [{ $eq: ['$status', 'active'] }, { $gt: ['$expiresAt', now] }] }, 1, 0] } },
+          vencidos: { $sum: { $cond: [{ $and: [{ $ne: ['$status', 'used'] }, { $lte: ['$expiresAt', now] }] }, 1, 0] } },
+          bonoTotal: { $sum: { $ifNull: ['$bonoMonto', 0] } }
+        } }
+      ]) : [];
+      const by = new Map(agg.map(a => [a._id, a]));
+      for (const r of rows) { const a = by.get(r.id) || {}; r.usados = a.usados || 0; r.activos = a.activos || 0; r.vencidos = a.vencidos || 0; r.bonoTotal = a.bonoTotal || 0; }
+    } catch (e) { logger.warn(`[notif-batch] resumen de bonos: ${e.message}`); }
     res.json({ batches: rows });
   } catch (err) {
     logger.error(`/api/admin/notif-batches (list): ${err.message}`);
@@ -20943,13 +21027,33 @@ app.get('/api/admin/notif-batches/:id', authMiddleware, adminMiddleware, async (
     }
     const batch = await NotifBatch.findOne({ id: String(req.params.id || '') }).lean();
     if (!batch) return res.status(404).json({ error: 'Lote no encontrado' });
+    const now = new Date();
+    // #198 (réplica #173): vencer en DB los bonos de este lote que pasaron su plazo (lazy).
+    await PromoBonus.updateMany({ sourceRuleId: batch.id, status: 'active', expiresAt: { $lte: now } }, { $set: { status: 'expired' } }).catch(() => {});
     const pbIds = (batch.recipients || []).map((r) => r.promoBonusId).filter(Boolean);
     const pbs = pbIds.length
-      ? await PromoBonus.find({ id: { $in: pbIds } }).select('id status usedBy usedAt').lean()
+      ? await PromoBonus.find({ id: { $in: pbIds } }).select('id status usedBy usedAt expiresAt activatedAt cargaMonto bonoMonto').lean()
       : [];
     const pbById = new Map(pbs.map((p) => [p.id, p]));
+    const summary = { total: 0, canjearon: 0, usaron: 0, activos: 0, vencidos: 0, cancelados: 0, bonoTotal: 0 };
     const recipients = (batch.recipients || []).map((r) => {
       const pb = r.promoBonusId ? pbById.get(r.promoBonusId) : null;
+      // Estado resumido del bono: used | active | expired (venció sin usar) | cancelled
+      // (lo vencieron antes de tiempo: reemplazado por otro bono o cancelado por el agente).
+      let outcome = null;
+      if (pb) {
+        if (pb.status === 'used') outcome = 'used';
+        else if (pb.status === 'active' && new Date(pb.expiresAt) > now) outcome = 'active';
+        else if (pb.status === 'expired' && new Date(pb.expiresAt) > now) outcome = 'cancelled';
+        else outcome = 'expired';
+      }
+      summary.total++;
+      if (r.claimedAt) summary.canjearon++;
+      if (outcome === 'used') summary.usaron++;
+      if (outcome === 'active') summary.activos++;
+      if (outcome === 'expired') summary.vencidos++;
+      if (outcome === 'cancelled') summary.cancelados++;
+      if (pb) summary.bonoTotal += Number(pb.bonoMonto) || 0;
       return {
         username: r.username,
         channel: r.channel,
@@ -20958,14 +21062,18 @@ app.get('/api/admin/notif-batches/:id', authMiddleware, adminMiddleware, async (
         creditedAt: r.creditedAt,
         creditError: r.creditError,
         bonusStatus: pb ? pb.status : null,
+        outcome,
+        bonusExpiresAt: pb ? pb.expiresAt : null,
         usedBy: pb ? pb.usedBy : null,
-        usedAt: pb ? pb.usedAt : null
+        usedAt: pb ? pb.usedAt : null,
+        cargaMonto: pb ? (pb.cargaMonto || 0) : 0,
+        bonoMonto: pb ? (pb.bonoMonto || 0) : 0
       };
     });
-    res.json({ batch: {
+    res.json({ summary, batch: {
       id: batch.id, name: batch.name, mode: batch.mode, giftType: batch.giftType,
       amount: batch.amount, rolloverX: batch.rolloverX, code: batch.code,
-      isPublic: batch.isPublic, maxClaims: batch.maxClaims, validHours: batch.validHours,
+      isPublic: batch.isPublic, maxClaims: batch.maxClaims, validHours: batch.validHours, useHours: batch.useHours || 24,
       sentAt: batch.sentAt, expiresAt: batch.expiresAt, title: batch.title,
       message: batch.message, sentBy: batch.sentBy, sentByRole: batch.sentByRole,
       audienceType: batch.audienceType, audienceDays: batch.audienceDays,

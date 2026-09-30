@@ -176,6 +176,13 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   manual, pisando el bono del agente si hay pendientes; nunca en multicuenta) vía
   `_pendingBonusFor` + `_settlePendingBonuses`. Un flujo de carga nuevo tiene que
   pasar por ahí.
+- **Lotes con % (#198, réplica #172/#173 del gemelo, 2026-09-29):** el % de un lote lo
+  aplica el SISTEMA en la carga (manual y hgcash) vía `_pendingBonusFor` con el
+  MISMO tope del bono app (`_loteBonusAmount`: % hasta `capArs`, excedente al
+  `excessPct`, `Config['installBonus']`); `_settlePendingBonuses` lo marca usado
+  (`PromoBonus.bonoMonto`). Con código, el bono canjeado vence a las
+  `NotifBatch.useHours` (default 24) del canje, no al vencer el lote. No hay
+  franja horaria ni `applyMode` acá (eso es del gemelo).
 - **Ninguna PUSH puede mencionar la RULETA** (2026-09-07): `notificationService.isRouletteText`
   bloquea el envío en las 5 funciones (`blocked:'roulette'`) y el seed del boot migra
   reglas/plantillas guardadas. Los mensajes de CHAT (`_sendSystemMessageToUser`) sí pueden.

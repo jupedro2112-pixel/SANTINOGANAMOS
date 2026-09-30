@@ -969,6 +969,23 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   `vip-refcom-<payoutId>` reusando el documento de intentos fallidos). La comisión es
   netwin del referido × el % del comando `/sys_referral_pct` (3% default, #195; el
   motor llama `refreshReferralPct(true)` antes de calcular). Ver §4.6.
+- **Lotes con regalo % — tope y 24 h para usar (#198, réplica #172/#173):**
+  `_pendingBonusFor` suma el `PromoBonus` de lote vigente (`sourceRuleCode:'lote'`,
+  percent>0) calculado con `_loteBonusAmount(amount, pct, installBonusCfg)` = min(carga,
+  capArs)×pct% + excedente×min(pct, excessPct)%; se aplica solo en la carga manual y en
+  hgcash (parte `kind:'lote'`), `_settlePendingBonuses` marca el PromoBonus `used` con
+  `cargaMonto`/`bonoMonto` y deja la nota "⚡ BONO DE LOTE AUTOMÁTICO… No hay que marcar
+  nada". `_loteCapTxt` → " (100% hasta $5.000, el resto al 20%)" en la nota, en el cartel
+  verde (`GET /api/admin/promo-bonus.capTxt`) y en la sugerencia del modal Depositar.
+  `NotifBatch.useHours` (POST `useHours`, 1–168, default 24): en modo código el
+  PromoBonus vence a `canje + useHours` (`_nbBonusExpiresAt`); el mensaje de canje dice
+  "Válido hasta" con esa fecha y el aviso del código agrega "una vez canjeado, tenés
+  Xhs para usarlo". Canje con cuenta fuera de la lista → "Este código no es para tu
+  cuenta…". `GET /api/admin/notif-batches` suma por lote `usados/activos/vencidos/
+  bonoTotal`; `GET …/:id` vence los bonos pasados, devuelve `outcome`
+  (used|active|expired|cancelled), `bonusExpiresAt`, `cargaMonto`, `bonoMonto` y
+  `summary`. Panel: `nbUseHours`, fila del lote con "N cargaron ($X) · N activos · N
+  vencidos sin usar · ⏱ Nhs", detalle con resumen y textos por `outcome`.
 - **Ruleta diaria — RECLAMO con vencimiento (#197):** `POST /api/roulette/spin` ya no
   acredita: crea el `DailyRouletteSpin` en `claim_pending` con `claimExpiresAt = ahora +
   horas(/sys_roulette_claim_hours)` y manda `/sys_roulette_won` al chat. `GET

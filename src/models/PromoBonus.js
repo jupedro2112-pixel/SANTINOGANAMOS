@@ -31,6 +31,9 @@ const promoBonusSchema = new mongoose.Schema({
   // automáticamente del depósito cuando éste incluye bono. Sirve para
   // calcular el ROI en pesos de las estrategias.
   cargaMonto: { type: Number, default: 0 },
+  // #198 (réplica #172/#173): $ de bono que se acreditó con este PromoBonus cuando lo
+  // aplicó el sistema (lote % automático con tope). 0 si lo aplicó el agente a mano.
+  bonoMonto: { type: Number, default: 0 },
 
   // De qué regla de automatización salió.
   sourceRuleId:   { type: String, default: null },
