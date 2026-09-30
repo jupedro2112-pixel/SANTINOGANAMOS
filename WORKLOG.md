@@ -37,6 +37,28 @@
 
 ---
 
+## Sesión 2026-09-30 (3ª) — Rueda de la ruleta REAL (SVG) que gira y frena en el premio
+
+### 201. `roulette.js`: rueda profesional en vez del ícono 🎰 que "ni gira ni hace nada"
+- **Pedido (captura de referencia):** rueda con gajos de colores, aro dorado con luces,
+  puntero arriba, centro con logo y botón GIRAR grande; "profesional, elegante y que llame
+  la atención".
+- **Rueda (`_wheelSvg`):** SVG 400×400 generado desde los premios configurados en el panel
+  (un gajo por fila, mismo orden, gajos iguales), colores alternados de una paleta de 10,
+  texto radial (emoji + etiqueta + "EN FICHAS"/"PRÓX. CARGA"), aro con gradiente dorado y 24
+  luces que titilan (más rápido mientras gira), puntero dorado, centro con el logo de
+  GANAMOS (`/images/soporte-ganamos.png` recortado), halo y sombra. Botón `.rw-btn` dorado.
+- **Giro:** al tocar GIRAR la rueda arranca a girar libre (`.idle`) mientras se llama al
+  server; con la respuesta se busca el gajo del premio (`_segIndexFor`: por etiqueta, si no
+  por tipo+valor; si hay varios iguales, uno al azar) y se frena con una transición de 5 s
+  (`cubic-bezier`) hasta 5 vueltas + ese gajo (con un desvío aleatorio dentro del gajo),
+  se resalta el gajo ganador y recién ahí se muestra la caja del premio (reclamar, etc.).
+  Ya girada, la rueda queda clavada en el premio (`_wheelAngle`), y se recalcula si cambia
+  el día o el spin. Si el server rebota (ya giró / falta app), la rueda vuelve a su lugar.
+- **Verificación:** render estático del SVG con Inkscape (premios de ejemplo) para
+  revisar el diseño; `node --check` ✅. SW v115. `VIP.roulette._debugWheelSvg` queda sólo
+  para ese render de prueba.
+
 ## Sesión 2026-09-30 (2ª) — Ruleta: probar como cliente (usuarios de prueba) + elegibilidad configurable (cargas en N días, giros por día)
 
 ### 200. Se van los giros desde el panel; "usuarios de prueba" giran desde la app sin PWA; cargas mínimas en un lapso editable; giros por día

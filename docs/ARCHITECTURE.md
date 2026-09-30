@@ -986,6 +986,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   (used|active|expired|cancelled), `bonusExpiresAt`, `cargaMonto`, `bonoMonto` y
   `summary`. Panel: `nbUseHours`, fila del lote con "N cargaron ($X) · N activos · N
   vencidos sin usar · ⏱ Nhs", detalle con resumen y textos por `outcome`.
+- **Ruleta — rueda SVG (#201):** `roulette.js` dibuja la rueda desde `status.prizes` (un gajo por premio, gajos iguales); el premio lo decide el server y la rueda frena en el gajo correspondiente (`_segIndexFor` → `_wheelStopAt`). El `weight` sigue mandando la probabilidad real (los gajos NO son proporcionales al peso).
 - **Ruleta — probar como cliente y elegibilidad (#199/#200):** `_rouletteSpinCore` es el núcleo del giro (sin gates). `Config['dailyRoulette']` = {prizes, minCargas30d, **minCargasDays** (lapso), **spinsPerDay**, **testUsers** (giran sin app ni cargas mínimas), requireApp}. `DailyRouletteSpin.seq` + índice único `(userId, dateKey, seq)`; `status` → `spinsPerDay/spinsToday/spinsLeft`, `alreadySpun = spinsLeft===0`. Ya NO hay giro desde el panel (spin-as/test-spin eliminados). Menú ☰ → `VIP.roulette.openFromMenu()`. Fila superior del home: ruleta + USUARIO (→ settingsModal) + `.dash-banner` rotativo.
 - **Ruleta diaria — RECLAMO con vencimiento (#197):** `POST /api/roulette/spin` ya no
   acredita: crea el `DailyRouletteSpin` en `claim_pending` con `claimExpiresAt = ahora +
