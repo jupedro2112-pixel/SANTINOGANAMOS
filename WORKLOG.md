@@ -37,6 +37,20 @@
 
 ---
 
+## Sesión 2026-09-30 (11ª) — Fix: vuelven el botón PÁGINA CASINO y el cartel del bono por instalar
+
+### 210. Bloques del home borrados por error en #196, restaurados
+- **Qué pasó:** al sacar la fila de reembolsos del dashboard (#196) el corte terminó en
+  un `</div>` equivocado y se llevó también `.dash-play` (botón "🎰 PÁGINA CASINO AQUÍ"
+  + saldo, que en manual va oculto) y el cartel `#installBonusBanner` (bono por instalar
+  la app: título, regla, botón Reclamar y aviso de registro directo). El owner lo notó
+  por la captura: "falta la página de casino ahí".
+- **Fix:** ambos bloques restaurados tal cual estaban en el commit anterior a #196
+  (`44b9a22`), en su lugar original dentro de `#homePanel` (dash-play dentro de
+  `.home-dash`, el cartel debajo). `installbonus.js` vuelve a encontrar sus ids. SW v122.
+- **Lección (para la próxima limpieza):** cortar bloques HTML por rango de líneas
+  verificado, nunca "hasta el próximo `</div>` con esta sangría".
+
 ## Sesión 2026-09-30 (10ª) — Recordatorios automáticos SIN regalos + pushes de ruleta habilitadas
 
 ### 209. Motor `recordatoriosService` (texto puro) + candado de ruleta apagado
