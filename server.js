@@ -18745,9 +18745,13 @@ function _claimsMaskName(u) {
   return s.slice(0, visible) + '*'.repeat(Math.max(2, s.length - visible));
 }
 
-const _CLAIMS_EXAMPLE_NAMES = ['lucas', 'martin', 'jose', 'daniela', 'rodri', 'meli',
-  'nacho', 'flor', 'santi', 'agus', 'brian', 'romi', 'leo', 'caro', 'dario', 'vale',
-  'seba', 'noe', 'gonza', 'pao', 'juli', 'fede', 'mica', 'tomi'];
+// #206 (owner): usernames INVENTADOS y LARGOS (7+ letras) para los ejemplos: con el tapado
+// "últimas 2 letras + dígitos" quedan 5+ asteriscos y no se adivina ningún cliente real.
+const _CLAIMS_EXAMPLE_NAMES = ['lucasgamer', 'martinokey', 'josecapo', 'danielagol', 'rodrigoplay',
+  'melinabet', 'nachoslots', 'florenciawin', 'santiagoluck', 'agustinaok', 'brianfull',
+  'romicasino', 'leonardojp', 'carolinaxx', 'darioganador', 'valentinapro', 'sebastianjr',
+  'noeliaplay', 'gonzalitoo', 'paolagana', 'julietaa', 'federicook', 'micaelaluck', 'tomasbet',
+  'maxisuerte', 'ivanfortuna', 'belenspins', 'cristianok', 'nicoruleta', 'sofiagana']
 
 // Genera reclamos de ejemplo para completar el feed cuando hay pocos reales.
 function _generateExampleClaims(n) {

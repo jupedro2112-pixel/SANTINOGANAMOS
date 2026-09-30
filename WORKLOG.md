@@ -37,6 +37,15 @@
 
 ---
 
+## Sesión 2026-09-30 (8ª) — Ejemplos con usernames largos e inventados
+
+### 206. `_CLAIMS_EXAMPLE_NAMES` → 30 usernames inventados de 7+ letras
+- Con nombres cortos ("pao", "leo") el tapado dejaba 1–2 asteriscos ("*ao462") y se podía
+  adivinar/coincidir con un cliente real. El pool pasa a usernames inventados y largos
+  ("lucasgamer", "florenciawin"…): siempre quedan 5+ asteriscos antes de las 2 letras y
+  los 3 dígitos ("********er316"). Aplica a los ganadores de ejemplo de la ruleta y al
+  ticker del login (mismo pool).
+
 ## Sesión 2026-09-30 (7ª) — Rueda: texto realmente centrado en el gajo; ejemplos con 2 letras + 3 dígitos
 
 ### 205. Texto de la rueda ajustado al gajo (sin emojis) y nombres de ejemplo bien tapados
