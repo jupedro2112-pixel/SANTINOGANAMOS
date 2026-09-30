@@ -10813,6 +10813,25 @@ async function initializeData() {
       response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸'
     },
     {
+      // #211 NO son mensajes: la REGLA del bono por instalar la app, editable desde COMANDOS.
+      name: '/sys_install_bonus_pct',
+      description: 'BONO POR INSTALAR LA APP — % DEL BONO (no es un mensaje). Escribí SOLO el número, ej. 100. Se refleja en el cartel amarillo del inicio, Información del Servicio, el modal Depositar y la carga automática. Vacío = usa lo guardado en Config → Bono por instalar la app.',
+      type: 'info',
+      response: '100'
+    },
+    {
+      name: '/sys_install_bonus_tope',
+      description: 'BONO POR INSTALAR LA APP — TOPE DE CARGA en pesos al que aplica el % (no es un mensaje). Escribí SOLO el número, ej. 5000 (0 = sin tope). Vacío = usa lo guardado en Config.',
+      type: 'info',
+      response: '5000'
+    },
+    {
+      name: '/sys_install_bonus_excedente',
+      description: 'BONO POR INSTALAR LA APP — % SOBRE LO QUE CARGUE DE MÁS del tope (no es un mensaje). Escribí SOLO el número, ej. 20. Vacío = usa lo guardado en Config.',
+      type: 'info',
+      response: '20'
+    },
+    {
       name: '/sys_withdrawal',
       description: 'Mensaje automático al realizar un retiro. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
@@ -11468,16 +11487,44 @@ const INSTALL_BONUS_AMOUNT = 5000;
 // (Config → "📲 Bono por instalar la app"). Sin cache (multi-instancia).
 const INSTALL_BONUS_RULE_DEFAULT = { pct: 100, capArs: 5000, excessPct: 20 };
 let _installBonusCfgCache = { ...INSTALL_BONUS_RULE_DEFAULT }; // #198 última config leída (para textos sync)
-async function getInstallBonusConfig() {
-  const d = INSTALL_BONUS_RULE_DEFAULT;
+// #211 (owner 2026-09-30): la regla también se edita desde COMANDOS y esos valores MANDAN:
+//   /sys_install_bonus_pct       → % del bono (ej. 100)
+//   /sys_install_bonus_tope      → tope de carga en $ al que aplica el % (0 = sin tope)
+//   /sys_install_bonus_excedente → % sobre lo que cargue de más
+// Un comando vacío/inválido deja el valor de Config['installBonus'] (card del panel).
+// Cache 30 s. Todo lo que muestra o aplica el bono lee de acá → se refleja en todos lados.
+const INSTALL_BONUS_CMDS = { pct: '/sys_install_bonus_pct', capArs: '/sys_install_bonus_tope', excessPct: '/sys_install_bonus_excedente' };
+let _installBonusCmdCache = { at: 0, v: {} };
+async function _installBonusFromCommands() {
+  if (Date.now() - _installBonusCmdCache.at < 30000) return _installBonusCmdCache.v;
+  const v = {};
   try {
-    const raw = await getConfig('installBonus', null);
-    if (raw && typeof raw === 'object') {
-      const n = (v, def, max) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= max ? x : def; };
-      return (_installBonusCfgCache = { pct: n(raw.pct, d.pct, 500), capArs: n(raw.capArs, d.capArs, 100000000), excessPct: n(raw.excessPct, d.excessPct, 500) });
+    const cmds = await Command.find({ name: { $in: Object.values(INSTALL_BONUS_CMDS) }, isActive: true }).select('name response').lean();
+    for (const [k, name] of Object.entries(INSTALL_BONUS_CMDS)) {
+      const c = cmds.find(x => x.name === name);
+      if (!c) continue;
+      const num = Number(String(c.response || '').trim().replace(/[$.\s]/g, '').replace(',', '.').replace('%', ''));
+      if (Number.isFinite(num) && num >= 0) v[k] = Math.round(num);
     }
   } catch (_) {}
-  return (_installBonusCfgCache = { ...d });
+  _installBonusCmdCache = { at: Date.now(), v };
+  return v;
+}
+async function getInstallBonusConfig() {
+  const d = INSTALL_BONUS_RULE_DEFAULT;
+  const n = (v, def, max) => { const x = Math.round(Number(v)); return Number.isFinite(x) && x >= 0 && x <= max ? x : def; };
+  let base = { ...d };
+  try {
+    const raw = await getConfig('installBonus', null);
+    if (raw && typeof raw === 'object') base = { pct: n(raw.pct, d.pct, 500), capArs: n(raw.capArs, d.capArs, 100000000), excessPct: n(raw.excessPct, d.excessPct, 500) };
+  } catch (_) {}
+  try {
+    const c = await _installBonusFromCommands();
+    if (c.pct != null) base.pct = n(c.pct, base.pct, 500);
+    if (c.capArs != null) base.capArs = n(c.capArs, base.capArs, 100000000);
+    if (c.excessPct != null) base.excessPct = n(c.excessPct, base.excessPct, 500);
+  } catch (_) {}
+  return (_installBonusCfgCache = base);
 }
 // #198 (réplica #172 del gemelo, owner 2026-09-29): el % de un LOTE respeta el MISMO tope
 // que el bono por instalar la app: el % del lote aplica hasta `capArs` y el excedente de
@@ -11697,6 +11744,11 @@ app.post('/api/admin/install-bonus', authMiddleware, adminMiddleware, async (req
     if (!Number.isFinite(capArs) || capArs < 0) return res.status(400).json({ error: 'El tope tiene que ser un monto ≥ 0 (0 = sin tope).' });
     if (!Number.isFinite(excessPct) || excessPct < 0 || excessPct > 500) return res.status(400).json({ error: 'El % del excedente tiene que estar entre 0 y 500.' });
     await Config.set('installBonus', { pct, capArs, excessPct }, req.user.username);
+    // #211 los comandos son la misma regla: se sincronizan para que no haya dos verdades.
+    for (const [k, name] of Object.entries(INSTALL_BONUS_CMDS)) {
+      await Command.updateOne({ name }, { $set: { response: String({ pct, capArs, excessPct }[k]), updatedBy: req.user.username || null } }).catch(() => {});
+    }
+    _installBonusCmdCache = { at: 0, v: {} };
     logger.info(`[install-bonus] regla → ${pct}% hasta $${capArs} + ${excessPct}% del resto (por ${req.user.username})`);
     const cfg = await getInstallBonusConfig();
     res.json({ success: true, ...cfg, text: installBonusRuleText(cfg) });

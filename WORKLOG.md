@@ -37,6 +37,20 @@
 
 ---
 
+## Sesión 2026-09-30 (12ª) — Cartel del bono por instalar compacto + regla editable desde COMANDOS
+
+### 211. `/sys_install_bonus_pct` / `_tope` / `_excedente` mandan sobre la regla del bono app; cartel de una fila
+- **Cartel (#installBonusBanner):** de tres párrafos + aviso largo a UNA fila: 🎁 + "¡100% de
+  bono hasta $5.000 en tu próxima carga!" + línea corta "Por instalar la app · por única vez ·
+  sobre lo que cargues de más, 20%" + botón "Reclamar". El aviso para registro directo es
+  una línea. La regla larga (`installBonusRuleText`) queda oculta.
+- **Regla desde COMANDOS:** tres comandos tipo info sembrados con 100 / 5000 / 20.
+  `getInstallBonusConfig()` lee Config['installBonus'] y encima aplica los comandos
+  (válidos → mandan; cache 30 s). Como cartel, Información del Servicio, modal de pauta,
+  modal Depositar, carga automática hgcash y tope del % de lote leen esa función, cambiar
+  el comando se refleja en todos lados. Guardar la card del panel también escribe los
+  comandos (una sola verdad). SW v123.
+
 ## Sesión 2026-09-30 (11ª) — Fix: vuelven el botón PÁGINA CASINO y el cartel del bono por instalar
 
 ### 210. Bloques del home borrados por error en #196, restaurados

@@ -936,23 +936,24 @@
             </div>
             <!-- ===== /DASHBOARD ===== -->
             <!-- Cartel del bono por instalar la app: visible hasta que se reclama -->
-            <div id="installBonusBanner" style="display:none; background: linear-gradient(135deg, #d4af37 0%, #ffd700 50%, #d4af37 100%); color: #000; padding: 11px 14px; border-radius: 12px; margin: 8px 8px 0; box-shadow: 0 4px 18px rgba(212,175,55,0.55); border: 2px solid #ffd700;">
-                <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                    <span style="font-size: 26px;">🎁</span>
-                    <div style="flex: 1; min-width: 110px;">
-                        <strong style="font-size: 14px; display: block;" id="installBonusTitle">¡100% de bono en tu próxima carga!</strong>
-                        <span style="font-size: 11px; opacity: 0.8;">Por instalar la app. Reclamalo desde la app instalada.</span>
-                        <!-- #188 regla (tope + excedente): la completa installbonus.js con la config del panel -->
-                        <span id="installBonusRuleText" style="display:block;font-size:10.5px;opacity:0.85;margin-top:3px;"></span>
+            <!-- #211 cartel COMPACTO: una fila (ícono + título + línea corta + botón). La regla
+                 (pct / tope / excedente) sale de COMANDOS o de Config y la pinta installbonus.js. -->
+            <div id="installBonusBanner" style="display:none; background: linear-gradient(135deg, #d4af37 0%, #ffd700 50%, #d4af37 100%); color: #000; padding: 8px 10px; border-radius: 12px; margin: 8px 8px 0; box-shadow: 0 3px 12px rgba(212,175,55,0.45); border: 1.5px solid #ffd700;">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <span style="font-size: 22px; flex: none;">🎁</span>
+                    <div style="flex: 1; min-width: 0;">
+                        <strong style="font-size: 12.5px; display: block; line-height: 1.25;" id="installBonusTitle">¡100% de bono en tu próxima carga!</strong>
+                        <span id="installBonusSub" style="font-size: 10.5px; opacity: 0.85; display: block; line-height: 1.3;">Por instalar la app · por única vez</span>
+                        <span id="installBonusRuleText" style="display:none;"></span>
                     </div>
-                    <button id="installBonusClaimBtn" style="background: #000; color: #ffd700; border: none; border-radius: 9px; padding: 9px 15px; font-weight: 800; font-size: 13px; cursor: pointer; flex-shrink: 0;">🎁 Reclamar mi 100%</button>
+                    <button id="installBonusClaimBtn" style="background: #000; color: #ffd700; border: none; border-radius: 9px; padding: 8px 11px; font-weight: 800; font-size: 12px; cursor: pointer; flex-shrink: 0; white-space: nowrap;">🎁 Reclamar</button>
                 </div>
                 <!-- Aviso para usuarios sin pauta (registro directo): el bono
                      es para probar la página y no es retirable hasta ser usuario
                      activo. installbonus.js lo muestra/oculta según
                      VIP.state.currentUser.acquisitionCampaign. -->
-                <div id="installBonusDirectNotice" style="display:none; margin-top:10px; padding:8px 11px; background:rgba(0,0,0,0.12); border:1px solid rgba(0,0,0,0.28); border-radius:9px; font-size:11px; line-height:1.4; color:#1a0033; font-weight:600;">
-                    ⚠️ Es por <strong>única vez</strong>. Cuando vayas a cargar, avisale al agente que tenés el bono del 100% y te lo aplica en el momento.
+                <div id="installBonusDirectNotice" style="display:none; margin-top:6px; padding:5px 9px; background:rgba(0,0,0,0.12); border:1px solid rgba(0,0,0,0.25); border-radius:8px; font-size:10.5px; line-height:1.35; color:#1a0033; font-weight:600;">
+                    ⚠️ Por única vez. Al cargar, avisale al agente que tenés el bono por instalar la app.
                 </div>
             </div>
 
