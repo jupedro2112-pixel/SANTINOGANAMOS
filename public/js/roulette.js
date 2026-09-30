@@ -93,8 +93,8 @@
                 : 'translate(' + C + ' ' + C + ') rotate(' + (mid - 90).toFixed(2) + ') translate(' + TR + ' 0)';
             g += '<g class="rw-seg' + (i === winIdx ? ' win' : '') + '">' + path +
                 '<text transform="' + txTransform + '" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-weight="900" text-anchor="middle" dominant-baseline="middle" style="paint-order:stroke;stroke:rgba(0,0,0,0.55);stroke-width:3px;letter-spacing:.5px;">' +
-                '<tspan x="0" y="' + (lines[1] ? -7 : 0) + '" font-size="' + fs1 + '">' + _esc((segs[i].emoji ? segs[i].emoji + ' ' : '') + lines[0]) + '</tspan>' +
-                (lines[1] ? '<tspan x="0" y="10" font-size="' + fs2 + '" fill="#ffe28a">' + _esc(lines[1]) + '</tspan>' : '') +
+                '<tspan x="0" y="' + (lines[1] ? -4 : 0) + '" font-size="' + fs1 + '">' + _esc((segs[i].emoji ? segs[i].emoji + ' ' : '') + lines[0]) + '</tspan>' +
+                (lines[1] ? '<tspan x="0" y="12" font-size="' + fs2 + '" fill="#ffe28a">' + _esc(lines[1]) + '</tspan>' : '') +
                 '</text></g>';
         }
         // Luces del aro (24), alternadas.
@@ -512,17 +512,7 @@
             html += '<div id="rouletteSpinHint" style="color:#ddd;font-size:12px;margin-bottom:12px;opacity:0.92;">Tocá <strong>GIRAR</strong> y la suerte decide. Si ganás, reclamá tu premio dentro de las ' + _esc(claimHours) + ' horas.</div>';
             html += '<button id="rouletteSpinBtn" class="rw-btn" onclick="VIP.roulette.spin()">🎡 GIRAR</button>';
             html += '</div>';
-            // #188 premios y probabilidades vigentes (vienen del panel).
-            const prizes = Array.isArray(_state.prizes) ? _state.prizes.filter(p => p && p.type !== 'none') : [];
-            if (prizes.length) {
-                html += '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:10px;">';
-                for (const p of prizes) {
-                    const txt = p.type === 'percent' ? ('+' + _esc(p.value) + '% próx. carga') : ('$' + _fmt(p.value));
-                    // #202 sin el % de probabilidad (queda oculto para el cliente).
-                    html += '<span style="background:rgba(255,215,0,0.10);border:1px solid rgba(255,215,0,0.40);border-radius:14px;padding:4px 9px;font-size:11px;color:#fff;font-weight:800;">' + _esc(p.emoji || '') + ' ' + txt + '</span>';
-                }
-                html += '</div>';
-            }
+            // #203 (owner): sin fichitas de premios debajo de GIRAR — los premios ya están en la rueda.
         }
 
         // Bloque de transparencia: ganadores del día (live), DENTRO del modal.

@@ -37,6 +37,22 @@
 
 ---
 
+## Sesión 2026-09-30 (5ª) — Rueda: sin fichitas, texto mejor centrado; ganadores de ejemplo rotativos
+
+### 203. Fichitas fuera, bloque de texto balanceado en el gajo, y "Ganadores de hoy" con ejemplos mientras no hay público
+- **Fichitas de premios** debajo de GIRAR: eliminadas (los premios ya están en la rueda).
+- **Centrado:** en el texto radial el eje `y` es transversal al gajo; las dos líneas
+  ("$5.000" grande / "EN FICHAS" chica) iban a y=-7/+10 y el bloque quedaba corrido hacia
+  un lado. Ahora -4/+12 → el bloque queda centrado en el gajo.
+- **Ganadores de ejemplo (`GET /api/roulette/recent-winners`):** si hay menos de 5 reales,
+  se completan con ejemplos: nombre tapado con el MISMO `_claimsMaskName` que los reales
+  (quedan 2 letras + números finales, ej. "****ca45"), premio elegido entre los
+  configurados en el panel (los cash grandes salen poco), horario dentro del día ya
+  transcurrido. Cantidad moderada: 1 por cada ~3 h del día, máximo 6, ninguno antes de
+  las 00:20. Set estable dentro de cada hora (PRNG con semilla dateKey+hora) → van
+  rotando de a poco, igual para todos los clientes. Se sacan solos cuando hay 5+ reales.
+- SW v117. `node --check` ✅, `check-tdz` ✅.
+
 ## Sesión 2026-09-30 (4ª) — Rueda: textos centrados, sin emojis ni %, y cartel "Agregar a Inicio" cada 24 h
 
 ### 202. Ajustes de la rueda (capturas del owner) + porcentajes ocultos + pill de instalar cada 24 h

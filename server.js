@@ -18677,6 +18677,47 @@ app.get('/api/roulette/recent-winners', authMiddleware, async (req, res) => {
         isMe
       };
     });
+    // #203 Sin público todavía: si hay pocos ganadores reales, se completan con
+    // EJEMPLOS (nombres tapados igual que los reales, premios de los configurados en
+    // el panel). Rotan de a pocos: el set es estable dentro de cada hora (semilla
+    // dateKey+hora) y sólo aparecen horarios ya pasados del día. No es excesivo:
+    // 1 por cada ~3 h transcurridas, máximo 6.
+    try {
+      const MIN_REAL = 5;
+      if (items.length < MIN_REAL) {
+        const nowART = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Argentina/Buenos_Aires', hour: '2-digit', minute: '2-digit', hour12: false }).formatToParts(new Date()).reduce((o, p) => (o[p.type] = p.value, o), {});
+        const h = parseInt(nowART.hour, 10) || 0, mi = parseInt(nowART.minute, 10) || 0;
+        const minutesSinceMidnight = h * 60 + mi;
+        const want = Math.min(6, Math.max(0, Math.floor((minutesSinceMidnight + 60) / 180)) + 1) - items.length;
+        if (want > 0 && minutesSinceMidnight > 20) {
+          const rcfg = await getDailyRouletteConfig();
+          const pool = rcfg.prizes.filter(p => p && p.type !== 'none');
+          if (pool.length) {
+            // PRNG determinista por día+hora (mulberry32) → mismo set para todos durante la hora.
+            let seed = 0; for (const ch of (dateKey + ':' + h)) seed = (seed * 31 + ch.charCodeAt(0)) >>> 0;
+            const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
+            const used = new Set(items.map(w => w.username));
+            for (let i = 0; i < want; i++) {
+              const base = _CLAIMS_EXAMPLE_NAMES[Math.floor(rnd() * _CLAIMS_EXAMPLE_NAMES.length)] + (Math.floor(rnd() * 89) + 10);
+              const name = _claimsMaskName(base);
+              if (used.has(name)) continue;
+              used.add(name);
+              // Premios chicos más seguido: los cash grandes (> $3.000) salen poco.
+              let p = pool[Math.floor(rnd() * pool.length)];
+              if (p.type === 'cash' && Number(p.value) > 3000 && rnd() < 0.7) p = pool[Math.floor(rnd() * pool.length)];
+              const minutesAgo = Math.floor(rnd() * Math.min(minutesSinceMidnight - 5, 6 * 60)) + 3;
+              items.push({
+                username: name,
+                prizeARS: p.type === 'cash' ? Number(p.value) || 0 : 0,
+                prizeType: p.type, prizePct: p.type === 'percent' ? Number(p.value) || 0 : 0,
+                prizeLabel: p.label || '', spunAt: new Date(Date.now() - minutesAgo * 60000), minutesAgo, isMe: false
+              });
+            }
+            items.sort((a, b) => new Date(b.spunAt) - new Date(a.spunAt));
+          }
+        }
+      }
+    } catch (e) { logger.warn(`[roulette] ganadores de ejemplo: ${e.message}`); }
     return res.json({
       dateKey,
       count: items.length,
