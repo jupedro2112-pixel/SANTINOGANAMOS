@@ -37,6 +37,27 @@
 
 ---
 
+## Sesión 2026-09-30 (13ª) — Equipos por inicio del usuario: cartel del login "a qué WhatsApp escribir"
+
+### 212. Réplica del gemelo: `Config['teams']`, `GET /api/config/team`, card Equipos en el panel, cartel verde en el login
+- **Por qué:** en GANAMOS el username empieza con el nombre del equipo; sin SMS vinculado el
+  cliente no puede recuperar la clave solo (y no hay registro público). Ahora en el login
+  pone su usuario → se lo deriva al WhatsApp de SU equipo (por prefijo, gana el más largo)
+  para que le restauren la clave; si ningún prefijo coincide → WhatsApp general; "No
+  recuerdo mi usuario" → WhatsApp general con otro texto (le crean usuario si hace falta).
+  El endpoint sólo compara prefijos: no revela si la cuenta existe.
+- **Backend:** `getTeamsConfig`, `resolveTeamForUsername`, `buildWhatsappUrl`, `GET
+  /api/config/team?username=&mode=forgot` (público), `GET/POST /api/admin/teams` (admin
+  general). `/api/config/community` devuelve el Telegram del equipo del usuario (o el
+  general de Equipos) si está cargado; si no, el de la card Comunidad.
+- **PWA (SW v124):** cartel `#teamAccessBanner` arriba del formulario: usuario + Buscar →
+  mensaje + botón "Escribir a <equipo>" / "Escribir al soporte general"; link "No recuerdo
+  mi usuario". "Recuperar Contraseña" (SMS) sigue para los verificados.
+- **Panel (admin-sw v51):** card "👥 Equipos (por inicio del usuario)" en COMANDOS con
+  general (Telegram opcional + WhatsApp) y filas prefijo/nombre/Telegram/WhatsApp.
+- `node --check` ✅, `check-tdz` ✅. **Pendiente del owner:** cargar los equipos y el
+  WhatsApp general en el panel.
+
 ## Sesión 2026-09-30 (12ª) — Cartel del bono por instalar compacto + regla editable desde COMANDOS
 
 ### 211. `/sys_install_bonus_pct` / `_tope` / `_excedente` mandan sobre la regla del bono app; cartel de una fila

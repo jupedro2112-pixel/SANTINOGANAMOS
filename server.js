@@ -21453,8 +21453,12 @@ app.get('/api/config/community', authMiddleware, async (req, res) => {
     // la sección "Canal Informativo" del panel (eliminada 2026-08-03 al unificar
     // el canal en la Comunidad) — así una URL cargada ahí no se pierde.
     const legacyCanal = await getConfig('canalInformativoUrl', '');
+    // #212: si el usuario pertenece a un EQUIPO con Telegram propio, ve ese canal;
+    // si no, el general de Equipos; si tampoco, el de la card Comunidad.
+    let teamChannel = '';
+    try { const tc = await getTeamsConfig(); const t = resolveTeamForUsername(req.user.username, tc); teamChannel = (t && t.telegram) || tc.general.telegram || ''; } catch (_) {}
     res.json({
-      channelUrl: c.channelUrl || c.url || legacyCanal || '',
+      channelUrl: teamChannel || c.channelUrl || c.url || legacyCanal || '',
       supportUrl: c.supportUrl || '',
       // Logo del chat de soporte de la PWA (cabecera del chat). Vacío = el
       // ícono default de VIPCARGAS que ya trae el HTML.
@@ -21539,6 +21543,89 @@ app.post('/api/admin/community', authMiddleware, adminMiddleware, async (req, re
 // ============================================================
 // Mensaje fijo con el que abre el chat de WhatsApp de soporte.
 const SOPORTE_WA_MENSAJE = 'Vengo de GANAMOS necesito ayuda';
+
+// ============================================================
+// #212 EQUIPOS por INICIO del usuario (réplica del gemelo, owner 2026-09-30).
+// En GANAMOS el username arranca con el nombre del equipo (ej. "mar…" → Marshall).
+// Si el cliente no puede entrar a la app (sin SMS vinculado no puede recuperar la
+// clave solo), pone su usuario en el cartel del login y lo mandamos al WhatsApp de
+// SU equipo para que le restauren la clave; si no matchea ningún prefijo (no se
+// acuerda o lo escribió mal) va al WhatsApp GENERAL. "No recuerdo mi usuario" →
+// WhatsApp general con otro texto (le crean usuario nuevo si hace falta).
+// Config['teams'] = { general:{telegram,whatsapp}, list:[{prefix,name,telegram,whatsapp}] }.
+// El Telegram del equipo (si está cargado) es el canal que ve ese equipo en la app.
+// ============================================================
+async function getTeamsConfig() {
+  const raw = (await getConfig('teams')) || {};
+  const general = raw.general || {};
+  const list = Array.isArray(raw.list) ? raw.list : [];
+  return {
+    general: { telegram: general.telegram || '', whatsapp: general.whatsapp || '' },
+    list: list.filter(t => t && t.prefix).map(t => ({
+      prefix: String(t.prefix).toLowerCase().trim(),
+      name: String(t.name || t.prefix).trim(),
+      telegram: String(t.telegram || '').trim(),
+      whatsapp: String(t.whatsapp || '').trim()
+    }))
+  };
+}
+// Equipo del username o null. Gana el prefijo MÁS LARGO ("marte" le gana a "mar").
+function resolveTeamForUsername(username, cfg) {
+  const u = String(username || '').toLowerCase().trim();
+  if (!u || !cfg || !Array.isArray(cfg.list)) return null;
+  let best = null;
+  for (const t of cfg.list) if (t.prefix && u.startsWith(t.prefix) && (!best || t.prefix.length > best.prefix.length)) best = t;
+  return best;
+}
+function buildWhatsappUrl(number, text) {
+  const digits = String(number || '').replace(/\D/g, '');
+  if (!digits) return '';
+  return `https://wa.me/${digits}${text ? '?text=' + encodeURIComponent(text) : ''}`;
+}
+// PÚBLICO (pantalla de login, sin sesión). Sólo compara prefijos: NO revela si la
+// cuenta existe ni la lista de equipos. `mode=forgot` = no recuerda su usuario.
+app.get('/api/config/team', async (req, res) => {
+  try {
+    const username = String(req.query.username || '').trim().slice(0, 40);
+    const forgot = String(req.query.mode || '') === 'forgot';
+    const cfg = await getTeamsConfig();
+    const team = forgot ? null : resolveTeamForUsername(username, cfg);
+    const number = (team && team.whatsapp) || cfg.general.whatsapp || '';
+    const texto = forgot
+      ? 'Hola! Soy cliente de GANAMOS y no recuerdo mi usuario para entrar a la app. ¿Me ayudan?'
+      : (username
+        ? `Hola! Mi usuario de GANAMOS es ${username}. No puedo entrar a la app y quiero recuperar mi clave.`
+        : 'Hola! No puedo entrar a la app de GANAMOS y quiero recuperar mi clave.');
+    res.json({ matched: !!team, teamName: team ? team.name : null, whatsappUrl: buildWhatsappUrl(number, texto), hasWhatsapp: !!number, general: !team });
+  } catch (error) {
+    logger.error(`/api/config/team: ${error.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+app.get('/api/admin/teams', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el administrador principal puede ver los equipos' });
+    res.json(await getTeamsConfig());
+  } catch (error) { logger.error(`GET /api/admin/teams: ${error.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.post('/api/admin/teams', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el administrador principal puede editar los equipos' });
+    const _url = (v) => { let u = String(v || '').trim().slice(0, 300); if (u && !/^https?:\/\//i.test(u)) u = 'https://' + u; return u; };
+    const body = req.body || {};
+    const general = { telegram: _url(body.general && body.general.telegram), whatsapp: String((body.general && body.general.whatsapp) || '').trim().slice(0, 30) };
+    const vistos = new Set(); const list = [];
+    for (const t of (Array.isArray(body.list) ? body.list : [])) {
+      const prefix = String((t && t.prefix) || '').toLowerCase().trim();
+      if (!prefix || !/^[a-z0-9._-]{1,20}$/.test(prefix) || vistos.has(prefix)) continue;
+      vistos.add(prefix);
+      list.push({ prefix, name: String((t && t.name) || prefix).trim().slice(0, 60), telegram: _url(t && t.telegram), whatsapp: String((t && t.whatsapp) || '').trim().slice(0, 30) });
+    }
+    await setConfig('teams', { general, list });
+    logger.info(`[teams] ${req.user.username} guardó ${list.length} equipo(s)`);
+    res.json({ success: true, general, list });
+  } catch (error) { logger.error(`POST /api/admin/teams: ${error.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
 
 app.get('/api/config/soporte-vip', async (req, res) => {
   try {

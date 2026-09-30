@@ -755,6 +755,29 @@ document.addEventListener('change', function (ev) {
                             <button type="button" class="btn-primary" onclick="saveInstallBonusCfg()">💾 Guardar regla del bono</button>
                         </div>
 
+                        <!-- #212 EQUIPOS: se detectan por el INICIO del usuario (solo admin general) -->
+                        <div class="panel-subheader" style="margin-top: 24px;" id="teamsHeader">
+                            <h3>👥 Equipos (por inicio del usuario)</h3>
+                        </div>
+                        <div class="cbu-form" id="teamsForm">
+                            <p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">
+                                En GANAMOS el usuario <b>empieza</b> con el nombre del equipo. Ej: prefijo <b>mar</b> → los usuarios <i>marcos12</i>, <i>MarShall99</i>… son de ese equipo.
+                                Si dos prefijos se pisan, gana el <b>más largo</b> (<i>marte</i> le gana a <i>mar</i>).<br>
+                                El <b>WhatsApp</b> es al que se deriva al cliente desde el cartel verde del login cuando pone su usuario y no puede entrar (le restauran la clave).
+                                Si no coincide ningún prefijo, o toca "No recuerdo mi usuario", va al <b>WhatsApp general</b>.
+                                El <b>Telegram</b> (opcional) es el canal que ve ese equipo dentro de la app; vacío = el de la card Comunidad.
+                            </p>
+                            <div style="background:rgba(212,175,55,.08);border:1px solid rgba(212,175,55,.35);border-radius:8px;padding:10px;margin-bottom:12px;">
+                                <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#d4af37;">General — se usa cuando el usuario no coincide con ningún equipo o no recuerda su usuario</p>
+                                <div class="form-group"><label for="teamsGeneralTelegram">Telegram general (opcional)</label><input type="text" id="teamsGeneralTelegram" placeholder="https://t.me/..."></div>
+                                <div class="form-group"><label for="teamsGeneralWhatsapp">WhatsApp general</label><input type="text" id="teamsGeneralWhatsapp" placeholder="5491155551234"></div>
+                            </div>
+                            <div id="teamsList"></div>
+                            <button class="btn-secondary" onclick="addTeamRow()" style="margin-top:8px;">➕ Agregar equipo</button>
+                            <button class="btn-primary" onclick="saveTeams()" style="margin-top:8px;margin-left:8px;">💾 Guardar equipos</button>
+                            <div id="teamsMsg" style="font-size:12px;margin-top:8px;color:#aaa;"></div>
+                        </div>
+
                         <!-- ROLLOVER GLOBAL de bonos (#184, solo admin general) -->
                         <div class="panel-subheader" style="margin-top: 24px;" id="bonusRolloverHeader">
                             <h3>🎯 Rollover GLOBAL de bonos</h3>

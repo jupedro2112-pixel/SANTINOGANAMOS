@@ -382,6 +382,21 @@
                 <span id="loginClaimsText" style="flex:1;min-width:0;font-size:11px;color:#eee;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:opacity .25s ease;">—</span>
             </div>
             
+            <!-- #212 Cartel de acceso por WhatsApp según el EQUIPO (inicio del usuario).
+                 GET /api/config/team (público): matchea prefijos → WhatsApp del equipo; si no
+                 matchea → WhatsApp general. "No recuerdo mi usuario" → WhatsApp general. -->
+            <div id="teamAccessBanner" style="background:linear-gradient(135deg,rgba(37,211,102,0.14),rgba(212,175,55,0.10));border:1px solid rgba(37,211,102,0.45);border-radius:12px;padding:10px 12px;margin-bottom:10px;text-align:left;">
+                <p style="margin:0 0 4px;font-size:12.5px;font-weight:800;color:#25d366;line-height:1.35;">🔑 ¿No podés entrar o no tenés tu clave?</p>
+                <p style="margin:0 0 7px;font-size:10.5px;color:#ccc;line-height:1.45;">Tu usuario es el <strong>mismo que en GANAMOS</strong>. Ponelo y te decimos a qué WhatsApp escribir para que tu equipo te restaure la clave.</p>
+                <div style="display:flex;gap:6px;align-items:stretch;">
+                    <input type="text" id="teamLookupUser" placeholder="Tu usuario de GANAMOS" autocomplete="off" style="flex:1;min-width:0;padding:8px 10px;border-radius:8px;border:1px solid rgba(212,175,55,0.4);background:rgba(0,0,0,0.35);color:#fff;font-size:12.5px;">
+                    <button type="button" id="teamLookupBtn" style="flex-shrink:0;padding:8px 14px;border-radius:8px;border:none;background:linear-gradient(135deg,#1a9c5b,#25d366);color:#fff;font-size:12px;font-weight:900;cursor:pointer;-webkit-tap-highlight-color:rgba(37,211,102,.3);touch-action:manipulation;">Buscar</button>
+                </div>
+                <div id="teamLookupMsg" style="display:none;font-size:11px;margin-top:7px;line-height:1.45;"></div>
+                <a id="teamWhatsappLink" href="#" target="_blank" rel="noopener" style="display:none;align-items:center;justify-content:center;gap:7px;margin-top:8px;padding:10px;border-radius:9px;background:#25d366;color:#0a2e18;font-size:13px;font-weight:900;text-decoration:none;">💬 <span id="teamWhatsappLabel">Escribir por WhatsApp</span></a>
+                <button type="button" id="teamForgotBtn" style="display:block;width:100%;margin-top:7px;background:none;border:none;color:#aaa;font-size:10.5px;text-decoration:underline;cursor:pointer;padding:2px;">No recuerdo mi usuario</button>
+            </div>
+
             <form id="loginForm" autocomplete="on">
                 <div style="display:none;gap:0;margin-bottom:12px;border-radius:8px;overflow:hidden;border:1px solid rgba(212,175,55,0.3);">
                     <!-- Modos de login por celular/SMS ocultos: el acceso es solo
@@ -461,7 +476,7 @@
 
             <div style="margin: 7px 0;">
                 <button id="findUserBtn" class="btn btn-secondary" style="width:100%; font-size: 12px;" onclick="showModal('resetPassModal')">🔑 Recuperar Contraseña</button>
-                <p style="color:#888; font-size:10.5px; margin:4px 0 0; text-align:center;">Solo para clientes con SMS verificado.</p>
+                <p style="color:#888; font-size:10.5px; margin:4px 0 0; text-align:center;">Solo para clientes con SMS verificado. Si no lo tenés, usá el cartel verde de arriba.</p>
             </div>
 
             <div id="errorMessage" class="error-message"></div>

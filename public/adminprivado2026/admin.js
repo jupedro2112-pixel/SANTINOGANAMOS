@@ -5755,6 +5755,66 @@ function renderCommands(commands) {
     `).join('');
 }
 
+// ============================================
+// #212 EQUIPOS (detección por el inicio del usuario) — réplica del gemelo
+// ============================================
+function _teamRowHtml(t) {
+    t = t || {};
+    const v = (x) => escapeHtml(String(x == null ? '' : x));
+    return '<div class="team-row" style="border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:10px;margin-bottom:8px;background:rgba(0,0,0,.18);">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<div class="form-group" style="flex:0 0 130px;margin:0;"><label>Prefijo</label><input type="text" class="team-prefix" value="' + v(t.prefix) + '" placeholder="mar" maxlength="20"></div>' +
+            '<div class="form-group" style="flex:1;min-width:150px;margin:0;"><label>Nombre del equipo</label><input type="text" class="team-name" value="' + v(t.name) + '" placeholder="Marshall" maxlength="60"></div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:8px;">' +
+            '<div class="form-group" style="flex:1;min-width:180px;margin:0;"><label>Telegram del equipo (opcional)</label><input type="text" class="team-telegram" value="' + v(t.telegram) + '" placeholder="https://t.me/..."></div>' +
+            '<div class="form-group" style="flex:1;min-width:150px;margin:0;"><label>WhatsApp del equipo</label><input type="text" class="team-whatsapp" value="' + v(t.whatsapp) + '" placeholder="5491155551234"></div>' +
+        '</div>' +
+        '<button class="btn-danger" style="margin-top:8px;background:#dc3545;color:#fff;" onclick="this.closest(\'.team-row\').remove()">🗑️ Quitar</button>' +
+    '</div>';
+}
+function addTeamRow(t) { const cont = document.getElementById('teamsList'); if (cont) cont.insertAdjacentHTML('beforeend', _teamRowHtml(t)); }
+async function loadTeams() {
+    const form = document.getElementById('teamsForm');
+    const header = document.getElementById('teamsHeader');
+    try {
+        const r = await authFetch('/api/admin/teams');
+        if (!r.ok) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; return; }
+        if (form) form.style.display = ''; if (header) header.style.display = '';
+        const j = await r.json();
+        const g = j.general || {};
+        const gt = document.getElementById('teamsGeneralTelegram'); if (gt) gt.value = g.telegram || '';
+        const gw = document.getElementById('teamsGeneralWhatsapp'); if (gw) gw.value = g.whatsapp || '';
+        const cont = document.getElementById('teamsList');
+        if (cont) { cont.innerHTML = ''; (j.list || []).forEach(t => addTeamRow(t)); }
+    } catch (e) { console.error('Error cargando equipos:', e); }
+}
+async function saveTeams() {
+    const msg = document.getElementById('teamsMsg');
+    const val = (row, cls) => { const el = row.querySelector('.' + cls); return el ? el.value.trim() : ''; };
+    const list = []; const vistos = new Set(); let invalidos = 0;
+    document.querySelectorAll('#teamsList .team-row').forEach(row => {
+        const prefix = val(row, 'team-prefix').toLowerCase();
+        if (!prefix) return;
+        if (!/^[a-z0-9._-]{1,20}$/.test(prefix) || vistos.has(prefix)) { invalidos++; return; }
+        vistos.add(prefix);
+        list.push({ prefix, name: val(row, 'team-name') || prefix, telegram: val(row, 'team-telegram'), whatsapp: val(row, 'team-whatsapp') });
+    });
+    const general = { telegram: (document.getElementById('teamsGeneralTelegram') || {}).value || '', whatsapp: (document.getElementById('teamsGeneralWhatsapp') || {}).value || '' };
+    try {
+        const r = await authFetch('/api/admin/teams', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ general, list }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error al guardar');
+        if (msg) { msg.style.color = '#28a745'; msg.textContent = '✅ Guardado: ' + j.list.length + ' equipo(s)' + (invalidos ? ' — ⚠️ ' + invalidos + ' fila(s) ignorada(s) por prefijo inválido o repetido' : ''); }
+        showToast('Equipos guardados', 'success');
+        loadTeams();
+    } catch (e) {
+        if (msg) { msg.style.color = '#dc3545'; msg.textContent = '❌ ' + e.message; }
+        showToast(e.message || 'Error al guardar equipos', 'error');
+    }
+}
+window.addTeamRow = addTeamRow; window.saveTeams = saveTeams; window.loadTeams = loadTeams;
+
 async function loadCBUConfig() {
     try {
         const response = await fetch(`${API_URL}/api/admin/cbu`, {
@@ -5776,6 +5836,7 @@ async function loadCBUConfig() {
     loadCommunityConfig();
     // Cargar la config del código de bienvenida (admin general y depositor)
     loadWelcomeCodeConfig();
+    loadTeams(); // #212 equipos por inicio del usuario
     // Cargar la config del banco automático (hgcash)
     loadHgcashConfig();
     // #196 GANAMOS (manual): reembolsos, reembolso en vivo, rollover global y niveles VIP no existen

@@ -362,6 +362,60 @@ function setupEventListeners() {
         const fileInput = document.getElementById('fileInput');
         if (fileInput) fileInput.addEventListener('change', VIP.chat.handleFileSelect);
 
+        // ===== #212 Login: a qué WhatsApp escribir según el EQUIPO del usuario =====
+        // El equipo sale del INICIO del username (ej: "mar…" → Marshall). Lo resuelve el
+        // server en GET /api/config/team (público, sólo compara prefijos: no revela si la
+        // cuenta existe). Sin match → WhatsApp general. "No recuerdo mi usuario" → general.
+        const teamLookupBtn = document.getElementById('teamLookupBtn');
+        const teamLookupUser = document.getElementById('teamLookupUser');
+        const teamLookupMsg = document.getElementById('teamLookupMsg');
+        const teamWhatsappLink = document.getElementById('teamWhatsappLink');
+        const teamWhatsappLabel = document.getElementById('teamWhatsappLabel');
+        const teamForgotBtn = document.getElementById('teamForgotBtn');
+        const _teamEsc = (s) => { const d = document.createElement('div'); d.textContent = String(s == null ? '' : s); return d.innerHTML; };
+        async function _buscarEquipo(forgot) {
+            if (!teamLookupMsg || !teamWhatsappLink) return;
+            const loginUserEl = document.getElementById('username');
+            const user = forgot ? '' : ((teamLookupUser && teamLookupUser.value.trim()) || (loginUserEl && loginUserEl.value.trim()) || '');
+            if (!forgot && !user) {
+                teamLookupMsg.style.display = 'block'; teamLookupMsg.style.color = '#ffaa44';
+                teamLookupMsg.textContent = 'Escribí tu usuario (o tocá "No recuerdo mi usuario").';
+                return;
+            }
+            teamLookupMsg.style.display = 'block'; teamLookupMsg.style.color = '#aaa'; teamLookupMsg.textContent = 'Buscando…';
+            teamWhatsappLink.style.display = 'none';
+            try {
+                const r = await fetch(VIP.config.API_URL + '/api/config/team?username=' + encodeURIComponent(user) + (forgot ? '&mode=forgot' : ''));
+                const d = r.ok ? await r.json() : null;
+                if (!d || !d.hasWhatsapp) {
+                    teamLookupMsg.style.color = '#ffaa44';
+                    teamLookupMsg.textContent = 'Todavía no hay un WhatsApp cargado. Escribinos por el soporte de Telegram de arriba.';
+                    return;
+                }
+                if (forgot) {
+                    teamLookupMsg.style.color = '#ccc';
+                    teamLookupMsg.textContent = 'Te pasamos con el soporte general: te ayudan a encontrar tu usuario o te crean uno nuevo.';
+                    if (teamWhatsappLabel) teamWhatsappLabel.textContent = 'Escribir al soporte general';
+                } else if (d.matched) {
+                    teamLookupMsg.style.color = '#00ff88';
+                    teamLookupMsg.innerHTML = '✓ Tu equipo es <strong>' + _teamEsc(d.teamName) + '</strong>. Escribiles y te restauran la clave.';
+                    if (teamWhatsappLabel) teamWhatsappLabel.textContent = 'Escribir a ' + d.teamName;
+                } else {
+                    teamLookupMsg.style.color = '#ccc';
+                    teamLookupMsg.textContent = 'No encontramos un equipo para ese usuario. Te pasamos con el soporte general.';
+                    if (teamWhatsappLabel) teamWhatsappLabel.textContent = 'Escribir al soporte general';
+                }
+                teamWhatsappLink.href = d.whatsappUrl;
+                teamWhatsappLink.style.display = 'flex';
+            } catch (e) {
+                teamLookupMsg.style.color = '#ff8888';
+                teamLookupMsg.textContent = 'No pudimos consultar ahora. Revisá tu conexión.';
+            }
+        }
+        if (teamLookupBtn) teamLookupBtn.addEventListener('click', () => _buscarEquipo(false));
+        if (teamForgotBtn) teamForgotBtn.addEventListener('click', () => _buscarEquipo(true));
+        if (teamLookupUser) teamLookupUser.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _buscarEquipo(false); } });
+
         // #196/#199 Banners de GANAMOS (login y fila superior del home): rotan entre 3 cada 5 s.
         const bannerEls = ['loginBanner', 'dashBanner'].map((id) => document.getElementById(id)).filter(Boolean);
         if (bannerEls.length) {
