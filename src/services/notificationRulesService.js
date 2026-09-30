@@ -777,8 +777,9 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
   // de la seed; si no (regla editada a mano) → enabled:false + warn para que el
   // owner la edite desde el panel. notificationService igual bloquea el envío.
   try {
-    const { ROULETTE_TEXT_RE } = require('./notificationService');
-    const dirty = await NotificationRule.find({ $or: [{ title: ROULETTE_TEXT_RE }, { body: ROULETTE_TEXT_RE }] }).lean();
+    const { ROULETTE_TEXT_RE, ROULETTE_PUSH_BLOCKED } = require('./notificationService');
+    // #209: con el candado apagado (ruleta activa) no se toca ninguna regla por mencionarla.
+    const dirty = ROULETTE_PUSH_BLOCKED ? await NotificationRule.find({ $or: [{ title: ROULETTE_TEXT_RE }, { body: ROULETTE_TEXT_RE }] }).lean() : [];
     for (const rule of dirty) {
       const def = defaults.find((d) => d.code === rule.code);
       const seedClean = def && !ROULETTE_TEXT_RE.test(String(def.title || '') + ' ' + String(def.body || ''));

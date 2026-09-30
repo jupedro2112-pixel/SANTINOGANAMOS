@@ -183,9 +183,15 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   (`PromoBonus.bonoMonto`). Con código, el bono canjeado vence a las
   `NotifBatch.useHours` (default 24) del canje, no al vencer el lote. No hay
   franja horaria ni `applyMode` acá (eso es del gemelo).
-- **Ninguna PUSH puede mencionar la RULETA** (2026-09-07): `notificationService.isRouletteText`
-  bloquea el envío en las 5 funciones (`blocked:'roulette'`) y el seed del boot migra
-  reglas/plantillas guardadas. Los mensajes de CHAT (`_sendSystemMessageToUser`) sí pueden.
+- **Pushes de RULETA: candado APAGADO (#209, 2026-09-30):** `notificationService.ROULETTE_PUSH_BLOCKED = false`
+  (la ruleta está activa y el owner quiere avisos de giro). Si se vuelve a poner en `true`,
+  `isRouletteText` bloquea las 5 funciones de envío y el seed migra reglas guardadas.
+- **RECORDATORIOS SIN REGALOS (#209):** `src/services/recordatoriosService.js` +
+  `Config['recordatorios']` (panel → Inactivos, card "Recordatorios automáticos"): pushes
+  de texto para inactivos (días sin entrar), "tu giro ya está disponible" y "tu premio
+  vence pronto". NUNCA crea PromoBonus ni acredita. Los motores con BONOS
+  (`INACTIVIDAD_DISABLED`, `BONUS_STRATEGY_DISABLED`, `CHARGE_BONUSES_DISABLED`)
+  siguen APAGADOS: el owner los pausó porque "regalaba bonos a todos por todos lados".
 - **Ruleta diaria = CON RECLAMO y vencimiento (#197, 2026-09-29):** ningún premio se
   acredita solo. Nace `claim_pending` y el cliente tiene las horas del comando
   `/sys_roulette_claim_hours` (COMANDOS, default 24) para tocar RECLAMAR en la app, si

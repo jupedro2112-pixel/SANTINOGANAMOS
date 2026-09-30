@@ -19335,6 +19335,61 @@ async function _runInactividadTick() {
 setTimeout(function () { _runInactividadTick(); }, 5 * 60 * 1000);
 setInterval(function () { _runInactividadTick(); }, 6 * 60 * 60 * 1000);
 
+// ============================================================
+// #209 MOTOR DE RECORDATORIOS (SIN REGALOS) — owner 2026-09-30
+// ----------------------------------------------------------------
+// Pushes de TEXTO: reactivar inactivos (días sin entrar), "tu giro ya está
+// disponible" (24 h después del último giro) y "tu premio vence pronto". Nunca
+// crea PromoBonus ni acredita nada. Config['recordatorios'] (panel → Inactivos).
+// DUERME salvo isActive=true. Cada 30 min. Idempotente por RecordatorioFire.fireKey.
+// ============================================================
+const recordatoriosService = require('./src/services/recordatoriosService');
+const RecordatorioFire = require('./src/models/RecordatorioFire');
+async function _runRecordatoriosTick() {
+  try {
+    const cfg = recordatoriosService.mergeConfig(await getConfig('recordatorios', null));
+    if (!cfg.isActive) return;
+    const rcfg = await getDailyRouletteConfig();
+    const r = await recordatoriosService.tick({
+      cfg,
+      models: { User, RecordatorioFire, DailyRouletteSpin },
+      sendPushFn: sendNotificationToAllUsers,
+      // Elegible para girar = usuario de prueba, o app instalada (si se exige) + cargas mínimas.
+      canSpin: async (u) => {
+        if (_rouletteIsTestUser(rcfg, u.username)) return true;
+        if (rcfg.requireApp && !_rouletteHasAppInstalled(u)) return false;
+        const act = await _rouletteIsActiveClient(u.id, u.username, rcfg.minCargas30d, rcfg.minCargasDays);
+        return !!act.active;
+      },
+      logger,
+      now: new Date()
+    });
+    if (r && (r.inactivo || r.giro || r.premio)) logger.info(`[recordatorios] tick: inactivos=${r.inactivo} giro=${r.giro} premio=${r.premio} errores=${r.errors}`);
+  } catch (err) {
+    logger.error('[recordatorios] tick error: ' + err.message);
+  }
+}
+setTimeout(function () { _runRecordatoriosTick(); }, 3 * 60 * 1000);
+setInterval(function () { _runRecordatoriosTick(); }, 30 * 60 * 1000);
+
+app.get('/api/admin/recordatorios/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const cfg = recordatoriosService.mergeConfig(await getConfig('recordatorios', null));
+    const since = new Date(Date.now() - 7 * 86400000);
+    const stats = await RecordatorioFire.aggregate([{ $match: { firedAt: { $gte: since } } }, { $group: { _id: '$kind', n: { $sum: 1 } } }]).catch(() => []);
+    res.json({ success: true, config: cfg, defaults: recordatoriosService.DEFAULTS, stats7d: Object.fromEntries(stats.map(s => [s._id, s.n])) });
+  } catch (err) { logger.error(`GET /api/admin/recordatorios/config: ${err.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.post('/api/admin/recordatorios/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el administrador general puede hacer esto.' });
+    const cfg = recordatoriosService.mergeConfig(req.body && req.body.config ? req.body.config : req.body);
+    await Config.set('recordatorios', cfg, req.user.username);
+    logger.info(`[recordatorios] config guardada por ${req.user.username}: isActive=${cfg.isActive} inactivos=${cfg.inactivos.enabled} giro=${cfg.ruleta.giroEnabled} premio=${cfg.ruleta.premioEnabled}`);
+    res.json({ success: true, config: cfg });
+  } catch (err) { logger.error(`POST /api/admin/recordatorios/config: ${err.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
 // POLLER: confirma AUTOMÁTICAMENTE los pagos en proceso (status 'paying'). El webhook
 // de hgcash puede no llegar (p.ej. Cloudflare bloqueando /api/hgcash/webhook) → sin esto
 // el pago queda "en proceso" y hay que sincronizar a mano. Consulta el estado real en

@@ -12107,7 +12107,56 @@ function _escInac(s) {
     });
 }
 
+// #209 Recordatorios sin regalos (config en Config['recordatorios']).
+function _recRowHtml(p) {
+    const v = (x) => escapeHtml(String(x == null ? '' : x));
+    return '<tr class="rec-row"><td><input type="number" class="rec-dias" min="1" max="365" value="' + v(p.dias) + '" style="width:70px;"></td>' +
+        '<td><input type="text" class="rec-title" maxlength="80" value="' + v(p.title) + '" style="width:220px;"></td>' +
+        '<td><input type="text" class="rec-body" maxlength="200" value="' + v(p.body) + '" style="width:100%;min-width:260px;"></td></tr>';
+}
+async function loadRecordatorios() {
+    try {
+        const r = await authFetch('/api/admin/recordatorios/config');
+        if (!r.ok) return;
+        const d = await r.json();
+        const c = d.config || {};
+        const set = (id, val) => { const el = document.getElementById(id); if (el) el.value = val == null ? '' : val; };
+        const chk = (id, on) => { const el = document.getElementById(id); if (el) el.checked = !!on; };
+        chk('recActive', c.isActive); set('recQuietFrom', c.quietFrom); set('recQuietTo', c.quietTo); set('recMaxPorDia', c.maxPorDia);
+        chk('recInactEnabled', c.inactivos && c.inactivos.enabled);
+        const tb = document.getElementById('recPasosRows');
+        if (tb) { tb.innerHTML = ''; ((c.inactivos && c.inactivos.pasos) || []).forEach(p => tb.insertAdjacentHTML('beforeend', _recRowHtml(p))); }
+        set('recRepetirDias', c.inactivos && c.inactivos.repetirCadaDias); set('recRepTitle', c.inactivos && c.inactivos.repetir && c.inactivos.repetir.title); set('recRepBody', c.inactivos && c.inactivos.repetir && c.inactivos.repetir.body);
+        chk('recGiroEnabled', c.ruleta && c.ruleta.giroEnabled); set('recGiroMaxHoras', c.ruleta && c.ruleta.giroMaxHoras); set('recGiroTitle', c.ruleta && c.ruleta.giro && c.ruleta.giro.title); set('recGiroBody', c.ruleta && c.ruleta.giro && c.ruleta.giro.body);
+        chk('recPremioEnabled', c.ruleta && c.ruleta.premioEnabled); set('recPremioHoras', c.ruleta && c.ruleta.premioHorasAntes); set('recPremioTitle', c.ruleta && c.ruleta.premio && c.ruleta.premio.title); set('recPremioBody', c.ruleta && c.ruleta.premio && c.ruleta.premio.body);
+        const st = d.stats7d || {};
+        const stEl = document.getElementById('recStats');
+        if (stEl) stEl.textContent = 'inactivos ' + (st.inactivo || 0) + ' · giro disponible ' + (st.giro || 0) + ' · premio por vencer ' + (st.premio || 0) + (c.isActive ? '' : ' · (motor apagado)');
+    } catch (_) {}
+}
+async function saveRecordatorios() {
+    const g = (id) => (document.getElementById(id) || {}).value;
+    const on = (id) => !!(document.getElementById(id) || {}).checked;
+    const pasos = Array.from(document.querySelectorAll('#recPasosRows .rec-row')).map(r => ({ dias: Number(r.querySelector('.rec-dias').value) || 0, title: r.querySelector('.rec-title').value, body: r.querySelector('.rec-body').value }));
+    const config = {
+        isActive: on('recActive'), quietFrom: Number(g('recQuietFrom')), quietTo: Number(g('recQuietTo')), maxPorDia: Number(g('recMaxPorDia')),
+        inactivos: { enabled: on('recInactEnabled'), pasos, repetirCadaDias: Number(g('recRepetirDias')), repetir: { title: g('recRepTitle'), body: g('recRepBody') } },
+        ruleta: { giroEnabled: on('recGiroEnabled'), giroMaxHoras: Number(g('recGiroMaxHoras')), giro: { title: g('recGiroTitle'), body: g('recGiroBody') }, premioEnabled: on('recPremioEnabled'), premioHorasAntes: Number(g('recPremioHoras')), premio: { title: g('recPremioTitle'), body: g('recPremioBody') } }
+    };
+    const msg = document.getElementById('recMsg');
+    try {
+        const r = await authFetch('/api/admin/recordatorios/config', { method: 'POST', body: JSON.stringify({ config }) });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok || !d.success) { showToast(d.error || 'No se pudo guardar', 'error'); return; }
+        showToast(config.isActive ? '✅ Recordatorios guardados y ENCENDIDOS' : '✅ Recordatorios guardados (motor apagado)', 'success');
+        if (msg) msg.textContent = 'Guardado ' + new Date().toLocaleTimeString('es-AR');
+        loadRecordatorios();
+    } catch (e) { showToast('Error al guardar', 'error'); }
+}
+window.saveRecordatorios = saveRecordatorios; window.loadRecordatorios = loadRecordatorios;
+
 async function loadInactivos() {
+    loadRecordatorios(); // #209
     const body = document.getElementById('inactivosBody');
     if (!body) return;
     body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';

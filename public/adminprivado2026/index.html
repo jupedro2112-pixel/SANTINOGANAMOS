@@ -1960,6 +1960,40 @@ document.addEventListener('change', function (ev) {
                 <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
                     <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">Escalera automática para la gente que deja de entrar: a los días configurados le llega un push con un bono o un regalo. Si el usuario vuelve y se ausenta de nuevo, la escalera arranca limpia. Configurá los pasos y activala.</p>
                 </div>
+                <!-- #209 RECORDATORIOS SIN REGALOS (owner 2026-09-30): sólo texto. -->
+                <div style="background:linear-gradient(135deg,rgba(0,212,255,0.10),rgba(155,48,255,0.08));border:1.5px solid rgba(0,212,255,0.55);border-radius:11px;padding:13px 14px;margin-bottom:14px;" id="recordatoriosCard">
+                    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:6px;">
+                        <div style="color:#00d4ff;font-weight:900;font-size:12px;letter-spacing:0.6px;">🔔 RECORDATORIOS AUTOMÁTICOS (SIN REGALOS)</div>
+                        <label style="margin-left:auto;display:flex;align-items:center;gap:6px;font-size:12px;color:#fff;cursor:pointer;"><input type="checkbox" id="recActive" style="accent-color:#00d4ff;"> <b>Motor ENCENDIDO</b></label>
+                    </div>
+                    <div style="color:#bbb;font-size:11px;margin-bottom:9px;line-height:1.5;">Pushes de texto para que entren a jugar: <b>no crean bonos ni regalan nada</b>. Variables: <code>{username}</code>; en el aviso de premio también <code>{premio}</code> y <code>{vence}</code>. Cada aviso sale UNA sola vez por situación. Estadística 7 días: <span id="recStats" style="color:#fff;">—</span></div>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-bottom:10px;font-size:12px;color:#fff;">
+                        <label>🌙 No molestar de <input id="recQuietFrom" type="number" min="0" max="23" style="width:52px;" class="form-input"> a <input id="recQuietTo" type="number" min="0" max="23" style="width:52px;" class="form-input"> hs</label>
+                        <label>📵 Máx. avisos por persona y día <input id="recMaxPorDia" type="number" min="1" max="5" style="width:52px;" class="form-input"></label>
+                    </div>
+                    <div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:9px;margin-top:4px;">
+                        <label style="font-size:12px;color:#fff;cursor:pointer;"><input type="checkbox" id="recInactEnabled" style="accent-color:#00d4ff;"> <b>💤 Reactivar inactivos</b> (por días SIN ENTRAR a la app; se reinicia cuando vuelve a entrar)</label>
+                        <div style="overflow-x:auto;margin-top:6px;"><table class="data-table" style="min-width:560px;font-size:12px;"><thead><tr><th>Días sin entrar</th><th>Título</th><th>Texto</th></tr></thead><tbody id="recPasosRows"></tbody></table></div>
+                        <div style="font-size:12px;color:#fff;margin-top:6px;display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                            <label>Después del último escalón, repetir cada <input id="recRepetirDias" type="number" min="0" max="365" style="width:60px;" class="form-input"> días (0 = no repetir)</label>
+                            <input id="recRepTitle" type="text" maxlength="80" placeholder="Título de la repetición" class="form-input" style="flex:1;min-width:180px;">
+                            <input id="recRepBody" type="text" maxlength="200" placeholder="Texto de la repetición" class="form-input" style="flex:2;min-width:220px;">
+                        </div>
+                    </div>
+                    <div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:9px;margin-top:9px;">
+                        <label style="font-size:12px;color:#fff;cursor:pointer;"><input type="checkbox" id="recGiroEnabled" style="accent-color:#00d4ff;"> <b>🎡 "Tu giro ya está disponible"</b> (24 h después de su último giro, sólo a quien puede girar; no si el último giro fue hace más de <input id="recGiroMaxHoras" type="number" min="24" max="240" style="width:56px;" class="form-input"> hs)</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;"><input id="recGiroTitle" type="text" maxlength="80" class="form-input" style="flex:1;min-width:180px;" placeholder="Título"><input id="recGiroBody" type="text" maxlength="200" class="form-input" style="flex:2;min-width:220px;" placeholder="Texto"></div>
+                    </div>
+                    <div style="border-top:1px dashed rgba(255,255,255,0.15);padding-top:9px;margin-top:9px;">
+                        <label style="font-size:12px;color:#fff;cursor:pointer;"><input type="checkbox" id="recPremioEnabled" style="accent-color:#00d4ff;"> <b>⏰ "Tu premio vence pronto"</b> (premio de la ruleta sin reclamar que vence en ≤ <input id="recPremioHoras" type="number" min="1" max="24" style="width:52px;" class="form-input"> hs; no cuenta para el tope diario)</label>
+                        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:6px;"><input id="recPremioTitle" type="text" maxlength="80" class="form-input" style="flex:1;min-width:180px;" placeholder="Título"><input id="recPremioBody" type="text" maxlength="200" class="form-input" style="flex:2;min-width:220px;" placeholder="Texto"></div>
+                    </div>
+                    <div style="display:flex;gap:8px;align-items:center;margin-top:10px;">
+                        <button onclick="saveRecordatorios()" style="background:linear-gradient(135deg,#00d4ff,#0080ff);color:#000;border:none;padding:8px 16px;border-radius:7px;font-weight:900;font-size:12.5px;cursor:pointer;">💾 GUARDAR RECORDATORIOS</button>
+                        <span id="recMsg" style="font-size:11.5px;color:#aaa;"></span>
+                    </div>
+                </div>
+                <div class="manual-hide" style="color:#ffb347;font-size:11px;margin-bottom:6px;">⬇️ La escalera de BONOS de abajo está apagada por decisión del owner (bonos automáticos).</div>
                 <div id="inactivosBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>

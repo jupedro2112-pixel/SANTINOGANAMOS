@@ -37,6 +37,36 @@
 
 ---
 
+## Sesión 2026-09-30 (10ª) — Recordatorios automáticos SIN regalos + pushes de ruleta habilitadas
+
+### 209. Motor `recordatoriosService` (texto puro) + candado de ruleta apagado
+- **Pedido:** "reactivar inactivos, que entren a jugar, que no se olviden de su giro… sin
+  regalar nada; antes se pausó todo porque regalaba bonos a todos por todos lados".
+- **Qué NO se tocó:** los motores con bonos siguen apagados (`INACTIVIDAD_DISABLED`,
+  `BONUS_STRATEGY_DISABLED`, `CHARGE_BONUSES_DISABLED`). El motor nuevo no crea
+  PromoBonus ni acredita nada: sólo `sendNotificationToAllUsers` con texto.
+- **Motor nuevo (`src/services/recordatoriosService.js`, cron cada 30 min, DUERME salvo
+  `Config['recordatorios'].isActive`):** (1) **inactivos**: escalera por días sin ENTRAR
+  (`lastLogin`): 3/7/14/30 días con título+texto editables, y después uno cada
+  `repetirCadaDias` (15); se reinicia cuando vuelve a entrar. (2) **giro disponible**: 24 h
+  después de su último giro (y no más de `giroMaxHoras`=48), una vez por ventana, sólo a
+  quien puede girar (`canSpin`: usuario de prueba, o app instalada si se exige + cargas
+  mínimas). (3) **premio por vencer**: premio por reclamar que vence en ≤ 3 h, con
+  `{premio}` y `{vence}`. Candados: horario silencioso 00–09 ART, tope 1 aviso (inactivo+
+  giro) por persona y día, idempotencia por `RecordatorioFire.fireKey` (multi-instancia).
+- **Pushes de ruleta:** `notificationService.ROULETTE_PUSH_BLOCKED = false` (se exporta);
+  `isRouletteText` deja pasar todo y la migración de reglas que borraba menciones a la
+  ruleta queda condicionada al flag.
+- **Panel (admin-sw v50):** en "Recuperación de inactivos", card "🔔 RECORDATORIOS
+  AUTOMÁTICOS (SIN REGALOS)": interruptor del motor, no molestar, tope diario, escalera
+  de inactivos (tabla), repetición, aviso de giro (con tope de horas), aviso de premio
+  (horas antes), textos editables, estadística de 7 días. `GET/POST
+  /api/admin/recordatorios/config` (POST sólo admin general). El motor arranca APAGADO:
+  hay que tildar "Motor ENCENDIDO" y guardar.
+- `node --check` ✅, `check-tdz` ✅. **Probar en deploy:** encender, poner tu usuario de
+  prueba con último login viejo (o esperar 24 h de un giro) y ver el push; en el log
+  `[recordatorios] tick: inactivos=… giro=… premio=…`.
+
 ## Sesión 2026-09-30 (9ª) — Sin referidos en GANAMOS + ruleta cada 24 h reales
 
 ### 207. Referidos eliminados en modo manual (sin API no hay netwin; sin registro público el link no sirve)

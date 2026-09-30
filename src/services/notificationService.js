@@ -26,7 +26,11 @@ const FCM_SEND_TIMEOUT_MS = 10000;
 // manuales. Si algún día la ruleta se reactiva, sacar este candado.
 // ============================================================
 const ROULETTE_TEXT_RE = /ruleta|roulette|giro\s+(gratis|del\s+d[ií]a)|\bgir[aá]\b/i;
+// #209 (owner 2026-09-30): la ruleta diaria ESTÁ activa en GANAMOS y quiere avisos de
+// "no te olvides de tu giro" → el candado queda APAGADO. Para volver a bloquear: true.
+const ROULETTE_PUSH_BLOCKED = false;
 function isRouletteText(title, body, data) {
+  if (!ROULETTE_PUSH_BLOCKED) return false;
   const t = String(title || '') + ' ' + String(body || '');
   if (ROULETTE_TEXT_RE.test(t)) return true;
   if (data && typeof data === 'object') {
@@ -1089,6 +1093,7 @@ async function pruneInvalidFcmTokens(UserModel) {
 initializeFirebase();
 
 module.exports = {
+  ROULETTE_PUSH_BLOCKED,
   sendNotificationToUser,
   sendNotificationToMultiple,
   sendNotificationToAllUsers,
