@@ -506,10 +506,7 @@
             <!-- #199 Ruleta diaria desde el menú (si le falta la app, muestra los pasos). -->
             <button class="menu-item roulette-menu-btn" title="Ruleta diaria" role="menuitem"
                 onclick="if(window.VIP&&VIP.roulette)VIP.roulette.openFromMenu();">
-                <span class="menu-item-icon menu-item-svg"><svg viewBox="0 0 40 40" width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex:none;"><circle cx="20" cy="20" r="18.5" fill="#0a0015"/><circle cx="20" cy="20" r="17.5" fill="none" stroke="#d4af37" stroke-width="3"/><path d="M20 20 L20.00 4.50 A15.5 15.5 0 0 1 30.96 9.04 Z" fill="#5b1a8c"/><path d="M20 20 L30.96 9.04 A15.5 15.5 0 0 1 35.50 20.00 Z" fill="#a3172d"/><path d="M20 20 L35.50 20.00 A15.5 15.5 0 0 1 30.96 30.96 Z" fill="#0f7a4f"/><path d="M20 20 L30.96 30.96 A15.5 15.5 0 0 1 20.00 35.50 Z" fill="#1d2e8f"/><path d="M20 20 L20.00 35.50 A15.5 15.5 0 0 1 9.04 30.96 Z" fill="#8a5a12"/><path d="M20 20 L9.04 30.96 A15.5 15.5 0 0 1 4.50 20.00 Z" fill="#0f6c7a"/><path d="M20 20 L4.50 20.00 A15.5 15.5 0 0 1 9.04 9.04 Z" fill="#7a1a5e"/><path d="M20 20 L9.04 9.04 A15.5 15.5 0 0 1 20.00 4.50 Z" fill="#2f5f1a"/><circle cx="20" cy="20" r="15.5" fill="none" stroke="rgba(0,0,0,.35)" stroke-width=".8"/><circle cx="20" cy="20" r="4.2" fill="#1a0033" stroke="#ffd700" stroke-width="1.4"/><polygon points="20,0.5 24,7.5 16,7.5" fill="#ffd700" stroke="#6b4e00" stroke-width=".8"/></svg></span><span class="menu-item-label">Ruleta diaria <span style="font-weight:600;color:#ffd700;font-size:11px;">(1 giro por día)</span></span>
-            </button>
-            <button class="menu-item referral-btn" id="referralBtn" title="Mis Referidos" role="menuitem">
-                <span class="menu-item-icon">🤝</span><span class="menu-item-label">Mis Referidos</span>
+                <span class="menu-item-icon menu-item-svg"><svg viewBox="0 0 40 40" width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex:none;"><circle cx="20" cy="20" r="18.5" fill="#0a0015"/><circle cx="20" cy="20" r="17.5" fill="none" stroke="#d4af37" stroke-width="3"/><path d="M20 20 L20.00 4.50 A15.5 15.5 0 0 1 30.96 9.04 Z" fill="#5b1a8c"/><path d="M20 20 L30.96 9.04 A15.5 15.5 0 0 1 35.50 20.00 Z" fill="#a3172d"/><path d="M20 20 L35.50 20.00 A15.5 15.5 0 0 1 30.96 30.96 Z" fill="#0f7a4f"/><path d="M20 20 L30.96 30.96 A15.5 15.5 0 0 1 20.00 35.50 Z" fill="#1d2e8f"/><path d="M20 20 L20.00 35.50 A15.5 15.5 0 0 1 9.04 30.96 Z" fill="#8a5a12"/><path d="M20 20 L9.04 30.96 A15.5 15.5 0 0 1 4.50 20.00 Z" fill="#0f6c7a"/><path d="M20 20 L4.50 20.00 A15.5 15.5 0 0 1 9.04 9.04 Z" fill="#7a1a5e"/><path d="M20 20 L9.04 9.04 A15.5 15.5 0 0 1 20.00 4.50 Z" fill="#2f5f1a"/><circle cx="20" cy="20" r="15.5" fill="none" stroke="rgba(0,0,0,.35)" stroke-width=".8"/><circle cx="20" cy="20" r="4.2" fill="#1a0033" stroke="#ffd700" stroke-width="1.4"/><polygon points="20,0.5 24,7.5 16,7.5" fill="#ffd700" stroke="#6b4e00" stroke-width=".8"/></svg></span><span class="menu-item-label">Ruleta diaria <span style="font-weight:600;color:#ffd700;font-size:11px;">(1 giro cada 24 h)</span></span>
             </button>
             <!-- Info del servicio: dispara el MISMO handler del botón del header
                  (.click() para no duplicar la lógica de diagnósticos + reseñas). -->
@@ -1153,7 +1150,7 @@
                     <label>Email (opcional)</label>
                     <input type="email" id="registerEmail" name="email" placeholder="tu@email.com" autocomplete="email">
                 </div>
-                <div class="input-group" id="registerReferralGroup">
+                <div class="input-group" id="registerReferralGroup" style="display:none;">
                     <label>Código de Referido (opcional)</label>
                     <input type="text" id="registerReferralCode" name="referralCode" placeholder="Ej: VIP3X7" autocomplete="off" maxlength="12" style="text-transform:uppercase;letter-spacing:2px;">
                     <span style="font-size: 11px; color: #888;">Si te invitó alguien, ingresá su código para vincularte.</span>
@@ -1619,11 +1616,6 @@
                     <div class="info-card-desc">Entrá todos los días y mantené tu racha: los hitos pagan premios en efectivo a tu cuenta.</div>
                 </div>
                 <div class="info-card">
-                    <div class="info-card-icon">🤝</div>
-                    <div class="info-card-title">Referidos: <span class="referral-pct">3</span>% mensual</div>
-                    <div class="info-card-desc">Invitá amigos con tu código y cobrá todos los meses el <span class="referral-pct">3</span>% de su actividad, de por vida y sin límite.</div>
-                </div>
-                <div class="info-card">
                     <div class="info-card-icon">📲</div>
                     <div class="info-card-title">Bono por instalar la app</div>
                     <div class="info-card-desc" id="infoInstallBonusDesc">Instalá la app, reclamá el bono y tu próxima carga se duplica: 100% de regalo, por única vez.</div>
@@ -1667,11 +1659,6 @@
                     <div style="font-size:22px; line-height:1;">🎰</div>
                     <div style="color:#00ff88; font-weight:700; font-size:11px; margin:3px 0 2px;">Ruleta + Fueguito</div>
                     <div style="color:#b0b0b0; font-size:9.5px; line-height:1.3;">Giro gratis y racha diaria con premios en efectivo.</div>
-                </div>
-                <div style="background:linear-gradient(135deg,rgba(0,255,136,0.10),rgba(0,204,106,0.10)); border:1px solid rgba(0,255,136,0.55); border-radius:9px; padding:8px 6px; text-align:center;">
-                    <div style="font-size:22px; line-height:1;">🤝</div>
-                    <div style="color:#00ff88; font-weight:700; font-size:11px; margin:3px 0 2px;">Referidos: <span class="referral-pct">3</span>% mensual</div>
-                    <div style="color:#b0b0b0; font-size:9.5px; line-height:1.3;">Invitá amigos y cobrá todos los meses, de por vida.</div>
                 </div>
                 <div style="background:linear-gradient(135deg,rgba(0,255,136,0.10),rgba(0,204,106,0.10)); border:1px solid rgba(0,255,136,0.55); border-radius:9px; padding:8px 6px; text-align:center;">
                     <div style="font-size:22px; line-height:1;">🎁</div>
@@ -1813,7 +1800,6 @@
                 </div>
                 <ul style="list-style:none; padding:0; margin:0 0 14px; display:grid; gap:9px; color:#d8d8d8; font-size:14px;">
                     <li style="display:flex; align-items:flex-start; gap:8px;"><span style="color:#00ff88;">✓</span><span>Atención personalizada 24/7</span></li>
-                    <li style="display:flex; align-items:flex-start; gap:8px;"><span style="color:#00ff88;">✓</span><span>Sistema de referidos</span></li>
                     <li style="display:flex; align-items:flex-start; gap:8px;"><span style="color:#00ff88;">✓</span><span>Retiros al instante 24/7</span></li>
                     <li style="display:flex; align-items:flex-start; gap:8px;"><span style="color:#00ff88;">✓</span><span>Sin límite de retiros</span></li>
                     <li style="display:flex; align-items:flex-start; gap:8px;"><span style="color:#00ff88;">✓</span><span>Racha diaria reclamable</span></li>
@@ -3911,7 +3897,6 @@
         <img id="lightboxImage" src="" alt="Imagen ampliada">
     </div>
 
-    <!-- Modal de Referidos -->
     <!-- Código de Bienvenida de la Comunidad de Telegram (bono sorpresa).
          Estados: sin canjear (input), pendiente (bono esperando la carga), usado. -->
     <div id="welcomeCodeModal" class="modal hidden" onclick="if(event.target===this)hideModal('welcomeCodeModal')">
@@ -4054,98 +4039,5 @@
         };
     })();
     </script>
-    <div id="referralModal" class="modal hidden" onclick="if(event.target===this)hideModal('referralModal')">
-        <div class="modal-content" style="position:relative;max-width:500px;max-height:90vh;overflow-y:auto;">
-            <button onclick="hideModal('referralModal')" style="position:absolute;top:15px;right:15px;background:none;border:none;color:#888;font-size:24px;cursor:pointer;z-index:10;">✕</button>
-            <div class="modal-header">
-                <h2>🤝 Mis Referidos</h2>
-                <p>Invitá amigos y cobrá <strong style="color:#d4af37;">todos los meses el <span class="referral-pct">3</span>%</strong> de su actividad — sin límite de referidos</p>
-            </div>
-            <div id="referralContent">
-                <!-- Cómo funciona, en 3 pasos (pedido del owner 2026-08-03: que sea
-                     BIEN explicativo — antes solo había un microcopy chiquito) -->
-                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.3);border-radius:12px;padding:14px;margin-bottom:16px;">
-                    <div style="color:#d4af37;font-size:13px;font-weight:800;margin-bottom:10px;">💡 ¿Cómo funciona? Así de simple:</div>
-                    <div style="display:flex;flex-direction:column;gap:10px;">
-                        <div style="display:flex;gap:10px;align-items:flex-start;">
-                            <span style="flex:0 0 26px;height:26px;background:linear-gradient(135deg,#d4af37,#ffd700);color:#1a0033;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;">1</span>
-                            <div style="flex:1;font-size:12px;color:#ddd;line-height:1.5;"><strong style="color:#fff;">Compartí tu código o tu link</strong> (los tenés acá abajo) con tus amigos por WhatsApp, Telegram o donde quieras.</div>
-                        </div>
-                        <div style="display:flex;gap:10px;align-items:flex-start;">
-                            <span style="flex:0 0 26px;height:26px;background:linear-gradient(135deg,#d4af37,#ffd700);color:#1a0033;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;">2</span>
-                            <div style="flex:1;font-size:12px;color:#ddd;line-height:1.5;"><strong style="color:#fff;">Tu amigo se registra con tu código</strong> (o entrando por tu link) y juega normalmente en la sala. Queda vinculado a vos para siempre.</div>
-                        </div>
-                        <div style="display:flex;gap:10px;align-items:flex-start;">
-                            <span style="flex:0 0 26px;height:26px;background:linear-gradient(135deg,#d4af37,#ffd700);color:#1a0033;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:900;font-size:13px;">3</span>
-                            <div style="flex:1;font-size:12px;color:#ddd;line-height:1.5;"><strong style="color:#00ff88;">Cobrás el <span class="referral-pct">3</span>% de lo que tus referidos dejan en la sala</strong> (su pérdida neta jugando), todos los meses, en fichas directo a tu cuenta. Mientras sigan jugando, vos seguís cobrando — <strong style="color:#fff;">de por vida</strong>.</div>
-                        </div>
-                    </div>
-                    <div style="font-size:11px;color:#999;line-height:1.5;margin-top:10px;border-top:1px solid rgba(212,175,55,0.15);padding-top:8px;">
-                        📌 La comisión se calcula al inicio de cada mes sobre la actividad del mes anterior y se acredita sola. Ejemplo: si tus referidos pierden $100.000 en el mes, vos cobrás <strong style="color:#d4af37;" class="referral-pct-example">$3.000</strong>. No hay límite de referidos ni de ganancia.
-                    </div>
-                </div>
-                <!-- Código y link -->
-                <div style="background:rgba(255,255,255,0.05);border:1px solid #d4af37;border-radius:12px;padding:16px;margin-bottom:16px;">
-                    <div style="margin-bottom:12px;">
-                        <span style="color:#b0b0b0;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Tu código de referido</span>
-                        <div style="display:flex;align-items:center;gap:8px;">
-                            <span id="myReferralCode" style="font-size:24px;font-weight:bold;color:#d4af37;letter-spacing:5px;">—</span>
-                            <button onclick="copyReferralCode()" style="background:rgba(212,175,55,0.2);border:1px solid #d4af37;color:#d4af37;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;">📋 Copiar</button>
-                        </div>
-                    </div>
-                    <div>
-                        <span style="color:#b0b0b0;font-size:11px;text-transform:uppercase;letter-spacing:1px;display:block;margin-bottom:6px;">Tu link de referido</span>
-                        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
-                            <span id="myReferralLink" style="font-size:11px;color:#00ff88;word-break:break-all;flex:1;min-width:0;">—</span>
-                            <button onclick="copyReferralLink()" style="background:rgba(0,255,136,0.1);border:1px solid #00ff88;color:#00ff88;padding:4px 10px;border-radius:6px;cursor:pointer;font-size:12px;white-space:nowrap;flex-shrink:0;">📋 Copiar</button>
-                        </div>
-                    </div>
-                </div>
-                <!-- Stats (4 tarjetas 2x2) -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:16px;">
-                    <div style="background:rgba(0,255,136,0.05);border:1px solid rgba(0,255,136,0.2);border-radius:10px;padding:12px;text-align:center;">
-                        <span style="font-size:22px;font-weight:bold;color:#00ff88;" id="referralActiveCount">0</span>
-                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Referidos activos</span>
-                    </div>
-                    <div style="background:rgba(212,175,55,0.05);border:1px solid rgba(212,175,55,0.2);border-radius:10px;padding:12px;text-align:center;">
-                        <span style="font-size:22px;font-weight:bold;color:#d4af37;" id="referralHistoricalTotal">$0</span>
-                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Total acreditado</span>
-                    </div>
-                    <div style="background:rgba(247,147,30,0.05);border:1px solid rgba(247,147,30,0.2);border-radius:10px;padding:12px;text-align:center;">
-                        <span style="font-size:22px;font-weight:bold;color:#f7931e;" id="referralPendingAmount">$0</span>
-                        <span style="display:block;font-size:11px;color:#b0b0b0;margin-top:4px;">Pendiente del período</span>
-                    </div>
-                    <div style="background:rgba(136,136,136,0.05);border:1px solid rgba(136,136,136,0.2);border-radius:10px;padding:12px;text-align:center;">
-                        <span style="font-size:16px;font-weight:bold;color:#b0b0b0;" id="referralLastPayoutAmount">—</span>
-                        <span style="display:block;font-size:11px;color:#888;margin-top:4px;">Último pago acreditado</span>
-                    </div>
-                </div>
-                <!-- Período actual -->
-                <div style="background:rgba(255,255,255,0.03);border-radius:10px;padding:12px;margin-bottom:16px;">
-                    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
-                        <span style="color:#b0b0b0;font-size:12px;">Período actual:</span>
-                        <span id="referralCurrentPeriod" style="color:#fff;font-size:12px;font-weight:600;">—</span>
-                    </div>
-                    <div style="display:flex;justify-content:space-between;align-items:center;">
-                        <span style="color:#b0b0b0;font-size:12px;">Próxima acreditación:</span>
-                        <span id="referralCreditDate" style="color:#888;font-size:11px;">—</span>
-                    </div>
-                </div>
-                <!-- Aclaración de los cortes de pago -->
-                <div style="background:rgba(212,175,55,0.04);border:1px solid rgba(212,175,55,0.15);border-radius:10px;padding:12px;margin-bottom:16px;">
-                    <p style="color:#b0b0b0;font-size:11px;margin:0;line-height:1.6;">
-                        ⏰ <strong style="color:#d4af37;">¿Cuándo cobro?</strong> Al inicio de cada mes se calcula lo del mes anterior y se acredita solo. Si un referido sigue jugando después de un pago, lo nuevo entra en el corte siguiente — nunca se pierde nada.
-                    </p>
-                </div>
-                <!-- Historial agrupado por período -->
-                <div>
-                    <span style="color:#b0b0b0;font-size:12px;font-weight:600;display:block;margin-bottom:10px;text-transform:uppercase;letter-spacing:1px;">Historial de pagos</span>
-                    <div id="referralPayoutHistory" style="max-height:220px;overflow-y:auto;">
-                        <span style="color:#888;font-size:12px;">Cargando...</span>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
 </body>
 </html>

@@ -5978,7 +5978,7 @@ app.post('/api/messages/welcome', authMiddleware, async (req, res) => {
     // momento de enviar — así la bienvenida no queda desactualizada (#118).
     const welcomeContent = await renderSystemCommand(
       '/sys_welcome',
-      `🎉 ¡Bienvenido a GANAMOS, {username}!\n\n🎁 Beneficios exclusivos:\n• Bonos en tus cargas\n• Fueguito diario con recompensas\n• Referidos: cobrás el {referral_pct}% de la actividad de tus amigos todos los meses\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nCBU activo: {cbu}`,
+      `🎉 ¡Bienvenido a GANAMOS, {username}!\n\n🎁 Beneficios exclusivos:\n• Bonos en tus cargas\n• Ruleta diaria con premios\n• Fueguito diario con recompensas\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nCBU activo: {cbu}`,
       { username, cbu: cbuNumber, escalera: await buildEscaleraText() }
     );
 
@@ -10813,34 +10813,6 @@ async function initializeData() {
       response: '🎁 ¡Bonificación de ${amount} acreditada en tu cuenta! ✅\n💸 Tu saldo actual es ${balance} 💸'
     },
     {
-      // #195: NO es un mensaje: su texto es el NÚMERO del porcentaje de referidos. Lo lee
-      // src/utils/referralRate.js (cálculo/pago de comisiones) y todos los textos que
-      // muestran el % (Información del Servicio, Mis Referidos, {referral_pct} en /sys_*).
-      name: '/sys_referral_pct',
-      description: 'PORCENTAJE DE REFERIDOS (no es un mensaje). Escribí SOLO el número: ej. 3 (= el referidor cobra el 3% de lo que pierden sus referidos cada mes). Lo usan el cálculo de comisiones, "Información del Servicio", el modal "Mis Referidos" y la variable {referral_pct} de cualquier comando /sys_*. Si lo dejás vacío o inválido, vale 3.',
-      type: 'info',
-      response: '3'
-    },
-    {
-      // #197 NO es un mensaje: horas que tiene el cliente para reclamar un premio de la ruleta.
-      name: '/sys_roulette_claim_hours',
-      description: 'RULETA DIARIA — HORAS PARA RECLAMAR (no es un mensaje). Escribí SOLO el número de horas que tiene el cliente para tocar "Reclamar premio" en la app después de ganar (dinero o %). Pasado el plazo el premio VENCE. Vacío o inválido = 24.',
-      type: 'info',
-      response: '24'
-    },
-    {
-      name: '/sys_roulette_won',
-      description: 'RULETA DIARIA — mensaje al cliente cuando GANA un premio (dinero o %). Variables: {username}, {premio} (ej. "$5.000" o "+50% EXTRA en tu próxima carga"), {horas} (plazo para reclamar), {vence} (fecha y hora límite). Si lo dejás vacío, no se envía.',
-      type: 'message',
-      response: '🎡 ¡GANASTE {premio} en la ruleta diaria! 🎉\n\nTenés {horas} horas para reclamarlo: entrá a la app, tocá RULETA y después RECLAMAR PREMIO. ⏰ Vence el {vence}.'
-    },
-    {
-      name: '/sys_roulette_claimed',
-      description: 'RULETA DIARIA — mensaje al cliente cuando RECLAMA su premio. Variables: {username}, {premio}, {detalle} (dinero: "en unos minutos un agente te lo carga…"; %: "avisale al agente en tu próxima carga…"). Si lo dejás vacío, no se envía.',
-      type: 'message',
-      response: '✅ ¡Premio reclamado! {detalle}'
-    },
-    {
       name: '/sys_withdrawal',
       description: 'Mensaje automático al realizar un retiro. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
@@ -10863,9 +10835,9 @@ async function initializeData() {
     },
     {
       name: '/sys_welcome',
-      description: 'Mensaje de bienvenida que se envía cuando el usuario ingresa por primera vez (cada 24h). Variables: {username}, {cbu}, {referral_pct} (% de referidos vigente)',
+      description: 'Mensaje de bienvenida que se envía cuando el usuario ingresa por primera vez (cada 24h). Variables: {username}, {cbu}',
       type: 'message',
-      response: '🎉 ¡Bienvenido a GANAMOS, {username}!\n\n🎁 Beneficios exclusivos:\n• Bonos en tus cargas\n• Fueguito diario con recompensas\n• Referidos: cobrás el {referral_pct}% de la actividad de tus amigos todos los meses\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nCBU activo: {cbu}'
+      response: '🎉 ¡Bienvenido a GANAMOS, {username}!\n\n🎁 Beneficios exclusivos:\n• Bonos en tus cargas\n• Ruleta diaria con premios\n• Fueguito diario con recompensas\n• Atención 24/7\n\n💬 Escribe aquí para hablar con un agente.\n\nCBU activo: {cbu}'
     },
     {
       name: '/sys_cbu',
@@ -11062,7 +11034,7 @@ async function initializeData() {
   // segura: sólo toca respuestas que todavía contengan una de esas marcas; un texto
   // que el owner ya editó sin esas palabras no se toca.
   if (PLATFORM_MANUAL) {
-    const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|rakeback|nivel VIP/i;
+    const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|\{referral_pct\}|referid|rakeback|nivel VIP/i; // #207 + referidos
     let fixed = 0;
     for (const cmd of systemCmds) {
       try {
@@ -11085,7 +11057,8 @@ async function initializeData() {
     } catch (e) {
       console.warn(`⚠️ Migración GANAMOS (variables): ${e.message}`);
     }
-    if (fixed) console.log(`✅ GANAMOS: ${fixed} comando(s) con texto heredado de 1girox/reembolsos/rollover actualizados`);
+    try { const r = await Command.deleteOne({ name: '/sys_referral_pct' }); if (r.deletedCount) console.log('✅ GANAMOS: comando /sys_referral_pct eliminado (sin referidos)'); } catch (_) {} // #207
+    if (fixed) console.log(`✅ GANAMOS: ${fixed} comando(s) con texto heredado de 1girox/reembolsos/rollover/referidos actualizados`);
   }
 
   // #200 Ruleta: giros por día configurables → el índice único pasa a (userId, dateKey, seq).
@@ -14701,7 +14674,7 @@ app.get('/api/public/config', async (req, res) => {
     playUrl: girox.getPlayUrl(),
     publicRegister: !PLATFORM_MANUAL || PUBLIC_REGISTER_ENABLED,
     brand: process.env.BRAND_NAME || 'GANAMOS',
-    referralPct // #195: % de referidos (comando /sys_referral_pct) para los textos de la PWA
+    ...(PLATFORM_NO_STATS ? {} : { referralPct }) // #195/#207: sin referidos en GANAMOS
   });
 });
 
@@ -18161,7 +18134,10 @@ app.get('/api/admin/users/export/csv', authMiddleware, async (req, res) => {
 // ============================================
 
 const referralRoutes = require('./src/routes/referralRoutes');
-app.use('/api/referrals', referralRoutes);
+// #207 GANAMOS (manual): sin API no hay netwin → no hay comisiones de referidos, y sin
+// registro público el link no sirve. Todo /api/referrals responde 404.
+if (PLATFORM_NO_STATS) app.use('/api/referrals', (req, res) => res.status(404).json({ error: 'Los referidos no están disponibles en GANAMOS.', manual: true }));
+else app.use('/api/referrals', referralRoutes);
 
 // ============================================================================
 // RULETA DIARIA — 1 giro/día por user con PWA + notifs. Auto-credit JUGAYGANA.
@@ -18464,6 +18440,21 @@ async function _recordRouletteTransaction(spinId, userId, username, prizeARS, la
   }
 }
 
+// #208 (owner): el giro NO se renueva a las 00:00 sino 24 h REALES después del último
+// giro. Con spinsPerDay > 1 son N giros por ventana rodante de 24 h. Devuelve cuántos
+// giros usó en la ventana, cuántos le quedan y cuándo se libera el próximo.
+const ROULETTE_WINDOW_MS = 24 * 3600 * 1000;
+async function _rouletteSpinWindow(userId, spinsPerDay) {
+  const n = Math.max(1, Number(spinsPerDay) || 1);
+  const since = new Date(Date.now() - ROULETTE_WINDOW_MS);
+  const spins = await DailyRouletteSpin.find({ userId, spunAt: { $gte: since } }).sort({ spunAt: 1 }).select('spunAt').lean();
+  const used = spins.length;
+  const left = Math.max(0, n - used);
+  // El próximo giro se libera cuando "vence" el más viejo de los últimos N.
+  const blocker = used >= n ? spins[used - n] : null;
+  const nextAt = blocker ? new Date(new Date(blocker.spunAt).getTime() + ROULETTE_WINDOW_MS) : null;
+  return { used, left, nextAt, spinsPerDay: n };
+}
 // #200 ¿Es un usuario de prueba de la ruleta? (config → gira sin app ni cargas mínimas)
 function _rouletteIsTestUser(rcfg, username) {
   return Array.isArray(rcfg.testUsers) && rcfg.testUsers.includes(String(username || '').toLowerCase());
@@ -18483,10 +18474,12 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
     const act = isTest ? { active: true, count: null, minCargas: rcfg.minCargas30d, days: rcfg.minCargasDays } : await _rouletteIsActiveClient(userId, username, rcfg.minCargas30d, rcfg.minCargasDays);
     const eligible = appOk && act.active;
     await _rouletteExpireStale({ userId }); // #197
-    // #200 giros por día: el "spin de hoy" es el ÚLTIMO; alreadySpun = no quedan giros.
-    const spinsToday = await DailyRouletteSpin.countDocuments({ userId, dateKey });
-    const spinsLeft = Math.max(0, (rcfg.spinsPerDay || 1) - spinsToday);
-    const spin = await DailyRouletteSpin.findOne({ userId, dateKey }).sort({ spunAt: -1 }).lean();
+    // #200/#208 ventana rodante de 24 h: el "spin" que se muestra es el ÚLTIMO;
+    // alreadySpun = no quedan giros en la ventana; nextSpinAt = cuándo se libera.
+    const win = await _rouletteSpinWindow(userId, rcfg.spinsPerDay || 1);
+    const spinsToday = win.used;
+    const spinsLeft = win.left;
+    const spin = await DailyRouletteSpin.findOne({ userId }).sort({ spunAt: -1 }).lean();
     // #197 un premio de OTRO día que sigue por reclamar / reclamado (para mostrarlo
     // aunque hoy todavía no haya girado).
     const openPrize = (spin && ['claim_pending', 'claimed', 'percent_pending'].includes(spin.status)) ? spin
@@ -18504,6 +18497,7 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
       spinsPerDay: rcfg.spinsPerDay || 1, // #200
       spinsToday,
       spinsLeft,
+      nextSpinAt: win.nextAt, // #208
       dateKey,
       prizes: rcfg.prizes.map(p => ({ label: p.label, emoji: p.emoji, type: p.type, value: p.value })), // #202 sin peso ni % de probabilidad (oculto al cliente)
       claimHours: await getRouletteClaimHours(), // #197
@@ -18613,9 +18607,11 @@ app.post('/api/admin/roulette/reset-daily', authMiddleware, adminMiddleware, asy
     }
 
     const dateKey = _rouletteDateKeyART();
-    const r = await DailyRouletteSpin.deleteMany({ dateKey });
+    // #208 la ventana es rodante (24 h desde el último giro) → se borran los giros de las
+    // últimas 24 h (los ya reclamados/cargados no: sólo sin premio, por reclamar o vencidos).
+    const r = await DailyRouletteSpin.deleteMany({ spunAt: { $gte: new Date(Date.now() - ROULETTE_WINDOW_MS) }, status: { $in: ['no_prize', 'claim_pending', 'expired'] } });
     const deleted = (r && r.deletedCount) || 0;
-    logger.warn(`[roulette] RESET diario por ${(req.user && req.user.username) || '?'} — dateKey=${dateKey} giros borrados=${deleted}`);
+    logger.warn(`[roulette] RESET por ${(req.user && req.user.username) || '?'} — giros de las últimas 24 h borrados=${deleted}`);
 
     // 🪦 2026-09-07 (réplica #204): se eliminó el aviso push "🎰 Ruleta diaria
     // actualizada · ¡Girá de nuevo!" — ninguna push puede mencionar la ruleta
@@ -18824,16 +18820,18 @@ async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
   // #200 Pre-check: ¿le quedan giros hoy? (spinsPerDay de la config; el unique index
   // (userId, dateKey, seq) igual cubre el race)
   const spinsPerDay = Math.max(1, Number(rcfg.spinsPerDay) || 1);
-  const spinsToday = await DailyRouletteSpin.countDocuments({ userId, dateKey });
-  if (spinsToday >= spinsPerDay) {
-    const already = await DailyRouletteSpin.findOne({ userId, dateKey }).sort({ spunAt: -1 }).lean();
+  const win = await _rouletteSpinWindow(userId, spinsPerDay); // #208 24 h reales desde el último giro
+  if (win.left <= 0) {
+    const already = await DailyRouletteSpin.findOne({ userId }).sort({ spunAt: -1 }).lean();
     return { http: 409, body: {
-      error: spinsPerDay > 1 ? `Ya usaste tus ${spinsPerDay} giros de hoy. Volvé mañana.` : 'Ya giraste la ruleta hoy. Volvé mañana.',
+      error: `Ya giraste. Tu próximo giro se habilita el ${_rouletteFmtVence(win.nextAt)}.`,
       alreadySpun: true,
       spinsLeft: 0,
+      nextSpinAt: win.nextAt,
       spin: _rouletteSpinPublic(already)
     } };
   }
+  const spinsToday = await DailyRouletteSpin.countDocuments({ userId, dateKey }); // sólo para el seq del día
   const seq = spinsToday + 1;
 
   // Pick + insert (status='won' | 'percent_pending' | 'no_prize') con unique index protegiendo race.
@@ -18908,18 +18906,20 @@ async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
   } catch (e) {
     // El unique index disparó (otro tab del mismo user llegó primero).
     if (String(e.message || '').includes('duplicate key')) {
-      const existing = await DailyRouletteSpin.findOne({ userId, dateKey }).sort({ spunAt: -1 }).lean();
-      const cnt = await DailyRouletteSpin.countDocuments({ userId, dateKey });
-      const left = Math.max(0, spinsPerDay - cnt);
-      return { http: 409, body: { error: left > 0 ? 'Se cruzaron dos giros. Probá de nuevo.' : 'Ya giraste la ruleta hoy.', alreadySpun: left === 0, spinsLeft: left, spin: _rouletteSpinPublic(existing) } };
+      const existing = await DailyRouletteSpin.findOne({ userId }).sort({ spunAt: -1 }).lean();
+      const w2 = await _rouletteSpinWindow(userId, spinsPerDay);
+      return { http: 409, body: { error: w2.left > 0 ? 'Se cruzaron dos giros. Probá de nuevo.' : 'Ya giraste.', alreadySpun: w2.left === 0, spinsLeft: w2.left, nextSpinAt: w2.nextAt, spin: _rouletteSpinPublic(existing) } };
     }
     throw e;
   }
-  const _spinsLeftNow = Math.max(0, spinsPerDay - seq); // #200 para que la app sepa si puede seguir girando
+  // #200/#208 estado de la ventana DESPUÉS de este giro: giros que le quedan y cuándo se libera el próximo.
+  const _winAfter = await _rouletteSpinWindow(userId, spinsPerDay);
+  const _spinsLeftNow = _winAfter.left;
+  const _nextSpinAtNow = _winAfter.nextAt;
 
   if (!hasPrize) {
     logger.info(`[ROULETTE] ${username} → SIN PREMIO (${dateKey})`);
-    return { http: 200, body: { success: true, spinsLeft: _spinsLeftNow, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji } } };
+    return { http: 200, body: { success: true, spinsLeft: _spinsLeftNow, nextSpinAt: _nextSpinAtNow, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji } } };
   }
 
   const premioTxt = _roulettePrizeText(spinDoc);
@@ -18934,7 +18934,7 @@ async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
   await _emitAdminOnlyChatNote(userId, username,
     `🎡 RULETA DIARIA: ganó ${premioTxt} (${pick.label}). Tiene ${claimHours} h para RECLAMARLO desde la app (vence ${venceTxt}). Cuando lo reclame: ${prizeARS > 0 ? 'la carga aparece en "Pendientes GANAMOS" y en Ruleta diaria' : 'te aparece en Ruleta diaria y el modal Depositar te sugiere el % en su próxima carga'}.`).catch(() => {});
   logger.info(`[ROULETTE] ${username} → ${premioTxt} POR RECLAMAR hasta ${claimExpiresAt.toISOString()} (${dateKey})`);
-  return { http: 200, body: { success: true, spinsLeft: _spinsLeftNow, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji, claimHours } } };
+  return { http: 200, body: { success: true, spinsLeft: _spinsLeftNow, nextSpinAt: _nextSpinAtNow, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji, claimHours } } };
 }
 
 // POST /api/roulette/spin — el user gira la ruleta del día.

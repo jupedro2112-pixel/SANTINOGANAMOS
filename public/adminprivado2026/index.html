@@ -53,7 +53,10 @@ body.platform-manual #notifSegment option[value="with_balance"],
 body.platform-manual .col-balance,
 body.platform-manual .stat-card.refund, body.platform-manual .stat-card.cashback,
 body.platform-manual .stat-card.rakeback, body.platform-manual .stat-card.vip_levelup,
-body.platform-manual .rp-roll-col { display: none !important; }
+body.platform-manual .rp-roll-col,
+body.platform-manual .nav-item[data-section="referrals"],
+body.platform-manual .filter-btn[data-filter="referral_commission"],
+body.platform-manual .stat-card.referral { display: none !important; } /* #207 sin referidos */
 </style>
 </head>
 <body>
@@ -1828,7 +1831,7 @@ document.addEventListener('change', function (ev) {
                             días
                         </label>
                         <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#fff;">
-                            🎡 Giros por día:
+                            🎡 Giros cada 24 h (desde el último giro):
                             <input id="rouletteSpinsPerDay" type="number" min="1" max="20" value="1" style="width:60px;background:rgba(0,0,0,0.45);border:1px solid rgba(212,175,55,0.40);color:#ffd700;padding:6px 8px;border-radius:7px;font-weight:800;">
                         </label>
                         <label style="display:flex;align-items:center;gap:6px;font-size:12px;color:#fff;cursor:pointer;">

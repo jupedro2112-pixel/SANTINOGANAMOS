@@ -229,7 +229,8 @@
         if (open && ['claim_pending', 'claimed', 'percent_pending'].includes(open.status) && !(_state.alreadySpun && spin && subFor(spin) && spin.status !== 'no_prize')) {
             subText = subFor(open);
         } else if (_state.alreadySpun && spin) {
-            subText = subFor(spin) || 'Volvé mañana';
+            const msN = _state.nextSpinAt ? (new Date(_state.nextSpinAt).getTime() - Date.now()) : 0;
+            subText = subFor(spin) || (msN > 0 ? 'En ' + _msLeftText(msN) : 'Volvé pronto'); // #208
         } else if (spin && subFor(spin) && Number(_state.spinsLeft) > 0) {
             subText = subFor(spin); // #200 ganó y todavía le quedan giros
         } else {
@@ -352,6 +353,16 @@
         if (modal) modal.style.display = 'none';
     }
 
+    // #208 "Tu próximo giro: en 5 h 12 min (a las 14:30)" a partir de nextSpinAt.
+    function _nextSpinText() {
+        const at = _state && _state.nextSpinAt ? new Date(_state.nextSpinAt) : null;
+        if (!at || isNaN(at.getTime())) return 'Tu próximo giro se habilita 24 h después del último.';
+        const ms = at.getTime() - Date.now();
+        if (ms <= 0) return 'Ya podés volver a girar.';
+        let hhmm = '';
+        try { hhmm = at.toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', hour12: false }); } catch (_) {}
+        return 'Tu próximo giro: en ' + _msLeftText(ms) + (hhmm ? ' (a las ' + hhmm + ')' : '') + '.';
+    }
     // #197 Caja del premio según la etapa del reclamo.
     function _msLeftText(ms) {
         ms = Math.max(0, Number(ms) || 0);
@@ -380,7 +391,7 @@
             box = '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);border-radius:14px;padding:22px 16px;text-align:center;margin-bottom:12px;">'
                 + '<div style="font-size:48px;margin-bottom:6px;">⌛</div>'
                 + '<div style="color:#aaa;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">Premio vencido</div>'
-                + '<div style="color:#ddd;font-size:13px;line-height:1.45;">Tenías ' + _esc(claimHours) + ' horas para reclamar ' + (isPct ? 'tu +' + _esc(sp.prizePct) + '% EXTRA' : '$' + _fmt(sp.prizeARS)) + ' y el plazo pasó. ¡Mañana tenés otro giro!</div>'
+                + '<div style="color:#ddd;font-size:13px;line-height:1.45;">Tenías ' + _esc(claimHours) + ' horas para reclamar ' + (isPct ? 'tu +' + _esc(sp.prizePct) + '% EXTRA' : '$' + _fmt(sp.prizeARS)) + ' y el plazo pasó. ¡Vas a tener otra chance en tu próximo giro!</div>'
                 + '</div>';
         } else if (isPct) {
             const used = sp.status === 'percent_used';
@@ -470,7 +481,7 @@
         html += '<h2 style="color:#ffd700;text-align:center;margin:0 0 4px;font-size:22px;font-weight:900;letter-spacing:1.5px;padding-right:36px;display:flex;align-items:center;justify-content:center;gap:8px;">' + _miniWheel(26) + '<span>RULETA DIARIA</span></h2>';
         const spd = Number(_state.spinsPerDay) || 1; // #200 giros por día
         const spinsLeft = _state.spinsLeft != null ? Number(_state.spinsLeft) : (alreadySpun ? 0 : spd);
-        html += '<p style="color:#ddd;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.4;">' + (spd > 1 ? spd + ' giros por día' : '1 giro por día') + ' · si ganás, tenés ' + _esc(claimHours) + ' h para reclamar tu premio</p>';
+        html += '<p style="color:#ddd;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.4;">' + (spd > 1 ? spd + ' giros cada 24 h' : '1 giro cada 24 h') + ' · si ganás, tenés ' + _esc(claimHours) + ' h para reclamar tu premio</p>';
 
         // #201 La RUEDA (SVG). Sin girar: en reposo; ya girada: clavada en el premio que salió.
         html += _WHEEL_CSS;
@@ -505,9 +516,10 @@
                 // #202 sin emojis: ícono dorado (trébol) dibujado en SVG.
                 html += '<div style="margin:0 auto 10px;width:58px;height:58px;">' + _cloverSvg() + '</div>';
                 html += '<div style="color:#ffd700;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">Hoy no fue tu día</div>';
-                html += '<div style="color:#ddd;font-size:13.5px;line-height:1.45;">Mañana a partir de las 00:00 tenés otra chance. ¡La suerte cambia!</div>';
+                html += '<div style="color:#ddd;font-size:13.5px;line-height:1.45;">' + _nextSpinText() + ' ¡La suerte cambia!</div>';
                 html += '</div>';
             }
+            html += '<div style="text-align:center;color:#aaa;font-size:11.5px;margin:-4px 0 10px;">⏱ ' + _nextSpinText() + '</div>';
             html += '<button onclick="VIP.roulette.close()" style="width:100%;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:12px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">CERRAR</button>';
         } else {
             // Estado: aún no giró. Ícono 🎰 con animación + CTA. Sin tabla
@@ -640,6 +652,7 @@
                 if (d && d.alreadySpun) {
                     _state.alreadySpun = true;
                     _state.spinsLeft = 0;
+                    _state.nextSpinAt = d.nextSpinAt || _state.nextSpinAt || null; // #208
                     _state.spin = d.spin;
                     _wheelAngle = null;
                     _renderModal();
@@ -658,6 +671,7 @@
             await _wheelStopAt(idx);
             await new Promise(r => setTimeout(r, 650));
             _state.spinsLeft = d.spinsLeft != null ? Number(d.spinsLeft) : 0; // #200
+            _state.nextSpinAt = d.nextSpinAt || null; // #208
             _state.alreadySpun = true;
             _state.spin = d.prize; // #197 forma pública del spin (id, status, claimExpiresAt…)
             if (d.prize && d.prize.claimHours) _state.claimHours = d.prize.claimHours;

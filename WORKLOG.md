@@ -37,6 +37,34 @@
 
 ---
 
+## Sesión 2026-09-30 (9ª) — Sin referidos en GANAMOS + ruleta cada 24 h reales
+
+### 207. Referidos eliminados en modo manual (sin API no hay netwin; sin registro público el link no sirve)
+- **PWA (SW v120):** fuera el ítem "Mis Referidos" del menú, el modal de referidos, las
+  cards "Referidos: 3% mensual" (Información del Servicio y bienvenida por pauta), la
+  línea "Sistema de referidos" del welcome de publicista, el autocompletado `?ref=` y el
+  botón "Registrarse con código"; el campo de código en el registro queda oculto.
+- **Backend:** `/api/referrals/*` responde 404 en manual; seed sin `/sys_referral_pct`
+  (la migración GANAMOS lo borra de la base) y la bienvenida sin la línea de referidos
+  (marcadores `{referral_pct}`/`referid` en `STALE_RE` → se re-siembra); `/api/public/
+  config` sin `referralPct` en manual. `referralRate.js`, controlador y servicios quedan
+  para `PLATFORM_MODE=girox`.
+- **Panel (admin-sw v48):** `body.platform-manual` oculta el nav "Referidos", el filtro
+  y la stat card de comisiones.
+
+### 208. Ruleta: el giro se renueva 24 h REALES después del último giro (no a las 00:00)
+- `_rouletteSpinWindow(userId, spinsPerDay)`: cuenta los giros de las últimas 24 h; con
+  `spinsPerDay` N son N giros por ventana rodante; `nextAt` = 24 h después del más viejo
+  de los últimos N. `status` devuelve `spinsToday` (en la ventana), `spinsLeft`,
+  `nextSpinAt`, `alreadySpun = spinsLeft===0` y `spin` = el último giro (de cualquier
+  día); el núcleo del giro rebota con "Tu próximo giro se habilita el dd/mm hh:mm" y
+  devuelve `nextSpinAt`; el `seq` sigue siendo por `dateKey` (índice único intacto).
+  "Reiniciar ruleta" borra los giros de las últimas 24 h que no fueron reclamados.
+- **PWA (SW v121):** "1 giro cada 24 h", "Tu próximo giro: en 5 h 12 min (a las 14:30)"
+  en el modal (sin premio y con premio) y "En 5 h 12 min" en la celda; menú "(1 giro
+  cada 24 h)". Panel: "Giros cada 24 h (desde el último giro)".
+- `node --check` ✅, `check-tdz` ✅, HTML balanceado.
+
 ## Sesión 2026-09-30 (8ª) — Ejemplos con usernames largos e inventados
 
 ### 206. `_CLAIMS_EXAMPLE_NAMES` → 30 usernames inventados de 7+ letras

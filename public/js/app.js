@@ -39,18 +39,7 @@ document.addEventListener('DOMContentLoaded', () => {
         }, 100);
     }
 
-    // Auto-fill referral code from URL ?ref=CODE
-    const urlParams = new URLSearchParams(window.location.search);
-    const refCode   = urlParams.get('ref');
-    if (refCode) {
-        const refInput = document.getElementById('registerReferralCode');
-        if (refInput) refInput.value = refCode.toUpperCase();
-        const registerBtn = document.getElementById('registerBtn');
-        if (registerBtn) {
-            registerBtn.style.background = 'linear-gradient(135deg, #d4af37 0%, #b8860b 100%)';
-            registerBtn.textContent = '🤝 Registrarse con código de referido';
-        }
-    }
+    // #207 GANAMOS: sin referidos (no hay API → no hay comisiones; sin registro público el link no sirve).
 
     // NOTA: el viejo adServiceModal ("Información del Servicio") se auto-abría
     // acá para visitantes con atribución de publicidad. Ahora el welcome de 2
@@ -403,9 +392,6 @@ function setupEventListeners() {
         const claimFireBtn = document.getElementById('claimFireBtn');
         if (claimFireBtn) claimFireBtn.addEventListener('click', VIP.fire.claimFire);
 
-        // Referrals
-        const referralBtn = document.getElementById('referralBtn');
-        if (referralBtn) referralBtn.addEventListener('click', () => VIP.ui.openReferralModal());
 
         // Info modal
         const infoBtn = document.getElementById('infoBtn');

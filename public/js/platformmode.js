@@ -67,7 +67,7 @@
                 };
                 if (j.playUrl) VIP.config.PLATFORM_URL = j.playUrl;
                 VIP.platform.apply();
-                if (j.referralPct != null) applyReferralPct(j.referralPct);
+                if (j.referralPct != null) applyReferralPct(j.referralPct); // (#207: en GANAMOS ya no viene)
             } catch (_) { /* sin config: comportamiento por defecto */ }
         }
     };
