@@ -37,6 +37,21 @@
 
 ---
 
+## Sesión 2026-09-30 (7ª) — Rueda: texto realmente centrado en el gajo; ejemplos con 2 letras + 3 dígitos
+
+### 205. Texto de la rueda ajustado al gajo (sin emojis) y nombres de ejemplo bien tapados
+- **Centrado (por fin):** el texto estaba centrado en la banda matemática (r=101) pero
+  VISUALMENTE quedaba pegado al hub (que con su aro ocupa hasta r≈40) y con aire hacia
+  el aro (interior en r≈160). Ahora se centra en r=112 y el tamaño de letra se ajusta al
+  largo de la etiqueta para que el texto ocupe como máximo 92 unidades (`fs = 92 /
+  (0.62·len)`, entre 11 y 19) → aire parejo a ambos lados. Se sacaron los emojis de
+  dentro de la rueda (no renderizaban parejo en todos los navegadores). Verificado con
+  render de Inkscape con los premios reales del owner ($5.000, +20%, +15%, +10%, sin premio).
+- **Ganadores de ejemplo:** estaban usando `_claimsMaskName` (primera letra + asteriscos,
+  el estilo del ticker del login). Ahora usan el `_mask` de la ruleta (igual que los
+  reales): últimas 2 letras + 3 dígitos al azar → "****as347".
+- SW v119. `node --check` ✅, `check-tdz` ✅.
+
 ## Sesión 2026-09-30 (6ª) — Ícono propio de la ruleta
 
 ### 204. Mini rueda SVG en vez del emoji 🎰 (celda del inicio, título del modal, ítem del menú)

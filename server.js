@@ -18698,8 +18698,10 @@ app.get('/api/roulette/recent-winners', authMiddleware, async (req, res) => {
             const rnd = () => { seed = (seed + 0x6D2B79F5) >>> 0; let t = seed; t = Math.imul(t ^ (t >>> 15), t | 1); t ^= t + Math.imul(t ^ (t >>> 7), t | 61); return ((t ^ (t >>> 14)) >>> 0) / 4294967296; };
             const used = new Set(items.map(w => w.username));
             for (let i = 0; i < want; i++) {
-              const base = _CLAIMS_EXAMPLE_NAMES[Math.floor(rnd() * _CLAIMS_EXAMPLE_NAMES.length)] + (Math.floor(rnd() * 89) + 10);
-              const name = _claimsMaskName(base);
+              // #205 (owner): nombre tapado como los reales de la ruleta (`_mask` de arriba):
+              // quedan las 2 últimas letras + 3 dígitos al azar. Ej. "****as347".
+              const base = _CLAIMS_EXAMPLE_NAMES[Math.floor(rnd() * _CLAIMS_EXAMPLE_NAMES.length)] + String(Math.floor(rnd() * 900) + 100);
+              const name = _mask(base);
               if (used.has(name)) continue;
               used.add(name);
               // Premios chicos más seguido: los cash grandes (> $3.000) salen poco.

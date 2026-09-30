@@ -84,20 +84,23 @@
                 : '<path d="M ' + C + ' ' + C + ' L ' + x0.toFixed(2) + ' ' + y0.toFixed(2) + ' A ' + R + ' ' + R + ' 0 ' + large + ' 1 ' + x1.toFixed(2) + ' ' + y1.toFixed(2) + ' Z" fill="' + color + '" stroke="rgba(255,215,0,0.55)" stroke-width="1.2"/>';
             const mid = _segCenter(i, n);
             const lines = _segLines(segs[i]);
-            const long = lines[0].length > 9;
-            const fs1 = lines[0].length > 12 ? 13 : (long ? 15 : 19), fs2 = 10.5;
+            // #205 El texto se ajusta al ancho del gajo: banda radial entre el hub (r=34) y el
+            // aro (r=168) con margen → largo útil 108. Sin emoji dentro de la rueda.
+            const BAND = 92;
+            const fs1 = Math.max(11, Math.min(19, Math.floor(BAND / (0.62 * Math.max(4, lines[0].length)))));
+            const fs2 = 10;
             // Texto radial. Mitad derecha: lee del centro hacia afuera. Mitad izquierda: se
             // da vuelta (rotate +180, anclado al final) para que nunca quede cabeza abajo.
             const leftHalf = mid > 180;
             // #202 el texto va CENTRADO en el gajo (a mitad de camino entre el centro y el aro).
-            const TR = 106;
+            const TR = 112; // #205 centro VISUAL de la banda (el hub con su aro ocupa hasta r≈40; el aro interior está en r≈160)
             const txTransform = leftHalf
                 ? 'translate(' + C + ' ' + C + ') rotate(' + (mid + 90).toFixed(2) + ') translate(-' + TR + ' 0)'
                 : 'translate(' + C + ' ' + C + ') rotate(' + (mid - 90).toFixed(2) + ') translate(' + TR + ' 0)';
             g += '<g class="rw-seg' + (i === winIdx ? ' win' : '') + '">' + path +
                 '<text transform="' + txTransform + '" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-weight="900" text-anchor="middle" dominant-baseline="middle" style="paint-order:stroke;stroke:rgba(0,0,0,0.55);stroke-width:3px;letter-spacing:.5px;">' +
-                '<tspan x="0" y="' + (lines[1] ? -4 : 0) + '" font-size="' + fs1 + '">' + _esc((segs[i].emoji ? segs[i].emoji + ' ' : '') + lines[0]) + '</tspan>' +
-                (lines[1] ? '<tspan x="0" y="12" font-size="' + fs2 + '" fill="#ffe28a">' + _esc(lines[1]) + '</tspan>' : '') +
+                '<tspan x="0" y="' + (lines[1] ? -3.5 : 0) + '" font-size="' + fs1 + '">' + _esc(lines[0]) + '</tspan>' +
+                (lines[1] ? '<tspan x="0" y="11" font-size="' + fs2 + '" fill="#ffe28a">' + _esc(lines[1]) + '</tspan>' : '') +
                 '</text></g>';
         }
         // Luces del aro (24), alternadas.
