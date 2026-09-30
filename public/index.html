@@ -506,7 +506,7 @@
             <!-- #199 Ruleta diaria desde el menú (si le falta la app, muestra los pasos). -->
             <button class="menu-item roulette-menu-btn" title="Ruleta diaria" role="menuitem"
                 onclick="if(window.VIP&&VIP.roulette)VIP.roulette.openFromMenu();">
-                <span class="menu-item-icon">🎡</span><span class="menu-item-label">Ruleta diaria <span style="font-weight:600;color:#ffd700;font-size:11px;">(1 giro por día)</span></span>
+                <span class="menu-item-icon menu-item-svg"><svg viewBox="0 0 40 40" width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex:none;"><circle cx="20" cy="20" r="18.5" fill="#0a0015"/><circle cx="20" cy="20" r="17.5" fill="none" stroke="#d4af37" stroke-width="3"/><path d="M20 20 L20.00 4.50 A15.5 15.5 0 0 1 30.96 9.04 Z" fill="#5b1a8c"/><path d="M20 20 L30.96 9.04 A15.5 15.5 0 0 1 35.50 20.00 Z" fill="#a3172d"/><path d="M20 20 L35.50 20.00 A15.5 15.5 0 0 1 30.96 30.96 Z" fill="#0f7a4f"/><path d="M20 20 L30.96 30.96 A15.5 15.5 0 0 1 20.00 35.50 Z" fill="#1d2e8f"/><path d="M20 20 L20.00 35.50 A15.5 15.5 0 0 1 9.04 30.96 Z" fill="#8a5a12"/><path d="M20 20 L9.04 30.96 A15.5 15.5 0 0 1 4.50 20.00 Z" fill="#0f6c7a"/><path d="M20 20 L4.50 20.00 A15.5 15.5 0 0 1 9.04 9.04 Z" fill="#7a1a5e"/><path d="M20 20 L9.04 9.04 A15.5 15.5 0 0 1 20.00 4.50 Z" fill="#2f5f1a"/><circle cx="20" cy="20" r="15.5" fill="none" stroke="rgba(0,0,0,.35)" stroke-width=".8"/><circle cx="20" cy="20" r="4.2" fill="#1a0033" stroke="#ffd700" stroke-width="1.4"/><polygon points="20,0.5 24,7.5 16,7.5" fill="#ffd700" stroke="#6b4e00" stroke-width=".8"/></svg></span><span class="menu-item-label">Ruleta diaria <span style="font-weight:600;color:#ffd700;font-size:11px;">(1 giro por día)</span></span>
             </button>
             <button class="menu-item referral-btn" id="referralBtn" title="Mis Referidos" role="menuitem">
                 <span class="menu-item-icon">🤝</span><span class="menu-item-label">Mis Referidos</span>
@@ -809,6 +809,7 @@
                     align-items:center; justify-content:center;
                     background:linear-gradient(135deg,#d4af37,#ffd700); border-radius:50%;
                 }
+                .dash-roulette-avatar-svg { background:none; width:32px; height:32px; }
                 .dash-roulette-label { font-size:8.5px; font-weight:800; color:#ffd700; letter-spacing:.6px; }
                 .dash-roulette-sub {
                     font-size:9px; font-weight:900; color:#fff; text-align:center;

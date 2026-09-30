@@ -37,6 +37,15 @@
 
 ---
 
+## Sesión 2026-09-30 (6ª) — Ícono propio de la ruleta
+
+### 204. Mini rueda SVG en vez del emoji 🎰 (celda del inicio, título del modal, ítem del menú)
+- `_MINI_WHEEL` / `_miniWheel(size)` en `roulette.js`: rueda de 8 gajos con la misma paleta
+  que la grande, aro dorado, hub y puntero. Se usa en `.dash-roulette-avatar` (clase
+  `dash-roulette-avatar-svg`, sin el fondo dorado), en el `<h2>` del modal y, como SVG
+  estático, en el ítem "Ruleta diaria" del menú ☰. La celda bloqueada mantiene el 🔒.
+- SW v118.
+
 ## Sesión 2026-09-30 (5ª) — Rueda: sin fichitas, texto mejor centrado; ganadores de ejemplo rotativos
 
 ### 203. Fichitas fuera, bloque de texto balanceado en el gajo, y "Ganadores de hoy" con ejemplos mientras no hay público

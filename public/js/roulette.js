@@ -20,6 +20,9 @@
     let _spinning = false;
     // #201 RUEDA REAL (SVG): ángulo actual del rotor (persistente en la sesión) para
     // que, ya girada, la rueda quede clavada en el premio que salió.
+    // #204 Ícono propio de la ruleta (mini rueda SVG) en vez del emoji 🎰.
+    const _MINI_WHEEL = '<svg viewBox="0 0 40 40" width="{S}" height="{S}" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex:none;"><circle cx="20" cy="20" r="18.5" fill="#0a0015"/><circle cx="20" cy="20" r="17.5" fill="none" stroke="#d4af37" stroke-width="3"/><path d="M20 20 L20.00 4.50 A15.5 15.5 0 0 1 30.96 9.04 Z" fill="#5b1a8c"/><path d="M20 20 L30.96 9.04 A15.5 15.5 0 0 1 35.50 20.00 Z" fill="#a3172d"/><path d="M20 20 L35.50 20.00 A15.5 15.5 0 0 1 30.96 30.96 Z" fill="#0f7a4f"/><path d="M20 20 L30.96 30.96 A15.5 15.5 0 0 1 20.00 35.50 Z" fill="#1d2e8f"/><path d="M20 20 L20.00 35.50 A15.5 15.5 0 0 1 9.04 30.96 Z" fill="#8a5a12"/><path d="M20 20 L9.04 30.96 A15.5 15.5 0 0 1 4.50 20.00 Z" fill="#0f6c7a"/><path d="M20 20 L4.50 20.00 A15.5 15.5 0 0 1 9.04 9.04 Z" fill="#7a1a5e"/><path d="M20 20 L9.04 9.04 A15.5 15.5 0 0 1 20.00 4.50 Z" fill="#2f5f1a"/><circle cx="20" cy="20" r="15.5" fill="none" stroke="rgba(0,0,0,.35)" stroke-width=".8"/><circle cx="20" cy="20" r="4.2" fill="#1a0033" stroke="#ffd700" stroke-width="1.4"/><polygon points="20,0.5 24,7.5 16,7.5" fill="#ffd700" stroke="#6b4e00" stroke-width=".8"/></svg>';
+    function _miniWheel(size) { return _MINI_WHEEL.split('{S}').join(String(size)); }
     let _wheelAngle = null;
     const _WHEEL_COLORS = ['#5b1a8c', '#a3172d', '#0f7a4f', '#1d2e8f', '#8a5a12', '#0f6c7a', '#7a1a5e', '#2f5f1a', '#6b1f1f', '#1f4d6b'];
 
@@ -231,7 +234,7 @@
         }
 
         c.innerHTML = '<div class="dash-roulette" onclick="VIP.roulette && VIP.roulette.open()">'
-            + '<span class="dash-roulette-avatar">🎰</span>'
+            + '<span class="dash-roulette-avatar dash-roulette-avatar-svg">' + _miniWheel(30) + '</span>'
             + '<span class="dash-roulette-label">RULETA</span>'
             + '<span class="dash-roulette-sub">' + _esc(subText) + '</span>'
             + '</div>';
@@ -461,7 +464,7 @@
         const openPrize = _state.openPrize; // #197 premio de otro día aún abierto (por reclamar / en carga / % pendiente)
         let html = '<div style="background:linear-gradient(180deg,#1a0033,#0a001a);border:2px solid #ffd700;border-radius:16px;padding:20px 16px;color:#fff;max-width:560px;width:100%;margin:14px auto;position:relative;">';
         html += '<button onclick="VIP.roulette.close()" style="position:absolute;top:10px;right:10px;background:rgba(0,0,0,0.55);border:1px solid rgba(255,255,255,0.20);color:#fff;font-size:18px;cursor:pointer;line-height:1;width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;">✕</button>';
-        html += '<h2 style="color:#ffd700;text-align:center;margin:0 0 4px;font-size:22px;font-weight:900;letter-spacing:1.5px;padding-right:36px;">🎰 RULETA DIARIA</h2>';
+        html += '<h2 style="color:#ffd700;text-align:center;margin:0 0 4px;font-size:22px;font-weight:900;letter-spacing:1.5px;padding-right:36px;display:flex;align-items:center;justify-content:center;gap:8px;">' + _miniWheel(26) + '<span>RULETA DIARIA</span></h2>';
         const spd = Number(_state.spinsPerDay) || 1; // #200 giros por día
         const spinsLeft = _state.spinsLeft != null ? Number(_state.spinsLeft) : (alreadySpun ? 0 : spd);
         html += '<p style="color:#ddd;text-align:center;margin:0 0 14px;font-size:12px;line-height:1.4;">' + (spd > 1 ? spd + ' giros por día' : '1 giro por día') + ' · si ganás, tenés ' + _esc(claimHours) + ' h para reclamar tu premio</p>';
