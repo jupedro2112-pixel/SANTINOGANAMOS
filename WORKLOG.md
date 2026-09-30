@@ -37,6 +37,25 @@
 
 ---
 
+## Sesión 2026-09-30 (4ª) — Rueda: textos centrados, sin emojis ni %, y cartel "Agregar a Inicio" cada 24 h
+
+### 202. Ajustes de la rueda (capturas del owner) + porcentajes ocultos + pill de instalar cada 24 h
+- **"No está centrado":** (a) los textos de los gajos iban pegados al centro y dejaban hueco
+  hacia el aro → ahora van centrados a mitad del radio (`text-anchor:middle`, r=106), con
+  letra más chica si la etiqueta es larga; (b) en reposo la rueda arrancaba con el puntero
+  sobre el BORDE entre dos gajos → ahora arranca centrada sobre el primer gajo
+  (`_wheelAngle = _angleForSeg(0)`). Verificado con render de Inkscape (rueda rotada al
+  gajo ganador: cae centrada bajo el puntero).
+- **"La carita no es profesional":** el resultado sin premio ya no usa el emoji 😔: ícono
+  de trébol dorado en SVG (`_cloverSvg`) + "Hoy no fue tu día · Mañana a partir de las
+  00:00 tenés otra chance". Texto sin emojis.
+- **Porcentajes ocultos:** las fichitas de premios de la app ya no muestran el % de
+  probabilidad y `GET /api/roulette/status` manda `prizes` sólo con {label, emoji, type,
+  value} (sin `weight` ni `pct`). El panel los sigue viendo (`/api/admin/roulette/config`).
+- **Cartel "📱 Agregar a Inicio":** al cerrarlo con la ✕ se guarda `pwaInstallDismissedAt`
+  y NO volvía a aparecer por 3 días; el owner esperaba 24 h → ahora reaparece a las 24 h.
+- SW v116. `node --check` ✅, `check-tdz` ✅.
+
 ## Sesión 2026-09-30 (3ª) — Rueda de la ruleta REAL (SVG) que gira y frena en el premio
 
 ### 201. `roulette.js`: rueda profesional en vez del ícono 🎰 que "ni gira ni hace nada"

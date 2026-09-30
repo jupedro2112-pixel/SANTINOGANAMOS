@@ -54,6 +54,16 @@
         if (p.type === 'percent') return [label || ('+' + p.value + '%'), 'PRÓX. CARGA'];
         return [label || ('$' + _fmt(p.value)), 'EN FICHAS'];
     }
+    // #202 Trébol dorado (SVG) para el resultado sin premio.
+    function _cloverSvg() {
+        return '<svg viewBox="0 0 64 64" width="58" height="58" xmlns="http://www.w3.org/2000/svg">' +
+            '<defs><linearGradient id="rwClv" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffe680"/><stop offset="1" stop-color="#c9971a"/></linearGradient></defs>' +
+            '<circle cx="32" cy="32" r="30" fill="rgba(255,215,0,0.08)" stroke="rgba(255,215,0,0.45)" stroke-width="1.5"/>' +
+            '<g fill="url(#rwClv)"><circle cx="32" cy="20" r="8"/><circle cx="44" cy="32" r="8"/><circle cx="32" cy="44" r="8"/><circle cx="20" cy="32" r="8"/></g>' +
+            '<circle cx="32" cy="32" r="4" fill="#1a0033"/>' +
+            '<path d="M32 44 L36 58" stroke="url(#rwClv)" stroke-width="3" stroke-linecap="round" fill="none"/>' +
+            '</svg>';
+    }
     function _polar(cx, cy, r, deg) { const a = (deg - 90) * Math.PI / 180; return [cx + r * Math.cos(a), cy + r * Math.sin(a)]; }
     // SVG completo de la rueda. `angle` = rotación inicial del rotor. `winIdx` resalta un gajo.
     function _wheelSvg(angle, winIdx) {
@@ -72,15 +82,17 @@
             const mid = _segCenter(i, n);
             const lines = _segLines(segs[i]);
             const long = lines[0].length > 9;
-            const fs1 = long ? 15 : 19, fs2 = 10.5;
+            const fs1 = lines[0].length > 12 ? 13 : (long ? 15 : 19), fs2 = 10.5;
             // Texto radial. Mitad derecha: lee del centro hacia afuera. Mitad izquierda: se
             // da vuelta (rotate +180, anclado al final) para que nunca quede cabeza abajo.
             const leftHalf = mid > 180;
+            // #202 el texto va CENTRADO en el gajo (a mitad de camino entre el centro y el aro).
+            const TR = 106;
             const txTransform = leftHalf
-                ? 'translate(' + C + ' ' + C + ') rotate(' + (mid + 90).toFixed(2) + ') translate(-52 0)'
-                : 'translate(' + C + ' ' + C + ') rotate(' + (mid - 90).toFixed(2) + ') translate(52 0)';
+                ? 'translate(' + C + ' ' + C + ') rotate(' + (mid + 90).toFixed(2) + ') translate(-' + TR + ' 0)'
+                : 'translate(' + C + ' ' + C + ') rotate(' + (mid - 90).toFixed(2) + ') translate(' + TR + ' 0)';
             g += '<g class="rw-seg' + (i === winIdx ? ' win' : '') + '">' + path +
-                '<text transform="' + txTransform + '" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-weight="900" text-anchor="' + (leftHalf ? 'end' : 'start') + '" dominant-baseline="middle" style="paint-order:stroke;stroke:rgba(0,0,0,0.55);stroke-width:3px;letter-spacing:.5px;">' +
+                '<text transform="' + txTransform + '" fill="#fff" font-family="Arial, Helvetica, sans-serif" font-weight="900" text-anchor="middle" dominant-baseline="middle" style="paint-order:stroke;stroke:rgba(0,0,0,0.55);stroke-width:3px;letter-spacing:.5px;">' +
                 '<tspan x="0" y="' + (lines[1] ? -7 : 0) + '" font-size="' + fs1 + '">' + _esc((segs[i].emoji ? segs[i].emoji + ' ' : '') + lines[0]) + '</tspan>' +
                 (lines[1] ? '<tspan x="0" y="10" font-size="' + fs2 + '" fill="#ffe28a">' + _esc(lines[1]) + '</tspan>' : '') +
                 '</text></g>';
@@ -461,7 +473,9 @@
             winIdx = _segIndexFor(spin);
             if (_wheelAngle == null) _wheelAngle = _angleForSeg(winIdx, 0);
         }
-        html += _wheelSvg(alreadySpun ? (_wheelAngle || 0) : (_wheelAngle || 0), alreadySpun ? winIdx : -1);
+        // #202 en reposo (sin girar) el puntero queda CENTRADO sobre el primer gajo, no en un borde.
+        if (_wheelAngle == null) _wheelAngle = _angleForSeg(0, 0);
+        html += _wheelSvg(_wheelAngle || 0, alreadySpun ? winIdx : -1);
 
         // #197 Premio de OTRO día que sigue abierto (por reclamar / en carga / % pendiente):
         // se muestra arriba del giro de hoy para que no se lo pierda.
@@ -482,9 +496,10 @@
                 if (spin.status === 'credited' || spin.status === 'claimed') html += _communityRecommendCard();
             } else {
                 html += '<div style="background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.20);border-radius:14px;padding:24px 16px;text-align:center;margin-bottom:12px;">';
-                html += '<div style="font-size:54px;margin-bottom:6px;">😔</div>';
-                html += '<div style="color:#aaa;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">Hoy no fue tu día</div>';
-                html += '<div style="color:#ddd;font-size:14px;">Volvé mañana a partir de las 00:00 para girar otra vez 🎰</div>';
+                // #202 sin emojis: ícono dorado (trébol) dibujado en SVG.
+                html += '<div style="margin:0 auto 10px;width:58px;height:58px;">' + _cloverSvg() + '</div>';
+                html += '<div style="color:#ffd700;font-size:13px;font-weight:900;letter-spacing:1.5px;text-transform:uppercase;margin-bottom:4px;">Hoy no fue tu día</div>';
+                html += '<div style="color:#ddd;font-size:13.5px;line-height:1.45;">Mañana a partir de las 00:00 tenés otra chance. ¡La suerte cambia!</div>';
                 html += '</div>';
             }
             html += '<button onclick="VIP.roulette.close()" style="width:100%;background:rgba(255,255,255,0.08);color:#fff;border:1px solid rgba(255,255,255,0.20);padding:12px;border-radius:10px;font-weight:800;font-size:13px;cursor:pointer;">CERRAR</button>';
@@ -503,7 +518,8 @@
                 html += '<div style="display:flex;flex-wrap:wrap;gap:6px;justify-content:center;margin-bottom:10px;">';
                 for (const p of prizes) {
                     const txt = p.type === 'percent' ? ('+' + _esc(p.value) + '% próx. carga') : ('$' + _fmt(p.value));
-                    html += '<span style="background:rgba(255,215,0,0.10);border:1px solid rgba(255,215,0,0.40);border-radius:14px;padding:4px 9px;font-size:11px;color:#fff;font-weight:800;">' + _esc(p.emoji || '') + ' ' + txt + (p.pct != null ? ' <span style="color:#aaa;font-weight:600;">' + _esc(p.pct) + '%</span>' : '') + '</span>';
+                    // #202 sin el % de probabilidad (queda oculto para el cliente).
+                    html += '<span style="background:rgba(255,215,0,0.10);border:1px solid rgba(255,215,0,0.40);border-radius:14px;padding:4px 9px;font-size:11px;color:#fff;font-weight:800;">' + _esc(p.emoji || '') + ' ' + txt + '</span>';
                 }
                 html += '</div>';
             }

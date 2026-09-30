@@ -3327,7 +3327,7 @@
             // tapaba contenido y molestaba a quien no quiere instalar todavía).
             try {
                 const _dismissedAt = Number(localStorage.getItem('pwaInstallDismissedAt') || 0);
-                if (_dismissedAt && (Date.now() - _dismissedAt) < 3 * 24 * 60 * 60 * 1000) return;
+                if (_dismissedAt && (Date.now() - _dismissedAt) < 24 * 60 * 60 * 1000) return; // #202: cerrado → vuelve a aparecer a las 24 h (antes 3 días)
             } catch (_) {}
             // Crear botón si no existe
             let installBtn = document.getElementById('pwaInstallButton');

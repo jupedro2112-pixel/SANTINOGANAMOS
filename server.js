@@ -18505,7 +18505,7 @@ app.get('/api/roulette/status', authMiddleware, async (req, res) => {
       spinsToday,
       spinsLeft,
       dateKey,
-      prizes: _roulettePublicPrizes(rcfg),
+      prizes: rcfg.prizes.map(p => ({ label: p.label, emoji: p.emoji, type: p.type, value: p.value })), // #202 sin peso ni % de probabilidad (oculto al cliente)
       claimHours: await getRouletteClaimHours(), // #197
       pendingPct: (u && u.dailyRoulettePendingPct) || 0,
       pendingLabel: (u && u.dailyRoulettePendingLabel) || null,
