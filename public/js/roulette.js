@@ -515,7 +515,16 @@
         } catch (e) { /* best-effort */ }
     }
 
-    VIP.roulette = { loadStatus, open, close, spin, claim, needsApp: _showNeedsAppModal, loadRecentWinners };
+    // #199 Desde el menú ☰: si le falta la app, muestra los pasos; si no, abre la ruleta.
+    async function openFromMenu() {
+        if (!_state) await loadStatus();
+        if (_state && _state.needsAppNotifs) return _showNeedsAppModal();
+        if (_state && _state.needsActive && VIP.ui && VIP.ui.showToast) {
+            return VIP.ui.showToast('🎰 La ruleta diaria es para clientes activos: necesitás más de ' + _state.minCargas + ' cargas en los últimos 30 días (llevás ' + (Number(_state.cargas30d) || 0) + ').', 'info');
+        }
+        open();
+    }
+    VIP.roulette = { loadStatus, open, close, spin, claim, openFromMenu, needsApp: _showNeedsAppModal, loadRecentWinners };
 
     // Boot: cargar status apenas el usuario esté autenticado.
     document.addEventListener('DOMContentLoaded', () => {

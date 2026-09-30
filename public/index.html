@@ -503,6 +503,11 @@
                 onclick="if(window.VIP&&VIP.ui&&VIP.ui.enterCasino)VIP.ui.enterCasino()">
                 <span class="menu-item-icon">🎰</span><span class="menu-item-label">Página CASINO <span style="font-weight:600;color:#00ff88;font-size:11px;">(entrás logueado)</span></span>
             </button>
+            <!-- #199 Ruleta diaria desde el menú (si le falta la app, muestra los pasos). -->
+            <button class="menu-item roulette-menu-btn" title="Ruleta diaria" role="menuitem"
+                onclick="if(window.VIP&&VIP.roulette)VIP.roulette.openFromMenu();">
+                <span class="menu-item-icon">🎡</span><span class="menu-item-label">Ruleta diaria <span style="font-weight:600;color:#ffd700;font-size:11px;">(1 giro por día)</span></span>
+            </button>
             <button class="menu-item referral-btn" id="referralBtn" title="Mis Referidos" role="menuitem">
                 <span class="menu-item-icon">🤝</span><span class="menu-item-label">Mis Referidos</span>
             </button>
@@ -754,6 +759,15 @@
                     cursor:pointer; /* se toca para ver el detalle del perfil y los rangos */
                 }
                 .dash-user:active { transform:scale(.97); }
+                /* #199 banner GANAMOS que rellena la fila superior (recorte por la izquierda: logo + titular). */
+                .dash-banner {
+                    flex:1; min-width:0; min-height:84px; border-radius:11px; overflow:hidden;
+                    border:1px solid #1a0033; background:#1a0033; position:relative;
+                }
+                .dash-banner img {
+                    position:absolute; inset:0; width:100%; height:100%; object-fit:cover; object-position:left center;
+                    display:block; transition:opacity .3s ease;
+                }
                 .refund-btn { position:relative; }
                 .refund-tier {
                     position:absolute; top:-6px; right:-4px; font-size:9px; font-weight:900;
@@ -891,6 +905,17 @@
                 <div class="dash-top">
                     <!-- Ruleta diaria: render dinámico desde js/roulette.js -->
                     <div id="rouletteHomeCard" style="display:none;"></div>
+                    <!-- #199 Usuario: tap → Configuración (cambiar contraseña, notificaciones, modo oscuro). -->
+                    <div class="dash-user" onclick="if(window.VIP&&VIP.ui)VIP.ui.showModal('settingsModal')" title="Mi cuenta: cambiar contraseña y configuración">
+                        <span class="dash-user-avatar">👤</span>
+                        <span class="dash-user-label">USUARIO</span>
+                        <span class="dash-user-name" id="dashUserName">Usuario</span>
+                        <span class="dash-user-cta">MI CUENTA ▾</span>
+                    </div>
+                    <!-- #199 Banner GANAMOS rotativo (los 3, cada 5 s; app.js). -->
+                    <div class="dash-banner">
+                        <img id="dashBanner" src="/images/banner-inicio-ganamos.jpg" alt="GANAMOS" draggable="false">
+                    </div>
                 </div>
             </div>
 

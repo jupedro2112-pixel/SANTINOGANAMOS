@@ -373,18 +373,20 @@ function setupEventListeners() {
         const fileInput = document.getElementById('fileInput');
         if (fileInput) fileInput.addEventListener('change', VIP.chat.handleFileSelect);
 
-        // #196 Banner de GANAMOS en el login: rota entre 3 imágenes cada 5 s.
-        const loginBanner = document.getElementById('loginBanner');
-        if (loginBanner) {
+        // #196/#199 Banners de GANAMOS (login y fila superior del home): rotan entre 3 cada 5 s.
+        const bannerEls = ['loginBanner', 'dashBanner'].map((id) => document.getElementById(id)).filter(Boolean);
+        if (bannerEls.length) {
             const banners = ['/images/banner-inicio-ganamos.jpg', '/images/banner-jackpots-ganamos.jpg', '/images/banner-futbol-ganamos.jpg'];
             banners.slice(1).forEach((src) => { const im = new Image(); im.src = src; });
             let bi = 0;
+            bannerEls.forEach((el) => { el.style.transition = 'opacity .3s ease'; });
             setInterval(() => {
                 bi = (bi + 1) % banners.length;
-                loginBanner.style.opacity = '0';
-                setTimeout(() => { loginBanner.src = banners[bi]; loginBanner.style.opacity = '1'; }, 250);
+                bannerEls.forEach((el) => {
+                    el.style.opacity = '0';
+                    setTimeout(() => { el.src = banners[bi]; el.style.opacity = '1'; }, 280);
+                });
             }, 5000);
-            loginBanner.style.transition = 'opacity .25s ease';
         }
 
         // Fire (Fueguito)

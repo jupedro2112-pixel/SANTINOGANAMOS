@@ -10236,6 +10236,31 @@ async function resetRouletteDaily() {
 // Probar el giro de la ruleta a nombre de un user (simulación) — no
 // afecta el spin real ni acredita plata. Solo muestra qué premio le
 // habría salido con la tabla de probabilidades vigente.
+// #199 Giro REAL a nombre de un usuario (prueba del flujo sin la app instalada).
+async function rouletteSpinAs() {
+    const username = (document.getElementById('rouletteSpinAsUsername')?.value || '').trim();
+    const reset = !!document.getElementById('rouletteSpinAsReset')?.checked;
+    const box = document.getElementById('rouletteSpinAsResult');
+    if (!username) { if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Falta el username</div>'; return; }
+    if (!confirm('¿Hacer el giro de HOY a nombre de @' + username + '? Es un giro REAL: si gana, el cliente ve el premio y puede reclamarlo.' + (reset ? '\n\nSe borra antes su giro de hoy (si no fue reclamado).' : ''))) return;
+    if (box) box.innerHTML = '<div style="color:#aaa;text-align:center;padding:6px;font-size:12px;">⏳ Girando…</div>';
+    try {
+        const r = await rouletteAuthFetch('/api/admin/roulette/spin-as', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username, reset }) });
+        const d = await r.json();
+        if (!r.ok || !d.success) { if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">❌ ' + escapeHtml(d.error || 'Error') + '</div>'; return; }
+        const p = d.prize || {};
+        const won = (p.prizeARS || 0) > 0 || (p.prizeType === 'percent' && p.prizePct > 0);
+        const premio = p.prizeType === 'percent' ? '+' + p.prizePct + '% próx. carga' : (p.prizeARS > 0 ? '$' + Number(p.prizeARS).toLocaleString('es-AR') : 'SIN PREMIO');
+        if (box) box.innerHTML = '<div style="background:' + (won ? 'rgba(255,215,0,0.10)' : 'rgba(255,255,255,0.04)') + ';border:1.5px solid ' + (won ? '#ffd700' : 'rgba(255,255,255,0.18)') + ';border-radius:9px;padding:10px 12px;display:flex;align-items:center;gap:10px;">' +
+            '<div style="font-size:30px;line-height:1;">' + (p.emoji || '🎲') + '</div><div style="flex:1;">' +
+            '<div style="color:' + (won ? '#ffd700' : '#888') + ';font-weight:900;font-size:14px;">' + escapeHtml(p.prizeLabel || premio) + ' · ' + escapeHtml(premio) + '</div>' +
+            '<div style="color:#aaa;font-size:11px;">Giro REAL a nombre de <strong>@' + escapeHtml(d.username) + '</strong>' + (won ? ' · por reclamar hasta ' + escapeHtml(p.claimExpiresAt ? fmtFechaHoraAR(p.claimExpiresAt) : '') + ' (le llegó el mensaje al chat)' : '') + '</div></div></div>';
+        showToast(won ? '🎡 Ganó ' + premio + ' — ahora tiene que RECLAMAR desde la app' : '🎡 Sin premio', won ? 'success' : 'info');
+        loadRouletteAdmin();
+    } catch (e) { if (box) box.innerHTML = '<div style="color:#ff8080;padding:6px;font-size:12px;">Error: ' + escapeHtml(e.message || '') + '</div>'; }
+}
+window.rouletteSpinAs = rouletteSpinAs;
+
 async function rouletteTestSpin() {
     const username = (document.getElementById('rouletteTestUsername')?.value || '').trim();
     const box = document.getElementById('rouletteTestResult');

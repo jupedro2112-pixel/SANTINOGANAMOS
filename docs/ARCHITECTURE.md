@@ -986,6 +986,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   (used|active|expired|cancelled), `bonusExpiresAt`, `cargaMonto`, `bonoMonto` y
   `summary`. Panel: `nbUseHours`, fila del lote con "N cargaron ($X) · N activos · N
   vencidos sin usar · ⏱ Nhs", detalle con resumen y textos por `outcome`.
+- **Ruleta — giro de prueba desde el panel (#199):** `_rouletteSpinCore` es el núcleo del giro (sin gates); `POST /api/admin/roulette/spin-as` {username, reset} lo invoca a nombre de un cliente (admin general) para probar el flujo sin la app. Menú ☰ → `VIP.roulette.openFromMenu()`. Fila superior del home: ruleta + USUARIO (→ settingsModal) + `.dash-banner` rotativo.
 - **Ruleta diaria — RECLAMO con vencimiento (#197):** `POST /api/roulette/spin` ya no
   acredita: crea el `DailyRouletteSpin` en `claim_pending` con `claimExpiresAt = ahora +
   horas(/sys_roulette_claim_hours)` y manda `/sys_roulette_won` al chat. `GET

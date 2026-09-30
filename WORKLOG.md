@@ -37,6 +37,36 @@
 
 ---
 
+## Sesión 2026-09-30 — Ruleta en el menú, fila superior completa (usuario + banner) y giro de prueba desde el panel
+
+### 199. Menú ☰ con "Ruleta diaria"; fila superior con RULETA + USUARIO (mi cuenta) + banner GANAMOS rotativo; "Girar por un usuario" en el panel
+- **Pedido (capturas):** al sacar reembolsos/perfil VIP (#196) la fila dorada del home quedó
+  con la celda de la ruleta sola y vacía; faltaba la ruleta en el menú; y el owner no puede
+  instalar la PWA (Tor) para probar el giro.
+- **PWA (SW v113):** ítem "🎡 Ruleta diaria (1 giro por día)" en el menú →
+  `VIP.roulette.openFromMenu()` (si falta la app muestra los 3 pasos; si faltan cargas,
+  toast; si no, abre la ruleta). La fila `.dash-top` vuelve a tener el recuadro **USUARIO**
+  (`#dashUserName`, cta "MI CUENTA ▾" → abre Configuración: cambiar contraseña, plan de
+  notificaciones, modo oscuro) y a la derecha un **banner GANAMOS** (`.dash-banner`,
+  `#dashBanner`, `object-fit:cover` recortado por la izquierda para que se vean logo y
+  titular) que rota con los 3 banners cada 5 s junto con el del login (misma rutina en
+  `app.js`).
+- **Panel (admin-sw v46):** en Ruleta diaria, bloque "🎡 GIRAR POR UN USUARIO (giro REAL)":
+  `POST /api/admin/roulette/spin-as` {username, reset} (sólo admin general) hace el giro
+  del día a nombre del cliente salteando los requisitos de app/cargas; con `reset` borra
+  antes su giro de hoy si no fue reclamado (`no_prize|claim_pending|expired`). Deja nota
+  admin-only "🧪 GIRO DE PRUEBA…"; el cliente recibe `/sys_roulette_won` y puede
+  reclamar desde la app (la celda bloqueada "Instalá la app" no impide ver/reclamar el
+  premio: el modal muestra `openPrize`). El simulador viejo (test-spin) sigue.
+- **Refactor:** el núcleo del giro salió de `POST /api/roulette/spin` a
+  `_rouletteSpinCore({userId, username, dateKey, rcfg, ip, ua})` → `{http, body}`; el
+  endpoint del cliente sólo hace los gates y delega.
+- **Validado:** `node --check` (server, app.js, roulette.js, admin.js, SWs), `check-tdz` ✅.
+  **Probar en deploy:** menú ☰ → Ruleta diaria; fila superior con 3 celdas prolijas en
+  409 px; panel → Ruleta diaria → girar por tu usuario de prueba → en la app aparece
+  "¡RECLAMÁ!" (aunque la celda diga "Instalá la app", abrir Ruleta desde el menú muestra
+  el premio) → RECLAMAR → Pendientes GANAMOS.
+
 ## Sesión 2026-09-29 (9ª) — Réplica #172/#173 del gemelo: lotes con tope del %, bono canjeado vence a las 24 h, resumen por lote
 
 ### 198. Lotes con regalo %: tope con la regla del bono app, `useHours` tras el canje, mensaje de código ajeno, resumen canjeó/cargó/venció

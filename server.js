@@ -18774,6 +18774,156 @@ app.post('/api/admin/roulette/test-spin', authMiddleware, adminMiddleware, async
   }
 });
 
+// #199 Núcleo del giro (sin gates): lo usa POST /api/roulette/spin y el "girar por un
+// usuario" del panel (POST /api/admin/roulette/spin-as, prueba sin la app instalada).
+// Devuelve { http, body }.
+async function _rouletteSpinCore({ userId, username, dateKey, rcfg, ip, ua }) {
+  // Pre-check: ya giró hoy? (el unique index igual cubre el race)
+  const already = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
+  if (already) {
+    return { http: 409, body: {
+      error: 'Ya giraste la ruleta hoy. Volvé mañana.',
+      alreadySpun: true,
+      spin: {
+        prizeARS: already.prizeARS,
+        prizeLabel: already.prizeLabel,
+        status: already.status,
+        spunAt: already.spunAt
+      }
+    } };
+  }
+
+  // Pick + insert (status='won' | 'percent_pending' | 'no_prize') con unique index protegiendo race.
+  let pick = _rouletteWeightedPick(rcfg.prizes);
+  let prizeARS = pick.type === 'cash' ? (Number(pick.value) || 0) : 0;
+  const prizePct = pick.type === 'percent' ? (Number(pick.value) || 0) : 0;
+
+  // PACING DE BUDGET DIARIO: si la admin config tiene un budget, evitamos
+  // gastar más de lo que toca a esta hora. Distribuimos el budget bien
+  // repartido a lo largo del día (24h ART). Si dar este premio ahora
+  // pasaría el target acumulado para la hora actual, forzamos SIN PREMIO.
+  // Esto evita que se vacíe el budget en las primeras horas del día.
+  try {
+    const cfg = await getConfig('rouletteBudget').catch(() => null);
+    const budgetARS = Math.max(0, Number(cfg && cfg.dailyBudgetARS) || 0);
+    const budgetEnabled = !!(cfg && cfg.enabled !== false && budgetARS > 0);
+    if (budgetEnabled && prizeARS > 0) {
+      const agg = await DailyRouletteSpin.aggregate([
+        { $match: { dateKey, status: { $in: ['credited', 'won', 'claim_pending', 'claimed'] }, prizeARS: { $gt: 0 } } }, // #197
+        { $group: { _id: null, total: { $sum: '$prizeARS' } } }
+      ]);
+      const spentToday = (agg && agg[0] && agg[0].total) || 0;
+      // Hora actual ART (0-23) + fracción → progreso del día.
+      const nowART = new Intl.DateTimeFormat('en-CA', {
+        timeZone: 'America/Argentina/Buenos_Aires',
+        hour: '2-digit', minute: '2-digit', hour12: false
+      }).formatToParts(new Date()).reduce((o, p) => (o[p.type] = p.value, o), {});
+      const h = parseInt(nowART.hour, 10) || 0;
+      const m = parseInt(nowART.minute, 10) || 0;
+      const dayProgress = Math.min(1, ((h * 60 + m) + 1) / (24 * 60));
+      const targetSpent = budgetARS * dayProgress;
+      if ((spentToday + prizeARS) > targetSpent) {
+        logger.info(`[ROULETTE] BUDGET PACING — forzando SIN PREMIO para ${username} (gastado $${spentToday}+$${prizeARS} > target $${Math.round(targetSpent)} a las ${h}:${m})`);
+        // Elegir el "SIN PREMIO" del pool — siempre es el value:0
+        const noPrize = rcfg.prizes.find(p => p.type === 'none') || ROULETTE_PRIZES.find(p => Number(p.value) === 0);
+        if (noPrize) {
+          pick = noPrize;
+          prizeARS = 0;
+        }
+      }
+    }
+  } catch (e) {
+    logger.warn(`[ROULETTE] budget-pacing falló (silencioso): ${e.message}`);
+  }
+
+  // #197 TODO premio nace POR RECLAMAR: el cliente tiene N horas (comando
+  // /sys_roulette_claim_hours) para tocar RECLAMAR en la app; si no, vence.
+  const claimHours = await getRouletteClaimHours();
+  const hasPrize = prizeARS > 0 || prizePct > 0;
+  const initialStatus = hasPrize ? 'claim_pending' : 'no_prize';
+  const claimExpiresAt = hasPrize ? new Date(Date.now() + claimHours * 3600 * 1000) : null;
+  let spinDoc;
+  try {
+    spinDoc = await DailyRouletteSpin.create({
+      id: uuidv4(),
+      userId,
+      username: String(username || '').toLowerCase(),
+      dateKey,
+      spunAt: new Date(),
+      prizeARS,
+      prizeType: prizeARS > 0 ? 'cash' : (prizePct > 0 ? 'percent' : 'none'),
+      prizePct,
+      rolloverX: prizeARS > 0 ? (Number(pick.rolloverX) || 0) : null,
+      prizeLabel: pick.label,
+      ipAddress: (ip || '').slice(0, 60),
+      userAgent: String(ua || '').slice(0, 200),
+      status: initialStatus,
+      claimExpiresAt,
+      creditAttempts: 0
+    });
+  } catch (e) {
+    // El unique index disparó (otro tab del mismo user llegó primero).
+    if (String(e.message || '').includes('duplicate key')) {
+      const existing = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
+      return { http: 409, body: { error: 'Ya giraste la ruleta hoy.', alreadySpun: true, spin: _rouletteSpinPublic(existing) } };
+    }
+    throw e;
+  }
+
+  if (!hasPrize) {
+    logger.info(`[ROULETTE] ${username} → SIN PREMIO (${dateKey})`);
+    return { http: 200, body: { success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji } } };
+  }
+
+  const premioTxt = _roulettePrizeText(spinDoc);
+  const venceTxt = _rouletteFmtVence(claimExpiresAt);
+  // Aviso al cliente (editable en COMANDOS /sys_roulette_won; vacío = no se envía).
+  try {
+    const wonMsg = await renderSystemCommand('/sys_roulette_won',
+      '🎡 ¡GANASTE {premio} en la ruleta diaria! 🎉\n\nTenés {horas} horas para reclamarlo: entrá a la app, tocá RULETA y después RECLAMAR PREMIO. ⏰ Vence el {vence}.',
+      { username, premio: premioTxt, horas: claimHours, vence: venceTxt });
+    if (wonMsg) await _sendSystemMessageToUser(userId, username, wonMsg);
+  } catch (e) { logger.warn(`[ROULETTE] aviso de premio a ${username}: ${e.message}`); }
+  await _emitAdminOnlyChatNote(userId, username,
+    `🎡 RULETA DIARIA: ganó ${premioTxt} (${pick.label}). Tiene ${claimHours} h para RECLAMARLO desde la app (vence ${venceTxt}). Cuando lo reclame: ${prizeARS > 0 ? 'la carga aparece en "Pendientes GANAMOS" y en Ruleta diaria' : 'te aparece en Ruleta diaria y el modal Depositar te sugiere el % en su próxima carga'}.`).catch(() => {});
+  logger.info(`[ROULETTE] ${username} → ${premioTxt} POR RECLAMAR hasta ${claimExpiresAt.toISOString()} (${dateKey})`);
+  return { http: 200, body: { success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji, claimHours } } };
+}
+
+// #199 POST /api/admin/roulette/spin-as — GIRO REAL a nombre de un usuario, salteando
+// los requisitos (app instalada / cargas mínimas). Es para PROBAR el flujo completo
+// (mensaje "ganaste", reclamo, Pendientes GANAMOS) sin la app instalada. Escribe el
+// spin del día del usuario como si hubiera girado él. Con `reset:true` borra antes el
+// giro de HOY de ese usuario (para repetir la prueba). Sólo admin general.
+app.post('/api/admin/roulette/spin-as', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el admin general puede girar por un usuario.' });
+    const username = String((req.body && req.body.username) || '').trim();
+    if (!username) return res.status(400).json({ error: 'Falta username' });
+    const u = await findUserByUsernameCI(username, { select: 'id username role', lean: true });
+    if (!u) return res.status(404).json({ error: `Usuario "${username}" no encontrado` });
+    if (u.role && u.role !== 'user') return res.status(400).json({ error: 'Solo se puede girar por cuentas de clientes.' });
+    const dateKey = _rouletteDateKeyART();
+    if (req.body && req.body.reset) {
+      const del = await DailyRouletteSpin.deleteOne({ userId: u.id, dateKey, status: { $in: ['no_prize', 'claim_pending', 'expired'] } });
+      if (!del.deletedCount) {
+        const exists = await DailyRouletteSpin.findOne({ userId: u.id, dateKey }).lean();
+        if (exists) return res.status(409).json({ error: `El giro de hoy de ${u.username} ya fue reclamado/cargado (${exists.status}); no se borra. Probá con otro usuario o mañana.` });
+      }
+    }
+    const rcfg = await getDailyRouletteConfig();
+    const r = await _rouletteSpinCore({ userId: u.id, username: u.username, dateKey, rcfg, ip: 'admin:' + req.user.username, ua: 'panel spin-as' });
+    if (r.http === 200) {
+      await _emitAdminOnlyChatNote(u.id, u.username, `🧪 GIRO DE PRUEBA desde el panel por ${req.user.username}: ${r.body.prize && r.body.prize.prizeLabel ? r.body.prize.prizeLabel : '—'}. Es un giro REAL a nombre del cliente (salteó el requisito de la app).`).catch(() => {});
+      logger.info(`[ROULETTE] spin-as ${u.username} por ${req.user.username}: ${JSON.stringify(r.body.prize || {})}`);
+    }
+    return res.status(r.http).json({ ...r.body, username: u.username, spinAs: true });
+  } catch (err) {
+    logger.error(`/api/admin/roulette/spin-as: ${err.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 // POST /api/roulette/spin — el user gira la ruleta del día.
 app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
   try {
@@ -18801,116 +18951,8 @@ app.post('/api/roulette/spin', authMiddleware, async (req, res) => {
       });
     }
 
-    // Pre-check: ya giró hoy? (el unique index igual cubre el race)
-    const already = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
-    if (already) {
-      return res.status(409).json({
-        error: 'Ya giraste la ruleta hoy. Volvé mañana.',
-        alreadySpun: true,
-        spin: {
-          prizeARS: already.prizeARS,
-          prizeLabel: already.prizeLabel,
-          status: already.status,
-          spunAt: already.spunAt
-        }
-      });
-    }
-
-    // Pick + insert (status='won' | 'percent_pending' | 'no_prize') con unique index protegiendo race.
-    let pick = _rouletteWeightedPick(rcfg.prizes);
-    let prizeARS = pick.type === 'cash' ? (Number(pick.value) || 0) : 0;
-    const prizePct = pick.type === 'percent' ? (Number(pick.value) || 0) : 0;
-
-    // PACING DE BUDGET DIARIO: si la admin config tiene un budget, evitamos
-    // gastar más de lo que toca a esta hora. Distribuimos el budget bien
-    // repartido a lo largo del día (24h ART). Si dar este premio ahora
-    // pasaría el target acumulado para la hora actual, forzamos SIN PREMIO.
-    // Esto evita que se vacíe el budget en las primeras horas del día.
-    try {
-      const cfg = await getConfig('rouletteBudget').catch(() => null);
-      const budgetARS = Math.max(0, Number(cfg && cfg.dailyBudgetARS) || 0);
-      const budgetEnabled = !!(cfg && cfg.enabled !== false && budgetARS > 0);
-      if (budgetEnabled && prizeARS > 0) {
-        const agg = await DailyRouletteSpin.aggregate([
-          { $match: { dateKey, status: { $in: ['credited', 'won', 'claim_pending', 'claimed'] }, prizeARS: { $gt: 0 } } }, // #197
-          { $group: { _id: null, total: { $sum: '$prizeARS' } } }
-        ]);
-        const spentToday = (agg && agg[0] && agg[0].total) || 0;
-        // Hora actual ART (0-23) + fracción → progreso del día.
-        const nowART = new Intl.DateTimeFormat('en-CA', {
-          timeZone: 'America/Argentina/Buenos_Aires',
-          hour: '2-digit', minute: '2-digit', hour12: false
-        }).formatToParts(new Date()).reduce((o, p) => (o[p.type] = p.value, o), {});
-        const h = parseInt(nowART.hour, 10) || 0;
-        const m = parseInt(nowART.minute, 10) || 0;
-        const dayProgress = Math.min(1, ((h * 60 + m) + 1) / (24 * 60));
-        const targetSpent = budgetARS * dayProgress;
-        if ((spentToday + prizeARS) > targetSpent) {
-          logger.info(`[ROULETTE] BUDGET PACING — forzando SIN PREMIO para ${username} (gastado $${spentToday}+$${prizeARS} > target $${Math.round(targetSpent)} a las ${h}:${m})`);
-          // Elegir el "SIN PREMIO" del pool — siempre es el value:0
-          const noPrize = rcfg.prizes.find(p => p.type === 'none') || ROULETTE_PRIZES.find(p => Number(p.value) === 0);
-          if (noPrize) {
-            pick = noPrize;
-            prizeARS = 0;
-          }
-        }
-      }
-    } catch (e) {
-      logger.warn(`[ROULETTE] budget-pacing falló (silencioso): ${e.message}`);
-    }
-
-    // #197 TODO premio nace POR RECLAMAR: el cliente tiene N horas (comando
-    // /sys_roulette_claim_hours) para tocar RECLAMAR en la app; si no, vence.
-    const claimHours = await getRouletteClaimHours();
-    const hasPrize = prizeARS > 0 || prizePct > 0;
-    const initialStatus = hasPrize ? 'claim_pending' : 'no_prize';
-    const claimExpiresAt = hasPrize ? new Date(Date.now() + claimHours * 3600 * 1000) : null;
-    let spinDoc;
-    try {
-      spinDoc = await DailyRouletteSpin.create({
-        id: uuidv4(),
-        userId,
-        username: String(username || '').toLowerCase(),
-        dateKey,
-        spunAt: new Date(),
-        prizeARS,
-        prizeType: prizeARS > 0 ? 'cash' : (prizePct > 0 ? 'percent' : 'none'),
-        prizePct,
-        rolloverX: prizeARS > 0 ? (Number(pick.rolloverX) || 0) : null,
-        prizeLabel: pick.label,
-        ipAddress: (req.ip || '').slice(0, 60),
-        userAgent: String(req.headers['user-agent'] || '').slice(0, 200),
-        status: initialStatus,
-        claimExpiresAt,
-        creditAttempts: 0
-      });
-    } catch (e) {
-      // El unique index disparó (otro tab del mismo user llegó primero).
-      if (String(e.message || '').includes('duplicate key')) {
-        const existing = await DailyRouletteSpin.findOne({ userId, dateKey }).lean();
-        return res.status(409).json({ error: 'Ya giraste la ruleta hoy.', alreadySpun: true, spin: _rouletteSpinPublic(existing) });
-      }
-      throw e;
-    }
-
-    if (!hasPrize) {
-      logger.info(`[ROULETTE] ${username} → SIN PREMIO (${dateKey})`);
-      return res.json({ success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji } });
-    }
-
-    const premioTxt = _roulettePrizeText(spinDoc);
-    const venceTxt = _rouletteFmtVence(claimExpiresAt);
-    // Aviso al cliente (editable en COMANDOS /sys_roulette_won; vacío = no se envía).
-    try {
-      const wonMsg = await renderSystemCommand('/sys_roulette_won',
-        '🎡 ¡GANASTE {premio} en la ruleta diaria! 🎉\n\nTenés {horas} horas para reclamarlo: entrá a la app, tocá RULETA y después RECLAMAR PREMIO. ⏰ Vence el {vence}.',
-        { username, premio: premioTxt, horas: claimHours, vence: venceTxt });
-      if (wonMsg) await _sendSystemMessageToUser(userId, username, wonMsg);
-    } catch (e) { logger.warn(`[ROULETTE] aviso de premio a ${username}: ${e.message}`); }
-    await _emitAdminOnlyChatNote(userId, username,
-      `🎡 RULETA DIARIA: ganó ${premioTxt} (${pick.label}). Tiene ${claimHours} h para RECLAMARLO desde la app (vence ${venceTxt}). Cuando lo reclame: ${prizeARS > 0 ? 'la carga aparece en "Pendientes GANAMOS" y en Ruleta diaria' : 'te aparece en Ruleta diaria y el modal Depositar te sugiere el % en su próxima carga'}.`).catch(() => {});
-    logger.info(`[ROULETTE] ${username} → ${premioTxt} POR RECLAMAR hasta ${claimExpiresAt.toISOString()} (${dateKey})`);
-    return res.json({ success: true, prize: { ..._rouletteSpinPublic(spinDoc.toObject ? spinDoc.toObject() : spinDoc), emoji: pick.emoji, claimHours } });
+    const r = await _rouletteSpinCore({ userId, username, dateKey, rcfg, ip: req.ip, ua: req.headers['user-agent'] }); // #199
+    return res.status(r.http).json(r.body);
   } catch (err) {
     logger.error(`/api/roulette/spin: ${err.message}`);
     res.status(500).json({ error: 'Error del servidor' });
