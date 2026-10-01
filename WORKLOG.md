@@ -4,8 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #212; el 01/10 sólo se pusieron
-> al día los docs — sin cambios de código)
+> **Última actualización: 2026-10-01** (última entrada: #213)
 
 ---
 
@@ -21,8 +20,9 @@
 > **Pendientes del modo manual (el owner):**
 > 1. Confirmar que `GANAMOS_PLAY_URL` en SSM tenga la URL REAL de GANAMOS (el default del
 >    código es `https://ganamos.net` desde #196).
-> 2. Cargar los equipos (prefijo/nombre/Telegram/WhatsApp) y el WhatsApp general en el
->    panel → COMANDOS → card "👥 Equipos" (#212).
+> 2. Cargar los equipos (prefijo/nombre/Telegram/WhatsApp) y el WhatsApp + Telegram
+>    GENERAL en el panel → COMANDOS → card "👥 Equipos" (#212/#213). Sin eso el cartel
+>    del login dice "todavía no hay un contacto cargado".
 > 3. Encender el motor de recordatorios si se lo quiere activo: arranca APAGADO (panel →
 >    Inactivos → "Motor ENCENDIDO" + guardar, #209).
 > 4. Revisar en deploy que el ticker del login cargue (`/api/claims-feed`, ver #200).
@@ -41,6 +41,59 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-01 — Equipos: comunidad por equipo sin fugas + cartel del login con comunidad y búsqueda tolerante
+
+### 213. Se cierran los huecos del #212 (el owner volvió a pedir la feature con capturas del gemelo: ya estaba hecha, faltaba esto)
+- **Pedido:** "según el inicio del usuario encontrar su equipo; si no lo recuerda pone lo
+  que recuerda y lo deriva al WhatsApp de su equipo; adentro, 'unirse a comunidad' tiene
+  que entrar a la comunidad de SU equipo y no a la de otro; botón 'no recuerdo mi
+  usuario' → WhatsApp general o comunidad general; sin coincidencia → general".
+  El #212 ya traía la card Equipos, el cartel del login y el Telegram por equipo en
+  `/api/config/community`. Revisando el código contra el pedido aparecieron 4 huecos:
+- **(1) Fuga a la comunidad de OTRO equipo (`/go/comunidad`):** el pill "Unite a la
+  Comunidad" y el ítem del menú arrancan apuntando a `/go/comunidad`, que redirigía
+  SIEMPRE al canal de la card Comunidad (ni siquiera al general de Equipos): un click
+  antes de que cargue la config mandaba al cliente a otra comunidad. Ahora
+  `/go/comunidad?u=<username>` resuelve el equipo y la PWA arma el fallback con el
+  usuario logueado (`chat.js _applyCanalUrl`). Sin `u` → general.
+- **(2) Cache de la comunidad compartida entre usuarios:** `communityCfgCache`
+  (localStorage) no guardaba de quién era → otro cliente en el mismo celular veía el
+  canal del anterior hasta que llegara el fetch (y si entraba dentro de los 30 s del
+  throttle, ni se refrescaba). Ahora la cache lleva `u` (username), se ignora si no
+  coincide (o si es vieja, sin `u`), hay copia en memoria (`_communityCfgMem`, Tor no
+  deja usar localStorage) y el throttle se reinicia al cambiar de usuario.
+- **(3) "Pone lo que recuerda":** `resolveTeamLoose` (sólo para el cartel del login):
+  primero la regla normal (el texto empieza con el prefijo, gana el más largo); si no,
+  acepta MENOS que el prefijo o el nombre del equipo ("arg" → argen, "royal" → Royal)
+  siempre que apunte a UN único equipo; ambiguo ("ma" con mar y marte) o 1 letra →
+  general. Normaliza acentos, mayúsculas, espacios y "@". La comunidad dentro de la app
+  sigue usando la regla ESTRICTA (`resolveTeamForUsername`, username completo).
+- **(4) Comunidad en el login + textos:** `GET /api/config/team` devuelve además
+  `telegramUrl` (equipo → general de Equipos → card Comunidad), `telegramIsTeam` y
+  `whatsappIsTeam`. El cartel muestra el botón verde de WhatsApp y debajo "📣 Comunidad
+  de <equipo>" / "Comunidad general"; si el equipo no tiene WhatsApp ya no dice
+  "Escribir a <equipo>" con el número general (decía mal): dice "soporte general". Si no
+  hay WhatsApp pero sí comunidad, ofrece la comunidad. "No recuerdo mi usuario" pasó de
+  link subrayado a BOTÓN visible. Título del cartel: "¿Necesitás tu acceso o no podés
+  entrar?".
+- **Única fuente del link de comunidad:** `_communityChannelUrl(team, teamsCfg,
+  communityCfg?)` (server.js, junto a los helpers de equipos). La usan
+  `/api/config/community`, `/go/comunidad` y `/api/config/team`. Un link de comunidad
+  nuevo sale de ahí, nunca directo de `communityConfig`.
+- **Panel (admin-sw v52):** ayuda de la card Equipos reescrita (comunidad por equipo,
+  general, el Soporte NO se divide por equipo). Sin cambios de lógica en el panel.
+- **Validado:** `node --check` (server.js, app.js, chat.js, SWs) ✅, `check-tdz` ✅, y
+  prueba en frío de las funciones REALES extraídas de server.js (18 casos: prefijo más
+  largo, tolerante único/ambiguo, comunidad equipo → general → card → legacy, URL de
+  WhatsApp) ✅. SW PWA **v125**. **Back necesita redeploy.** PROBAR: cargar 2 equipos con
+  Telegram distinto + general → entrar con un usuario de cada uno → "Unite a la
+  Comunidad" abre la de su equipo (también tocando apenas carga la app); usuario sin
+  equipo → general; en el login buscar "arg" → equipo Argentum con WhatsApp y comunidad;
+  "No recuerdo mi usuario" → soporte general + comunidad general.
+- **Nota:** `/api/config/team` y `/go/comunidad?u=` son públicos: quien conoce un
+  prefijo ve el WhatsApp y el link de la comunidad de ese equipo (son datos pensados para
+  darle al cliente). No revelan si una cuenta existe.
 
 ## Sesión 2026-09-30 (13ª) — Equipos por inicio del usuario: cartel del login "a qué WhatsApp escribir"
 

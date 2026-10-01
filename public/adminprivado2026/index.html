@@ -763,9 +763,11 @@ document.addEventListener('change', function (ev) {
                             <p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">
                                 En GANAMOS el usuario <b>empieza</b> con el nombre del equipo. Ej: prefijo <b>mar</b> → los usuarios <i>marcos12</i>, <i>MarShall99</i>… son de ese equipo.
                                 Si dos prefijos se pisan, gana el <b>más largo</b> (<i>marte</i> le gana a <i>mar</i>).<br>
-                                El <b>WhatsApp</b> es al que se deriva al cliente desde el cartel verde del login cuando pone su usuario y no puede entrar (le restauran la clave).
-                                Si no coincide ningún prefijo, o toca "No recuerdo mi usuario", va al <b>WhatsApp general</b>.
-                                El <b>Telegram</b> (opcional) es el canal que ve ese equipo dentro de la app; vacío = el de la card Comunidad.
+                                El <b>WhatsApp</b> es al que se deriva al cliente desde el cartel verde del login cuando pone su usuario (o lo que recuerda: el inicio, o el nombre del equipo) y necesita su acceso.
+                                Si no coincide con ningún equipo, o toca "No recuerdo mi usuario", va al <b>WhatsApp general</b> y a la <b>comunidad general</b>.
+                                El <b>Telegram</b> es la comunidad de ese equipo: es a la que entra un cliente de ese equipo cuando toca "Unite a la Comunidad" dentro de la app (nunca a la de otro equipo), y también se le ofrece en el cartel del login.
+                                Equipo sin Telegram → el <b>Telegram general</b>; si tampoco hay, el de la card Comunidad. Equipo sin WhatsApp → el WhatsApp general.<br>
+                                El <b>Soporte NO se divide por equipo</b>: es uno solo para todos (se configura en Comunidad).
                             </p>
                             <div style="background:rgba(212,175,55,.08);border:1px solid rgba(212,175,55,.35);border-radius:8px;padding:10px;margin-bottom:12px;">
                                 <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#d4af37;">General — se usa cuando el usuario no coincide con ningún equipo o no recuerda su usuario</p>

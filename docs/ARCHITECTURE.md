@@ -5,7 +5,9 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-09-29 (5ª)** — se ELIMINÓ el modo `ganamos_api`
+> Última actualización: **2026-10-01** — equipos: comunidad por equipo desde una única
+> fuente (`_communityChannelUrl`, `/go/comunidad?u=`), búsqueda tolerante en el login (§5,
+> #213). Antes: **2026-09-29 (5ª)** — se ELIMINÓ el modo `ganamos_api`
 > (#194; ver nota al final de §0). Quedan dos modos: **MODO MANUAL sin API** (§0:
 > adaptador `ganamosPlatformService`, `PlatformTask`, bandeja "Pendientes GANAMOS",
 > PWA sin saldo/SSO/reembolsos, registro por agente; §4.8 envs; §9 trampas) y `girox`.
@@ -986,7 +988,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   (used|active|expired|cancelled), `bonusExpiresAt`, `cargaMonto`, `bonoMonto` y
   `summary`. Panel: `nbUseHours`, fila del lote con "N cargaron ($X) · N activos · N
   vencidos sin usar · ⏱ Nhs", detalle con resumen y textos por `outcome`.
-- **Equipos por inicio del usuario (#212):** `Config['teams']` {general:{telegram,whatsapp}, list:[{prefix,name,telegram,whatsapp}]}; `resolveTeamForUsername` (prefijo más largo); `GET /api/config/team?username=&mode=forgot` público para el cartel del login (WhatsApp del equipo o general; nunca revela si la cuenta existe); `GET/POST /api/admin/teams`; `/api/config/community` prioriza el Telegram del equipo.
+- **Equipos por inicio del usuario (#212/#213):** `Config['teams']` {general:{telegram,whatsapp}, list:[{prefix,name,telegram,whatsapp}]}; `resolveTeamForUsername` (ESTRICTA: el username empieza con el prefijo, gana el más largo) para todo lo que pasa con sesión; `resolveTeamLoose` (tolerante: menos que el prefijo o el nombre del equipo, sólo si apunta a UN equipo) únicamente para el cartel del login. **`_communityChannelUrl(team, teamsCfg, communityCfg?)` es la ÚNICA fuente del link de comunidad** (Telegram del equipo → general de Equipos → card Comunidad → `canalInformativoUrl` legacy): la usan `GET /api/config/community` (auth), `GET /go/comunidad?u=<username>` (redirect público; la PWA le agrega `u` con el usuario logueado) y `GET /api/config/team?username=&mode=forgot` (público, cartel del login: `whatsappUrl`/`hasWhatsapp`/`whatsappIsTeam` + `telegramUrl`/`telegramIsTeam`; nunca revela si la cuenta existe). `GET/POST /api/admin/teams` (admin general). PWA: la cache `communityCfgCache` va POR USUARIO (`u`) + copia en memoria (`chat.js`). El Soporte NO se divide por equipo.
 - **Recordatorios sin regalos (#209):** `recordatoriosService.tick` cada 30 min (server.js, después del motor de inactividad): `premio` (claim_pending que vence en ≤ N h, fireKey `premio|spinId`), `giro` (último giro entre 24 h y `giroMaxHoras` atrás, `canSpin` inyectado = test user | app + cargas mínimas, fireKey `giro|userId|lastSpinId`), `inactivo` (escalera por `lastLogin`, fireKey `inact|user|díaÚltimoLogin|paso` y repeticiones `|rep|n`). Horario silencioso y tope `maxPorDia` (premio no cuenta). Modelo `RecordatorioFire`. Endpoints `GET/POST /api/admin/recordatorios/config`. Textos con `{username}` `{premio}` `{vence}`.
 - **Ruleta — ventana rodante (#208):** `_rouletteSpinWindow(userId, spinsPerDay)` → {used, left, nextAt}; el giro se libera 24 h después del más viejo de los últimos N; `status.nextSpinAt`; "Reiniciar" borra los giros sin reclamar de las últimas 24 h.
 - **Referidos (#207):** en manual `/api/referrals/*` → 404, `/api/public/config` sin `referralPct`, seed sin `/sys_referral_pct` (la migración lo borra) y PWA/panel sin UI de referidos.

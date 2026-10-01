@@ -665,8 +665,17 @@ VIP.chat = (function () {
     // el link directo sigue valiendo: ahorra el hop del redirect.
     const CANAL_FALLBACK_URL = '/go/comunidad';
 
+    // #213 EQUIPOS: la comunidad depende del equipo del usuario (inicio del username).
+    // El fallback lleva `?u=<usuario>` para que el server redirija a la comunidad de
+    // SU equipo, y la cache de abajo se guarda POR USUARIO: nunca se le aplica a un
+    // cliente el canal que quedó cacheado de otro (otro equipo en el mismo celular).
+    function _communityUser() {
+        try { return String((VIP.state.currentUser && VIP.state.currentUser.username) || '').trim().toLowerCase(); } catch (e) { return ''; }
+    }
+
     function _applyCanalUrl(url) {
-        const href = url || CANAL_FALLBACK_URL;
+        const me = _communityUser();
+        const href = url || (CANAL_FALLBACK_URL + (me ? '?u=' + encodeURIComponent(me) : ''));
         const menuBtn = document.getElementById('canalInformativoBtn');
         const headerBtn = document.getElementById('canalTelegramHeaderBtn');
         if (menuBtn) { menuBtn.href = href; menuBtn.style.display = 'inline-flex'; }
@@ -682,6 +691,8 @@ VIP.chat = (function () {
     // ÉXITO, así un cambio del panel llega rápido sin spamear el server).
     let _communityCfgOkAt = 0;
     let _communityCfgRetryTimer = null;
+    let _communityCfgUser = '';
+    let _communityCfgMem = null;
 
     // Aplica una config de Comunidad a los 3 lugares (pill del canal, Soporte
     // 24/7 del menú, logo del chat).
@@ -700,27 +711,41 @@ VIP.chat = (function () {
         // el pill quedaba apuntando al fallback y un click temprano llevaba a
         // /canal-proximamente aunque la config estuviera perfecta. La red de
         // abajo solo REFRESCA por si el panel cambió algo.
+        // #213: la cache vale SÓLO para el usuario que la generó (`u`). Si entró otro
+        // usuario (o es una cache vieja sin `u`) se ignora y el pill queda en el
+        // fallback `/go/comunidad?u=<usuario>` hasta que llegue su config.
+        const me = _communityUser();
+        if (me !== _communityCfgUser) { _communityCfgUser = me; _communityCfgOkAt = 0; }
+        let hadCache = false;
         try {
-            const cached = JSON.parse(localStorage.getItem('communityCfgCache') || 'null');
-            if (cached) _applyCommunityCfg(cached);
+            // Memoria primero (Tor Browser no deja usar localStorage), después el storage.
+            const cached = (_communityCfgMem && _communityCfgMem.u === me)
+                ? _communityCfgMem
+                : JSON.parse(localStorage.getItem('communityCfgCache') || 'null');
+            if (cached && cached.u === me) { _applyCommunityCfg(cached); hadCache = true; }
         } catch (e) { /* cache corrupto: se ignora */ }
+        if (!hadCache) _applyCanalUrl('');
 
         if (Date.now() - _communityCfgOkAt < 30000) return; // éxito fresco: nada que hacer
         for (let i = 0; i < 3; i++) {
             if (i) await new Promise((r) => setTimeout(r, i === 1 ? 2500 : 7000));
+            if (_communityUser() !== me) return; // cambió el usuario en el medio: lo resuelve su propia carga
             try {
                 const response = await fetch(`${VIP.config.API_URL}/api/config/community`, {
                     headers: { 'Authorization': `Bearer ${VIP.state.currentToken}` }
                 });
                 if (!response.ok) continue;
                 const data = await response.json();
+                if (_communityUser() !== me) return;
                 _applyCommunityCfg(data);
+                _communityCfgMem = {
+                    u: me,
+                    channelUrl: data.channelUrl || '',
+                    supportUrl: data.supportUrl || '',
+                    chatLogoUrl: data.chatLogoUrl || ''
+                };
                 try {
-                    localStorage.setItem('communityCfgCache', JSON.stringify({
-                        channelUrl: data.channelUrl || '',
-                        supportUrl: data.supportUrl || '',
-                        chatLogoUrl: data.chatLogoUrl || ''
-                    }));
+                    localStorage.setItem('communityCfgCache', JSON.stringify(_communityCfgMem));
                 } catch (e) { /* storage lleno: no es crítico */ }
                 _communityCfgOkAt = Date.now();
                 clearTimeout(_communityCfgRetryTimer);
@@ -732,7 +757,7 @@ VIP.chat = (function () {
         // Los 3 intentos fallaron: si había cache quedó aplicada (arriba); si
         // no, fallback visible. Se sigue intentando en background — la config
         // SIEMPRE termina llegando sin recargar la página.
-        if (!localStorage.getItem('communityCfgCache')) _applyCanalUrl('');
+        if (!hadCache) _applyCanalUrl('');
         clearTimeout(_communityCfgRetryTimer);
         _communityCfgRetryTimer = setTimeout(() => {
             loadCanalInformativoUrl().catch(() => {});

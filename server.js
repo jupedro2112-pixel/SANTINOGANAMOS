@@ -21452,13 +21452,12 @@ app.get('/api/config/community', authMiddleware, async (req, res) => {
     // Fallbacks de lectura: esquema viejo {name,url}, y el canalInformativoUrl de
     // la sección "Canal Informativo" del panel (eliminada 2026-08-03 al unificar
     // el canal en la Comunidad) — así una URL cargada ahí no se pierde.
-    const legacyCanal = await getConfig('canalInformativoUrl', '');
-    // #212: si el usuario pertenece a un EQUIPO con Telegram propio, ve ese canal;
+    // #212/#213: si el usuario pertenece a un EQUIPO con Telegram propio, ve ese canal;
     // si no, el general de Equipos; si tampoco, el de la card Comunidad.
-    let teamChannel = '';
-    try { const tc = await getTeamsConfig(); const t = resolveTeamForUsername(req.user.username, tc); teamChannel = (t && t.telegram) || tc.general.telegram || ''; } catch (_) {}
+    let tc = null, team = null;
+    try { tc = await getTeamsConfig(); team = resolveTeamForUsername(req.user.username, tc); } catch (_) {}
     res.json({
-      channelUrl: teamChannel || c.channelUrl || c.url || legacyCanal || '',
+      channelUrl: await _communityChannelUrl(team, tc, c),
       supportUrl: c.supportUrl || '',
       // Logo del chat de soporte de la PWA (cabecera del chat). Vacío = el
       // ícono default de VIPCARGAS que ya trae el HTML.
@@ -21481,11 +21480,15 @@ app.get('/api/config/community', authMiddleware, async (req, res) => {
 // VIGENTE de la config (la card Comunidad del panel) en el momento del click:
 // no hay carrera posible. Sin URL configurada (o DB caída) → redirige al
 // inicio del propio dominio, nunca más a una página inexistente.
+// #213: `?u=<username>` (lo agrega la PWA con el usuario logueado) → la comunidad
+// de SU equipo; sin `u` o sin equipo → la general. Sin esto, un click temprano
+// (antes de que cargue la config) mandaba a un cliente a la comunidad de otro.
 app.get('/go/comunidad', async (req, res) => {
   let url = '';
   try {
-    const c = (await getConfig('communityConfig')) || {};
-    url = c.channelUrl || c.url || (await getConfig('canalInformativoUrl', '')) || '';
+    const u = String(req.query.u || '').trim().slice(0, 40);
+    const tc = await getTeamsConfig();
+    url = await _communityChannelUrl(resolveTeamForUsername(u, tc), tc);
   } catch (_) { /* DB caída: cae al inicio */ }
   res.redirect(302, /^https?:\/\//i.test(url) ? url : '/');
 });
@@ -21577,26 +21580,65 @@ function resolveTeamForUsername(username, cfg) {
   for (const t of cfg.list) if (t.prefix && u.startsWith(t.prefix) && (!best || t.prefix.length > best.prefix.length)) best = t;
   return best;
 }
+// #213 Búsqueda TOLERANTE, sólo para el cartel del login (el cliente pone "lo que
+// recuerda" de su usuario): 1) el texto empieza con el prefijo de un equipo (regla
+// normal, gana el más largo); 2) si no, escribió MENOS que el prefijo o puso el
+// nombre del equipo ("arg" → argen, "royal" → Royal): vale sólo si apunta a UN
+// único equipo — ambiguo o sin coincidencia → null (va al general).
+function resolveTeamLoose(text, cfg) {
+  const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9._-]/g, '');
+  const q = norm(text);
+  if (!q || !cfg || !Array.isArray(cfg.list)) return null;
+  const exact = resolveTeamForUsername(q, cfg);
+  if (exact) return exact;
+  if (q.length < 2) return null;
+  const cands = cfg.list.filter(t => {
+    const nm = norm(t.name);
+    return t.prefix.startsWith(q) || nm.startsWith(q) || (nm.length >= 3 && q.startsWith(nm));
+  });
+  return cands.length === 1 ? cands[0] : null;
+}
+// Comunidad (Telegram) que le corresponde a un equipo: la SUYA → la general de
+// Equipos → la de la card Comunidad (→ canalInformativoUrl legacy). `team` null =
+// sin equipo. Única fuente para /api/config/community, /go/comunidad y el cartel
+// del login: un link de comunidad nuevo tiene que salir de acá, nunca directo de
+// communityConfig (si no, un cliente termina en la comunidad de otro equipo).
+async function _communityChannelUrl(team, teamsCfg, communityCfg) {
+  const own = (team && team.telegram) || (teamsCfg && teamsCfg.general && teamsCfg.general.telegram) || '';
+  if (own) return own;
+  const c = communityCfg || (await getConfig('communityConfig')) || {};
+  return c.channelUrl || c.url || (await getConfig('canalInformativoUrl', '')) || '';
+}
 function buildWhatsappUrl(number, text) {
   const digits = String(number || '').replace(/\D/g, '');
   if (!digits) return '';
   return `https://wa.me/${digits}${text ? '?text=' + encodeURIComponent(text) : ''}`;
 }
-// PÚBLICO (pantalla de login, sin sesión). Sólo compara prefijos: NO revela si la
-// cuenta existe ni la lista de equipos. `mode=forgot` = no recuerda su usuario.
+// PÚBLICO (pantalla de login, sin sesión). Sólo compara prefijos/nombres de equipo:
+// NO revela si la cuenta existe. `mode=forgot` = no recuerda su usuario → general.
+// Devuelve el WhatsApp (del equipo, o el general si el equipo no tiene) y la
+// comunidad de Telegram (del equipo → general → card Comunidad).
 app.get('/api/config/team', async (req, res) => {
   try {
     const username = String(req.query.username || '').trim().slice(0, 40);
     const forgot = String(req.query.mode || '') === 'forgot';
     const cfg = await getTeamsConfig();
-    const team = forgot ? null : resolveTeamForUsername(username, cfg);
-    const number = (team && team.whatsapp) || cfg.general.whatsapp || '';
+    const team = forgot ? null : resolveTeamLoose(username, cfg);
+    const teamNumber = (team && team.whatsapp) || '';
+    const number = teamNumber || cfg.general.whatsapp || '';
     const texto = forgot
       ? 'Hola! Soy cliente de GANAMOS y no recuerdo mi usuario para entrar a la app. ¿Me ayudan?'
       : (username
-        ? `Hola! Mi usuario de GANAMOS es ${username}. No puedo entrar a la app y quiero recuperar mi clave.`
-        : 'Hola! No puedo entrar a la app de GANAMOS y quiero recuperar mi clave.');
-    res.json({ matched: !!team, teamName: team ? team.name : null, whatsappUrl: buildWhatsappUrl(number, texto), hasWhatsapp: !!number, general: !team });
+        ? `Hola! Mi usuario de GANAMOS es ${username}. No puedo entrar a la app y necesito mi acceso.`
+        : 'Hola! No puedo entrar a la app de GANAMOS y necesito mi acceso.');
+    let telegramUrl = '';
+    try { telegramUrl = await _communityChannelUrl(team, cfg); } catch (_) {}
+    if (!/^https?:\/\//i.test(telegramUrl)) telegramUrl = '';
+    res.json({
+      matched: !!team, teamName: team ? team.name : null, general: !team,
+      whatsappUrl: buildWhatsappUrl(number, texto), hasWhatsapp: !!number, whatsappIsTeam: !!teamNumber,
+      telegramUrl, telegramIsTeam: !!(team && team.telegram)
+    });
   } catch (error) {
     logger.error(`/api/config/team: ${error.message}`);
     res.status(500).json({ error: 'Error del servidor' });
