@@ -4,7 +4,8 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-09-29**
+> **Última actualización: 2026-10-01** (última entrada: #212; el 01/10 sólo se pusieron
+> al día los docs — sin cambios de código)
 
 ---
 
@@ -18,10 +19,14 @@
 > en `docs/ARCHITECTURE.md` §0.
 >
 > **Pendientes del modo manual (el owner):**
-> 1. Cargar `GANAMOS_PLAY_URL` REAL en SSM (hoy placeholder `https://ganamos.io`).
-> 2. Reemplazar las imágenes `/images/soporte-1girox.png` y `/images/banner-inicio-1girox.jpg`
->    (siguen siendo las de 1girox; mismo nombre de archivo).
-> 3. Probar en deploy el flujo completo: boot dice "MODO MANUAL"; crear usuario desde el
+> 1. Confirmar que `GANAMOS_PLAY_URL` en SSM tenga la URL REAL de GANAMOS (el default del
+>    código es `https://ganamos.net` desde #196).
+> 2. Cargar los equipos (prefijo/nombre/Telegram/WhatsApp) y el WhatsApp general en el
+>    panel → COMANDOS → card "👥 Equipos" (#212).
+> 3. Encender el motor de recordatorios si se lo quiere activo: arranca APAGADO (panel →
+>    Inactivos → "Motor ENCENDIDO" + guardar, #209).
+> 4. Revisar en deploy que el ticker del login cargue (`/api/claims-feed`, ver #200).
+> 5. Probar en deploy el flujo completo: boot dice "MODO MANUAL"; crear usuario desde el
 >    panel + link de acceso → entra sin ver saldo ni reembolsos; CASINO abre GANAMOS en
 >    pestaña; transferencia hgcash → tarea pendiente + "recibimos tu transferencia" →
 >    ✅ Hecha → "ya te cargamos"; ruleta → premio en la bandeja; Depositar/Bonificación/

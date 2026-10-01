@@ -246,11 +246,12 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   informe el saldo del agente.
 - **Multi-instancia (AWS EB):** los crons son `setInterval` en CADA instancia; su
   idempotencia depende de índices únicos (EncuestaFire.slotKey, InactividadFire.fireKey,
-  HgcashCharge.chargeKey, DailyRouletteSpin userId+dateKey). No quitar esos índices.
+  HgcashCharge.chargeKey, RecordatorioFire.fireKey, DailyRouletteSpin
+  userId+dateKey+seq). No quitar esos índices.
 - **Front frágil:** cientos de `onclick` inline dependen de funciones en `window.*`
   (no renombrar exports sin actualizar el HTML/strings). Tabla de usuarios del panel
   acoplada a `USERS_LIST_FIELDS` del backend (columna nueva ⇒ sumar campo al select).
-  Detalle completo de trampas en `docs/ARCHITECTURE.md` §7.
+  Detalle completo de trampas en `docs/ARCHITECTURE.md` §9.
 
 ## Flujo de trabajo del asistente
 
@@ -261,5 +262,11 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
    superior antes de su `require` y rutas antes de `const authMiddleware`: `node
    --check` NO los ve y tumban el server al arrancar — pasó el 2026-09-16). No hay
    node_modules local, así que no se puede correr el server; sólo syntax check).
-3. Actualizar `WORKLOG.md`.
-4. Commitear y pushear a `main` cuando el owner lo pida (o si pidió "todo seguido").
+3. Actualizar `WORKLOG.md` SIEMPRE y en el mismo cambio, y `CLAUDE.md` /
+   `docs/ARCHITECTURE.md` cuando lo hecho cambia el contexto, un flujo o una trampa.
+   Es AUTOMÁTICO: el owner no lo tiene que pedir (reiterado el 2026-10-01). Si al leer
+   los docs aparece algo desactualizado, corregirlo en el momento.
+4. Commitear y pushear a `main` AUTOMÁTICAMENTE después de cada cambio terminado y
+   validado, sin esperar a que el owner lo pida (autorizado el 2026-10-01: trabaja en
+   Tails y lo que no se pushea se pierde al reiniciar). Si una validación falla, NO
+   pushear: avisar primero.
