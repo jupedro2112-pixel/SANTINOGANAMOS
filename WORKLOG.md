@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #213)
+> **Última actualización: 2026-10-01** (última entrada: #214)
 
 ---
 
@@ -21,8 +21,9 @@
 > 1. Confirmar que `GANAMOS_PLAY_URL` en SSM tenga la URL REAL de GANAMOS (el default del
 >    código es `https://ganamos.net` desde #196).
 > 2. Cargar los equipos (prefijo/nombre/Telegram/WhatsApp) y el WhatsApp + Telegram
->    GENERAL en el panel → COMANDOS → card "👥 Equipos" (#212/#213). Sin eso el cartel
->    del login dice "todavía no hay un contacto cargado".
+>    GENERAL en el panel → COMANDOS → card "👥 Equipos" (#212–#214). ⚠️ El **WhatsApp
+>    general** es obligatorio: sin él, "No recuerdo mi usuario" y los usuarios sin equipo
+>    ven "todavía no hay un WhatsApp cargado" (el 01/10 estaba vacío en el deploy).
 > 3. Encender el motor de recordatorios si se lo quiere activo: arranca APAGADO (panel →
 >    Inactivos → "Motor ENCENDIDO" + guardar, #209).
 > 4. Revisar en deploy que el ticker del login cargue (`/api/claims-feed`, ver #200).
@@ -42,7 +43,26 @@
 
 ---
 
-## Sesión 2026-10-01 — Equipos: comunidad por equipo sin fugas + cartel del login con comunidad y búsqueda tolerante
+## Sesión 2026-10-01 (2ª) — Cartel del login: SÓLO WhatsApp (fuera la comunidad)
+
+### 214. El cartel de acceso del login ya no ofrece la comunidad de Telegram
+- **Corrección del owner (captura del deploy):** tocó "No recuerdo mi usuario" y le
+  apareció sólo "📣 Comunidad general". "Acá comunidad general no: debería ser WhatsApp
+  general, para que se comuniquen ahí y les den atención." El botón de comunidad lo
+  había agregado yo en #213 leyendo de más el "o comunidad general" del pedido.
+- **Por qué no salía el WhatsApp:** en ese deploy el **WhatsApp general está vacío** en
+  la card Equipos (`hasWhatsapp:false`), y el #213 mostraba la comunidad como reemplazo.
+  Hay que cargarlo en el panel.
+- **Cambio:** `GET /api/config/team` vuelve a devolver sólo WhatsApp (`whatsappUrl`,
+  `hasWhatsapp`, `whatsappIsTeam`, `matched`, `teamName`, `general`); ya no expone
+  `telegramUrl`/`telegramIsTeam`. PWA: fuera `#teamTelegramLink` y su lógica; textos
+  "Escribinos al WhatsApp general…" y botón "Escribir al WhatsApp general". Sin número
+  cargado: "Todavía no hay un WhatsApp cargado. Escribinos por el soporte de Telegram
+  de arriba." La comunidad por equipo DENTRO de la app (#213) no cambia.
+- `node --check` ✅, `check-tdz` ✅, prueba en frío de equipos ✅. SW **v126**, admin-sw
+  **v53** (ayuda de la card).
+
+## Sesión 2026-10-01 — Equipos: comunidad por equipo sin fugas + cartel del login con búsqueda tolerante
 
 ### 213. Se cierran los huecos del #212 (el owner volvió a pedir la feature con capturas del gemelo: ya estaba hecha, faltaba esto)
 - **Pedido:** "según el inicio del usuario encontrar su equipo; si no lo recuerda pone lo
@@ -69,7 +89,8 @@
   siempre que apunte a UN único equipo; ambiguo ("ma" con mar y marte) o 1 letra →
   general. Normaliza acentos, mayúsculas, espacios y "@". La comunidad dentro de la app
   sigue usando la regla ESTRICTA (`resolveTeamForUsername`, username completo).
-- **(4) Comunidad en el login + textos:** `GET /api/config/team` devuelve además
+- **(4) Comunidad en el login + textos** (⚠️ el botón de comunidad del login se QUITÓ en
+  #214: ahí va sólo WhatsApp)**:** `GET /api/config/team` devuelve además
   `telegramUrl` (equipo → general de Equipos → card Comunidad), `telegramIsTeam` y
   `whatsappIsTeam`. El cartel muestra el botón verde de WhatsApp y debajo "📣 Comunidad
   de <equipo>" / "Comunidad general"; si el equipo no tiene WhatsApp ya no dice
@@ -79,7 +100,7 @@
   entrar?".
 - **Única fuente del link de comunidad:** `_communityChannelUrl(team, teamsCfg,
   communityCfg?)` (server.js, junto a los helpers de equipos). La usan
-  `/api/config/community`, `/go/comunidad` y `/api/config/team`. Un link de comunidad
+  `/api/config/community` y `/go/comunidad` (y, hasta #214, `/api/config/team`). Un link de comunidad
   nuevo sale de ahí, nunca directo de `communityConfig`.
 - **Panel (admin-sw v52):** ayuda de la card Equipos reescrita (comunidad por equipo,
   general, el Soporte NO se divide por equipo). Sin cambios de lógica en el panel.

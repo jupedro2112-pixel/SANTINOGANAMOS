@@ -21600,8 +21600,8 @@ function resolveTeamLoose(text, cfg) {
 }
 // Comunidad (Telegram) que le corresponde a un equipo: la SUYA → la general de
 // Equipos → la de la card Comunidad (→ canalInformativoUrl legacy). `team` null =
-// sin equipo. Única fuente para /api/config/community, /go/comunidad y el cartel
-// del login: un link de comunidad nuevo tiene que salir de acá, nunca directo de
+// sin equipo. Única fuente para /api/config/community y /go/comunidad: un link
+// de comunidad nuevo tiene que salir de acá, nunca directo de
 // communityConfig (si no, un cliente termina en la comunidad de otro equipo).
 async function _communityChannelUrl(team, teamsCfg, communityCfg) {
   const own = (team && team.telegram) || (teamsCfg && teamsCfg.general && teamsCfg.general.telegram) || '';
@@ -21616,8 +21616,9 @@ function buildWhatsappUrl(number, text) {
 }
 // PÚBLICO (pantalla de login, sin sesión). Sólo compara prefijos/nombres de equipo:
 // NO revela si la cuenta existe. `mode=forgot` = no recuerda su usuario → general.
-// Devuelve el WhatsApp (del equipo, o el general si el equipo no tiene) y la
-// comunidad de Telegram (del equipo → general → card Comunidad).
+// Devuelve SÓLO el WhatsApp (del equipo, o el general si el equipo no tiene): en el
+// login el cliente tiene que hablar con alguien que le dé atención y el acceso. La
+// comunidad de Telegram NO se expone acá (#214) — se ve recién con sesión.
 app.get('/api/config/team', async (req, res) => {
   try {
     const username = String(req.query.username || '').trim().slice(0, 40);
@@ -21631,13 +21632,9 @@ app.get('/api/config/team', async (req, res) => {
       : (username
         ? `Hola! Mi usuario de GANAMOS es ${username}. No puedo entrar a la app y necesito mi acceso.`
         : 'Hola! No puedo entrar a la app de GANAMOS y necesito mi acceso.');
-    let telegramUrl = '';
-    try { telegramUrl = await _communityChannelUrl(team, cfg); } catch (_) {}
-    if (!/^https?:\/\//i.test(telegramUrl)) telegramUrl = '';
     res.json({
       matched: !!team, teamName: team ? team.name : null, general: !team,
-      whatsappUrl: buildWhatsappUrl(number, texto), hasWhatsapp: !!number, whatsappIsTeam: !!teamNumber,
-      telegramUrl, telegramIsTeam: !!(team && team.telegram)
+      whatsappUrl: buildWhatsappUrl(number, texto), hasWhatsapp: !!number, whatsappIsTeam: !!teamNumber
     });
   } catch (error) {
     logger.error(`/api/config/team: ${error.message}`);

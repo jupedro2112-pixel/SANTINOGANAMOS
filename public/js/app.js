@@ -362,7 +362,7 @@ function setupEventListeners() {
         const fileInput = document.getElementById('fileInput');
         if (fileInput) fileInput.addEventListener('change', VIP.chat.handleFileSelect);
 
-        // ===== #212/#213 Login: a qué WhatsApp (y comunidad) ir según el EQUIPO del usuario =====
+        // ===== #212/#213 Login: a qué WhatsApp escribir según el EQUIPO del usuario =====
         // El equipo sale del INICIO del username (ej: "mar…" → Marshall). Lo resuelve el
         // server en GET /api/config/team (público, sólo compara prefijos: no revela si la
         // cuenta existe). Sin match → WhatsApp general. "No recuerdo mi usuario" → general.
@@ -372,10 +372,8 @@ function setupEventListeners() {
         const teamWhatsappLink = document.getElementById('teamWhatsappLink');
         const teamWhatsappLabel = document.getElementById('teamWhatsappLabel');
         const teamForgotBtn = document.getElementById('teamForgotBtn');
-        // #213: además del WhatsApp se ofrece la COMUNIDAD de Telegram (la del equipo; si
-        // no tiene o no hay equipo, la general).
-        const teamTelegramLink = document.getElementById('teamTelegramLink');
-        const teamTelegramLabel = document.getElementById('teamTelegramLabel');
+        // #214: en el login SÓLO WhatsApp (el del equipo o el general): es donde le dan
+        // atención y el acceso. La comunidad de Telegram se ve recién adentro de la app.
         const _teamEsc = (s) => { const d = document.createElement('div'); d.textContent = String(s == null ? '' : s); return d.innerHTML; };
         async function _buscarEquipo(forgot) {
             if (!teamLookupMsg || !teamWhatsappLink) return;
@@ -388,40 +386,30 @@ function setupEventListeners() {
             }
             teamLookupMsg.style.display = 'block'; teamLookupMsg.style.color = '#aaa'; teamLookupMsg.textContent = 'Buscando…';
             teamWhatsappLink.style.display = 'none';
-            if (teamTelegramLink) teamTelegramLink.style.display = 'none';
             try {
                 const r = await fetch(VIP.config.API_URL + '/api/config/team?username=' + encodeURIComponent(user) + (forgot ? '&mode=forgot' : ''));
                 const d = r.ok ? await r.json() : null;
-                const hasTelegram = !!(d && d.telegramUrl && teamTelegramLink);
-                if (!d || (!d.hasWhatsapp && !hasTelegram)) {
+                if (!d || !d.hasWhatsapp) {
                     teamLookupMsg.style.color = '#ffaa44';
-                    teamLookupMsg.textContent = 'Todavía no hay un contacto cargado. Escribinos por el soporte de Telegram de arriba.';
+                    teamLookupMsg.textContent = 'Todavía no hay un WhatsApp cargado. Escribinos por el soporte de Telegram de arriba.';
                     return;
                 }
                 // El WhatsApp puede ser el general aunque haya equipo (equipo sin número cargado).
                 const waDelEquipo = !!(d.matched && d.whatsappIsTeam);
                 if (forgot) {
                     teamLookupMsg.style.color = '#ccc';
-                    teamLookupMsg.textContent = 'Te pasamos con el soporte general: te ayudan a encontrar tu usuario o te crean uno nuevo.';
+                    teamLookupMsg.textContent = 'Escribinos al WhatsApp general: te ayudan a encontrar tu usuario o te crean uno nuevo.';
                 } else if (d.matched) {
                     teamLookupMsg.style.color = '#00ff88';
                     teamLookupMsg.innerHTML = '✓ Tu equipo es <strong>' + _teamEsc(d.teamName) + '</strong>. ' +
-                        (waDelEquipo ? 'Escribiles y te dan el acceso.'
-                            : (d.hasWhatsapp ? 'Escribí al soporte general y te dan el acceso.' : 'Entrá a su comunidad y pedí tu acceso ahí.'));
+                        (waDelEquipo ? 'Escribiles y te dan el acceso.' : 'Escribí al WhatsApp general y te dan el acceso.');
                 } else {
                     teamLookupMsg.style.color = '#ccc';
-                    teamLookupMsg.textContent = 'No encontramos un equipo para ese usuario. Te pasamos con el soporte general.';
+                    teamLookupMsg.textContent = 'No encontramos un equipo para ese usuario. Escribinos al WhatsApp general y te ayudan.';
                 }
-                if (d.hasWhatsapp) {
-                    if (teamWhatsappLabel) teamWhatsappLabel.textContent = waDelEquipo ? ('Escribir a ' + d.teamName) : 'Escribir al soporte general';
-                    teamWhatsappLink.href = d.whatsappUrl;
-                    teamWhatsappLink.style.display = 'flex';
-                }
-                if (hasTelegram) {
-                    if (teamTelegramLabel) teamTelegramLabel.textContent = (d.matched && d.telegramIsTeam) ? ('Comunidad de ' + d.teamName) : 'Comunidad general';
-                    teamTelegramLink.href = d.telegramUrl;
-                    teamTelegramLink.style.display = 'flex';
-                }
+                if (teamWhatsappLabel) teamWhatsappLabel.textContent = waDelEquipo ? ('Escribir a ' + d.teamName) : 'Escribir al WhatsApp general';
+                teamWhatsappLink.href = d.whatsappUrl;
+                teamWhatsappLink.style.display = 'flex';
             } catch (e) {
                 teamLookupMsg.style.color = '#ff8888';
                 teamLookupMsg.textContent = 'No pudimos consultar ahora. Revisá tu conexión.';

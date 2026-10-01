@@ -218,11 +218,12 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   da 404, la PWA no tiene menú/modal/cards de referidos y el panel los oculta. El
   sistema (referralRate.js con `/sys_referral_pct`, controlador, payouts) queda sólo
   para `PLATFORM_MODE=girox`. No agregar textos de referidos al cliente.
-- **EQUIPOS por inicio del usuario (#212/#213):** `Config['teams']` (panel → COMANDOS →
+- **EQUIPOS por inicio del usuario (#212–#214):** `Config['teams']` (panel → COMANDOS →
   card Equipos): prefijo → WhatsApp y Telegram (comunidad) del equipo, + un general.
   El link de comunidad sale SIEMPRE de `_communityChannelUrl` (equipo → general → card
-  Comunidad): lo usan `/api/config/community`, `/go/comunidad?u=<username>` y el cartel
-  del login (`/api/config/team`). Nunca leer `communityConfig.channelUrl` directo para
+  Comunidad): lo usan `/api/config/community` y `/go/comunidad?u=<username>`. El cartel
+  del login (`/api/config/team`) da SÓLO WhatsApp (equipo o general), nunca la
+  comunidad (decisión del owner, #214). Nunca leer `communityConfig.channelUrl` directo para
   mandar a un cliente a la comunidad: terminaría en la de otro equipo. Con sesión se usa
   `resolveTeamForUsername` (estricta); `resolveTeamLoose` es sólo para el login.
 - **Ruleta = ventana de 24 h REALES desde el último giro (#208):** `_rouletteSpinWindow`;
