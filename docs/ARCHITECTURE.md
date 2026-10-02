@@ -245,10 +245,10 @@ como **propiedad del entorno de Elastic Beanstalk**, no en SSM.
   default `manual`), `SSM_SKIP_KEYS` (sólo clones), `FCM_DEBUG_LOGS`. `PORT` lo pone EB.
 - **SSM obligatorias:** `JWT_SECRET` (sin ella el server no arranca; 32+ caracteres),
   `MONGODB_URI` (base PROPIA de GANAMOS; default localhost), `PUBLIC_BASE_URL` (⚠️ default
-  `https://cargas1girox.com`: links de acceso y de comprobantes), `ALLOWED_ORIGINS` (⚠️ en
-  producción sin ella se rechaza todo request con cabecera `Origin`, o sea los POST del
-  propio sitio y el socket: listar TODOS los orígenes desde los que se sirve la web y el
-  panel, separados por coma), `ADMIN_USERNAME` + `ADMIN_PASSWORD` (crean el admin en el
+  `https://cargas1girox.com`: links de acceso y de comprobantes), `ALLOWED_ORIGINS` (orígenes DISTINTOS del propio host que
+  pueden llamar a la API, separados por coma — ej. `https://www.dominio.com` si se entra
+  sin `www`; desde #219 el MISMO origen siempre pasa (`corsOriginAllowed`), así que ya no
+  bloquea el login cuando falta), `ADMIN_USERNAME` + `ADMIN_PASSWORD` (crean el admin en el
   primer arranque y son el login de emergencia si Mongo no responde), y la cuenta de
   servicio de Firebase en UNA de tres formas: `FIREBASE_SERVICE_ACCOUNT_JSON_BASE64` |
   `FIREBASE_SERVICE_ACCOUNT_JSON` | `FIREBASE_PROJECT_ID` + `FIREBASE_CLIENT_EMAIL` +
@@ -261,8 +261,10 @@ como **propiedad del entorno de Elastic Beanstalk**, no en SSM.
   `HGCASH_API_URL` (default ok, y se lee al require); `ANTHROPIC_API_KEY` (IA de
   comprobantes; sin ella queda dormida) + `COMPROBANTE_AI_MODEL`; `TELEGRAM_ALERT_BOT_TOKEN`
   + `TELEGRAM_ALERT_CHAT_ID` (cierre diario/bajadas); `REDIS_URL` (o `REDIS_HOST` /
-  `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD`) — obligatorio con 2+ instancias, con
-  base lógica propia; `ADMIN_HOST` (panel servido sólo en ese host); `SMS_MASIVO_PASSWORD`
+  `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD`) — obligatorio con 2+ instancias. El
+  adapter de Socket.IO usa el canal `socket.io:<dominio>` (#219; el pub/sub de Redis NO se
+  separa por número de base), así que se puede compartir el servidor con otro proyecto;
+  igual conviene otra base lógica para las claves de rate-limit y locks; `ADMIN_HOST` (panel servido sólo en ese host); `SMS_MASIVO_PASSWORD`
   (sección SMS masivo); `META_PIXEL_ID` + `META_CAPI_ACCESS_TOKEN` (+ `META_TEST_EVENT_CODE`
   y las `_2`); `FBADS_WEBHOOK_URL` + `FBADS_WEBHOOK_TOKEN`; `BRAND_NAME`;
   `LANDING_SIGNUP_DISABLED`. SMS (OTP por SNS): en EB usa el rol de la instancia —

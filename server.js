@@ -813,21 +813,35 @@ function resolveAllowedOrigins() {
   return DEV_ORIGINS;
 }
 
-function corsOriginFn(origin, callback) {
-  const allowed = resolveAllowedOrigins();
-  // Requests sin cabecera Origin (same-origin, curl, mobile) siempre se permiten.
-  if (!origin) return callback(null, true);
-  if (allowed.includes(origin)) return callback(null, true);
-  logger.warn(`CORS bloqueado para origen: ${origin}`);
-  return callback(new Error('No autorizado por CORS'));
+// #219 MISMO ORIGEN = siempre permitido. El navegador manda la cabecera `Origin` también
+// en los POST/fetch del PROPIO sitio; con la allowlist sola, un deploy cuyo dominio no
+// estaba en ALLOWED_ORIGINS (la URL de Elastic Beanstalk, un dominio nuevo) se bloqueaba a
+// sí mismo: el login de la web y del panel devolvía "Algo salió mal" / "Error de
+// autenticación" (pasó en el primer deploy de GANAMOS en AWS, 2026-10-02). Si el host del
+// Origin es el mismo `Host` al que llegó el request, no es un pedido cruzado y no hay nada
+// que autorizar. Un sitio ajeno NO puede falsear ninguna de las dos cabeceras desde un
+// navegador. ALLOWED_ORIGINS queda para los orígenes realmente distintos.
+function _isSameOriginRequest(origin, req) {
+  try {
+    const host = String((req && req.headers && req.headers.host) || '').split(':')[0].trim().toLowerCase();
+    return !!host && new URL(String(origin)).hostname.toLowerCase() === host;
+  } catch (_) { return false; }
+}
+function corsOriginAllowed(origin, req) {
+  if (!origin) return true;
+  if (_isSameOriginRequest(origin, req)) return true;
+  return resolveAllowedOrigins().includes(origin);
 }
 
 const server = http.createServer(app);
 const io = socketIo(server, {
-  cors: {
-    origin: corsOriginFn,
-    methods: ["GET", "POST"],
-    credentials: true
+  // Delegate (req, cb): hace falta el request para reconocer el mismo origen (#219). Un
+  // origen no permitido NO recibe cabeceras CORS (el navegador lo corta), sin tirar error.
+  cors: (req, cb) => {
+    const origin = req && req.headers ? req.headers.origin : undefined;
+    const ok = corsOriginAllowed(origin, req);
+    if (!ok) logger.warn(`CORS (socket) bloqueado para origen: ${origin}`);
+    cb(null, { origin: ok, methods: ["GET", "POST"], credentials: true });
   },
   // WebSocket primero (baja latencia detrás de ALB/NLB); polling como respaldo
   // para redes que bloquean WebSocket. El cliente (public/js/socket.js) pide la
@@ -873,9 +887,15 @@ async function setupRedisAdapter() {
 
     await Promise.all([pubClient.connect(), subClient.connect()]);
 
-    io.adapter(createAdapter(pubClient, subClient));
+    // #219 Canal PROPIO del proyecto. El pub/sub de Redis es global: NO lo separa el número
+    // de base (`/1`, `/2`). Con el canal por defecto ("socket.io"), dos proyectos que
+    // comparten el mismo Redis (este entorno se clonó de otro) se cruzan los eventos: la
+    // sala `admins` de uno recibe los mensajes del otro. El prefijo sale del dominio
+    // público (igual en todas las instancias de ESTE proyecto).
+    const adapterKey = `socket.io:${_projectLabel()}`;
+    io.adapter(createAdapter(pubClient, subClient, { key: adapterKey }));
     setRedisClient(pubClient);
-    logger.info('Socket.IO Redis adapter initialized — multi-instance mode active');
+    logger.info(`Socket.IO Redis adapter initialized — multi-instance mode active (canal ${adapterKey})`);
   } catch (err) {
     logger.error(`Failed to initialize Redis adapter: ${err.message}. Falling back to single-instance mode.`);
   }
@@ -921,13 +941,19 @@ app.use((req, res, next) => {
 });
 // El resto de las rutas sigue con el CORS estricto de ALLOWED_ORIGINS. El
 // endpoint de landing se saltea este middleware (ya recibió sus headers arriba;
-// si pasara por acá, corsOriginFn rechazaría el dominio puente con un error).
-const _strictCors = cors({
-  origin: corsOriginFn,
+// si pasara por acá, el CORS estricto rechazaría el dominio puente con un error).
+const _strictCorsBase = {
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Accept', 'Origin'],
   exposedHeaders: ['X-Total-Count', 'X-RateLimit-Remaining']
+};
+// Delegate (req, cb) para poder aceptar SIEMPRE el mismo origen (#219, ver corsOriginAllowed).
+const _strictCors = cors((req, cb) => {
+  const origin = req.headers.origin;
+  if (corsOriginAllowed(origin, req)) return cb(null, Object.assign({ origin: true }, _strictCorsBase));
+  logger.warn(`CORS bloqueado para origen: ${origin} (host ${req.headers.host || '?'}) — si es un dominio propio, agregalo a ALLOWED_ORIGINS`);
+  return cb(new Error('No autorizado por CORS'));
 });
 app.use((req, res, next) => {
   if (req.path === '/api/landing/signup') return next();

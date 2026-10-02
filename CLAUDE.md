@@ -227,6 +227,11 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `PUBLISHER_ADMIN_ALLOWED_PATHS`).
 - **Auth:** JWT por header Authorization O por cookie httpOnly `admin_api_session`
   (el panel admin usa cookie).
+- **CORS (#219):** el MISMO origen siempre pasa (`corsOriginAllowed`: host del `Origin` ==
+  `Host` del request); `ALLOWED_ORIGINS` es sólo para orígenes distintos. No volver a una
+  allowlist pura: el sitio se bloquea a sí mismo (login "Algo salió mal") en cualquier
+  dominio no listado. El adapter de Redis usa el canal `socket.io:<dominio>` para no
+  cruzar eventos con otro proyecto que comparta el Redis.
 - **SIN REFERIDOS en GANAMOS (#207, 2026-09-30):** en modo manual `/api/referrals/*`
   da 404, la PWA no tiene menú/modal/cards de referidos y el panel los oculta. El
   sistema (referralRate.js con `/sys_referral_pct`, controlador, payouts) queda sólo

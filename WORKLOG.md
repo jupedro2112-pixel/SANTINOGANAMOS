@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #218)
+> **Última actualización: 2026-10-01** (última entrada: #219)
 
 ---
 
@@ -49,6 +49,40 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 (5ª) — Primer deploy en AWS: el login fallaba por CORS (el sitio se bloqueaba a sí mismo)
+
+### 219. Mismo origen siempre permitido en CORS + canal propio del adapter de Redis
+- **Síntoma (owner, deploy en Elastic Beanstalk):** el panel devolvía "Algo salió mal" y la
+  web "Error de autenticación" al entrar, con usuario y clave correctos.
+- **Diagnóstico (logs de las 2 instancias):** arranque sano (14 parámetros de
+  `/ganamos/prod`, Mongo conectado, MODO MANUAL, admin verificado) y en cada intento de
+  login `CORS bloqueado para origen: https://ganamos.eba-….elasticbeanstalk.com`. El
+  navegador manda la cabecera `Origin` también en los POST del propio sitio, y el CORS
+  sólo aceptaba lo listado en `ALLOWED_ORIGINS` → entrando por una URL no listada (la de
+  EB), el sitio se rechazaba a sí mismo. El comentario del código decía "same-origin
+  siempre pasa", pero eso sólo era cierto para requests SIN cabecera Origin.
+- **Fix (server.js):** `corsOriginAllowed(origin, req)` — si el host del `Origin` es el
+  mismo `Host` al que llegó el request, se permite sin mirar la lista (no es un pedido
+  cruzado; un sitio ajeno no puede falsear esas cabeceras desde un navegador).
+  `ALLOWED_ORIGINS` queda para orígenes realmente distintos (ej. `www.` vs sin `www.`).
+  El CORS de Express y el de Socket.IO pasaron a la forma delegate `(req, cb)` para tener
+  el request; se fue `corsOriginFn`. Probado en frío (12 casos: EB, dominio propio, Host
+  con puerto, sitio ajeno, dominio parecido, Origin "null"/inválido, lista).
+- **De paso — Redis compartido entre proyectos:** el log muestra el adapter de Redis
+  activo y este entorno se clonó de otro proyecto. `createAdapter` usaba el canal por
+  defecto (`socket.io`) y el pub/sub de Redis NO se separa por número de base → dos
+  proyectos en el mismo Redis se cruzan los eventos de socket (la sala `admins` de uno
+  recibe mensajes del otro). Ahora el canal es `socket.io:<dominio de PUBLIC_BASE_URL>`.
+  ⚠️ La nota de #146 ("base lógica /1, sin cruce") era incorrecta para el pub/sub.
+- **Otros hallazgos del log (sin tocar código):** el aviso `ALLOWED_ORIGINS no configurado`
+  sale SIEMPRE al arrancar aunque esté en SSM (se evalúa antes de cargar SSM: es ruido);
+  el `ValidationError keyGeneratorIpFallback` de express-rate-limit es el ruido conocido
+  de #123; entre 03:08 y 03:28 UTC el entorno corrió el código de OTRO proyecto (login a
+  JUGAYGANA) contra la base de GANAMOS → pueden haber quedado comandos `/sys_*` y datos
+  sembrados por ese código: revisar COMANDOS.
+- `node --check` ✅, `check-tdz` ✅. **Necesita redeploy.** Sin redeploy, el atajo es
+  agregar la URL de EB a `ALLOWED_ORIGINS` y reiniciar.
 
 ## Sesión 2026-10-02 (4ª) — Marca: el panel pasa a "ADMIN GANAMOS" y los SMS dejan de decir VIPCARGAS
 
