@@ -2381,6 +2381,18 @@ function _bankMovementPublic(m) {
 // `vip-hg-*` y los mismos avisos que la automática ("la misma carga automática,
 // elegida por un agente"). Devuelve { ok, reason|txId } (los callers viejos
 // ignoran el retorno).
+// #216 Aviso al CLIENTE cuando su comprobante quedó verificado contra el banco (la IA
+// lo leyó y hgcash confirmó esa transferencia). Texto editable en COMANDOS
+// (/sys_comprobante_ok; vacío = no se envía). Devuelve true si se envió.
+async function _hgComprobanteOkMessage(user, amount, bonus) {
+  const m = await renderSystemCommand('/sys_comprobante_ok',
+    '🧾 ¡Recibimos tu comprobante de ${amount}! ✅ Lo estamos verificando: en 1 minuto vas a tener tu carga. 🙌',
+    { username: user.username, amount: Number(amount).toLocaleString('es-AR'), bonus: Number(bonus || 0).toLocaleString('es-AR') });
+  if (!m) return false;
+  await _sendSystemMessageToUser(user.id, user.username, m);
+  return true;
+}
+
 async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
   const shadow = mode !== 'auto' && !assign;
   const compId = comprobante ? comprobante.id : null;
@@ -2431,8 +2443,12 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
       $set: { matchStatus: 'shadow_matched', matchedUserId: user.id, matchedUsername: user.username, matchedComprobanteId: compId }
     });
     if (compId) await Comprobante.updateOne({ id: compId }, { $set: { bankMatchStatus: 'shadow_matched', matchedMovementId: movement.movementId } });
+    // #216 el comprobante quedó VERIFICADO contra el banco: se le avisa al cliente
+    // (/sys_comprobante_ok) y al agente, en interno, que está OK para cargar.
+    let _okSent = false;
+    if (compId) { try { _okSent = await _hgComprobanteOkMessage(user, amount, 0); } catch (e) { logger.warn(`[hgcash] aviso de comprobante OK a ${user.username}: ${e.message}`); } }
     await _emitAdminOnlyChatNote(user.id, user.username,
-      `🏦 MATCH hgcash (MODO SOMBRA) — ${dataDesc}\n✅ La transferencia coincide con el comprobante. Lista para cargar (auto-carga DESACTIVADA — cargá vos).`);
+      `🏦 ✅ COMPROBANTE OK — VERIFICADO CON EL BANCO (hgcash): ${dataDesc}\nLa transferencia entró y coincide con el comprobante. 👉 ${PLATFORM_MANUAL ? 'Cargale ese monto en GANAMOS y registralo acá con Depositar.' : 'Lista para cargar (auto-carga DESACTIVADA — cargá vos).'}${_okSent ? ' Al cliente ya se le avisó que en 1 minuto tiene su carga.' : ''}`);
     logger.info(`[hgcash] shadow match user=${user.username} amount=$${amount} movement=${movement.movementId}`);
     _emitHgcashUpdate('sombra', movement.movementId);
     return { ok: false, reason: 'shadow' };
@@ -2618,8 +2634,15 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     // #189 con bono pendiente aplicado → mensaje de carga CON bonus (con la nota del rollover).
     // #190 modo manual + tarea pendiente → "recibimos tu transferencia, en minutos te la cargan"
     // (el "ya está cargado" lo manda el listener cuando el agente marca ✅ la tarea).
-    const depositCmd = await Command.findOne({ name: _hgPending ? '/sys_ganamos_carga_pendiente' : (_hgBonusApplied > 0 ? '/sys_deposit_bonus' : '/sys_deposit'), isActive: true });
-    const depositTpl = resolveSysContent(depositCmd, _hgPending
+    // #216 si la carga pendiente la disparó un COMPROBANTE verificado contra el banco, el
+    // aviso al cliente es /sys_comprobante_ok ("en 1 minuto tenés tu carga") en vez de
+    // /sys_ganamos_carga_pendiente (que queda para la transferencia ASIGNADA por un agente
+    // desde la bandeja, sin comprobante). Nunca los dos.
+    const _hgCompOk = _hgPending && !!compId && !assign;
+    let _hgCompOkSent = false;
+    if (_hgCompOk) { try { _hgCompOkSent = await _hgComprobanteOkMessage(user, amount, _hgBonusApplied); } catch (e) { logger.warn(`[hgcash] aviso de comprobante OK a ${user.username}: ${e.message}`); } }
+    const depositCmd = _hgCompOk ? null : await Command.findOne({ name: _hgPending ? '/sys_ganamos_carga_pendiente' : (_hgBonusApplied > 0 ? '/sys_deposit_bonus' : '/sys_deposit'), isActive: true });
+    const depositTpl = _hgCompOk ? null : resolveSysContent(depositCmd, _hgPending
       ? `🏦 ¡Recibimos tu transferencia de $${Number(amount).toLocaleString('es-AR')}! ⏳ En unos minutos un agente te la carga en tu usuario de GANAMOS y te avisamos por acá. ✅`
       : _hgBonusApplied > 0
       ? `🔒💰 Depósito de $${Number(amount).toLocaleString('es-AR')} (incluye $${_hgBonusApplied.toLocaleString('es-AR')} de bonificación) acreditado con éxito. ✅\n💸 Tu nuevo saldo es ${balStr} 💸`
@@ -2655,7 +2678,7 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
       _hgBonusNote = ` ⚠️ El bono pendiente de $${_hgBonus.toLocaleString('es-AR')} NO entró (la plataforma lo rechazó): aplicalo a mano con Bonificación. El bono sigue PENDIENTE.`;
     }
     await _emitAdminOnlyChatNote(user.id, user.username, _hgPending
-      ? `🏦 ⏳ TRANSFERENCIA hgcash DETECTADA${assign ? ' (asignada por ' + agentLabel + ')' : ''} — ${dataDesc}. PENDIENTE de cargar en GANAMOS${_hgBonus > 0 ? ' CON BONO de $' + _hgBonus.toLocaleString('es-AR') : ''}: hacelo en el panel de GANAMOS y marcala ✅ en "Pendientes GANAMOS".${_hgBonusNote}`
+      ? `🏦 ${_hgCompOk ? '✅ COMPROBANTE OK — VERIFICADO CON EL BANCO (hgcash)' : '⏳ TRANSFERENCIA hgcash DETECTADA'}${assign ? ' (asignada por ' + agentLabel + ')' : ''} — ${dataDesc}.${_hgCompOkSent ? ' Al cliente ya se le avisó que en 1 minuto tiene su carga.' : ''} ⏳ PENDIENTE de cargar en GANAMOS${_hgBonus > 0 ? ' CON BONO de $' + _hgBonus.toLocaleString('es-AR') : ''}: hacelo en el panel de GANAMOS y marcala ✅ en "Pendientes GANAMOS".${_hgBonusNote}`
       : assign
       ? `🏦 ✅ CARGA ASIGNADA desde la bandeja del banco por ${agentLabel} — ${dataDesc}. Acreditado.${_hgBonusNote}`
       : `🏦 ✅ CARGA AUTOMÁTICA hgcash — ${dataDesc}. Acreditado.${_hgBonusNote}`);
@@ -10930,9 +10953,16 @@ async function initializeData() {
     {
       // #190 GANAMOS (modo manual): la transferencia hgcash se detectó pero la carga la hace un agente.
       name: '/sys_ganamos_carga_pendiente',
-      description: 'GANAMOS (sin API): mensaje al cliente cuando se detecta su transferencia y la carga queda PENDIENTE para que un agente la haga en GANAMOS. Variables: {amount}, {bonus} (bono que va a incluir, 0 si no hay). Si lo dejás vacío, no se envía.',
+      description: 'GANAMOS (sin API): mensaje al cliente cuando un agente le ASIGNA desde la bandeja del banco una transferencia SIN comprobante y la carga queda PENDIENTE de hacer en GANAMOS (si el cliente mandó el comprobante y el banco lo confirmó, sale /sys_comprobante_ok). Variables: {amount}, {bonus} (bono que va a incluir, 0 si no hay). Si lo dejás vacío, no se envía.',
       type: 'message',
       response: '🏦 ¡Recibimos tu transferencia de ${amount}! ⏳ En unos minutos un agente te la carga en tu usuario de GANAMOS y te avisamos por acá. ✅'
+    },
+    {
+      // #216 comprobante leído por la IA + transferencia confirmada por el banco (hgcash).
+      name: '/sys_comprobante_ok',
+      description: 'COMPROBANTE VERIFICADO — mensaje al cliente cuando mandó su comprobante y el banco (hgcash) confirmó esa transferencia: ya está OK y un agente le carga. Sale UNA vez por comprobante. Variables: {username}, ${amount} (monto transferido), {bonus} (bono que va a incluir, 0 si no hay). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '🧾 ¡Recibimos tu comprobante de ${amount}! ✅ Lo estamos verificando: en 1 minuto vas a tener tu carga. 🙌'
     },
     {
       // #190 GANAMOS: el agente marcó ✅ una tarea pendiente (carga hgcash, premio de ruleta, fueguito, etc.).

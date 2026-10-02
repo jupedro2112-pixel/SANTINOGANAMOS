@@ -87,6 +87,13 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
     la confirmación de que ya lo hizo en GANAMOS. No va a la bandeja.
   - Sin esa opción (hgcash, ruleta, fueguito, VIP, lotes, welcome code, devolución,
     referidos) → nace **`pending`** y se ve en el panel **"⏳ Pendientes GANAMOS"**.
+- **Comprobante verificado con el banco (#216):** cuando un comprobante leído por la IA
+  coincide con una transferencia confirmada por hgcash (`hgcashAutoCarga`), el cliente
+  recibe **`/sys_comprobante_ok`** ("en 1 minuto tenés tu carga"; `_hgComprobanteOkMessage`)
+  y el agente la nota interna "✅ COMPROBANTE OK — VERIFICADO CON EL BANCO". Vale en modo
+  sombra y en modo auto (ahí reemplaza a `/sys_ganamos_carga_pendiente`, que queda para la
+  transferencia asignada desde la bandeja sin comprobante). No se manda con la sola
+  lectura de la IA, ni bajo el mínimo, ni en duplicados/ambiguos.
 - **Eventos** (`girox.setTaskListener((event, task))`, cableado en server.js justo
   después del `setKeyResolver`): `created` → nota admin-only "⏳ PENDIENTE EN GANAMOS"
   en el chat del cliente (hgcash deja la suya) + socket `platform_task`; `done` →

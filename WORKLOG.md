@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #215)
+> **Última actualización: 2026-10-01** (última entrada: #216)
 
 ---
 
@@ -49,6 +49,39 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 (2ª) — Comprobante verificado con el banco: aviso al cliente + nota interna "COMPROBANTE OK"
+
+### 216. `/sys_comprobante_ok`: "recibimos tu comprobante, en 1 minuto tenés tu carga" + nota interna explícita al agente
+- **Pedido:** cuando la IA + hgcash detectan un comprobante OK y verificado, avisarle al
+  agente en interno que está OK y mandarle al cliente un mensaje automático ("estamos
+  verificando el comprobante, en 1 minuto tendrá su carga"), editable desde COMANDOS.
+- **Cómo estaba:** la IA sola dejaba la nota interna "✅ Comprobante verificado — no es
+  duplicado" (sin mensaje al cliente). Con el match del banco: en modo `auto` el cliente
+  recibía `/sys_ganamos_carga_pendiente` y el agente "TRANSFERENCIA hgcash DETECTADA";
+  en modo `sombra` (el default) el cliente no recibía NADA y el agente veía "MATCH hgcash
+  (MODO SOMBRA)".
+- **Ahora (`hgcashAutoCarga`, server.js):** comando nuevo **`/sys_comprobante_ok`**
+  (seed; variables `{username}`, `${amount}`, `{bonus}`; vacío = no se envía), helper
+  `_hgComprobanteOkMessage`. Se manda UNA vez, cuando el comprobante coincide con una
+  transferencia que el banco confirmó:
+  - **Modo sombra:** se le manda al cliente y la nota interna pasa a "🏦 ✅ COMPROBANTE OK
+    — VERIFICADO CON EL BANCO (hgcash): … 👉 Cargale ese monto en GANAMOS y registralo acá
+    con Depositar. Al cliente ya se le avisó…".
+  - **Modo auto (tarea pendiente en GANAMOS):** reemplaza a `/sys_ganamos_carga_pendiente`
+    cuando la carga la disparó un comprobante; la nota interna dice "✅ COMPROBANTE OK —
+    VERIFICADO CON EL BANCO … ⏳ PENDIENTE de cargar en GANAMOS". Nunca salen los dos.
+  - `/sys_ganamos_carga_pendiente` queda para la transferencia ASIGNADA por un agente
+    desde la bandeja del banco (sin comprobante).
+- **A propósito NO se manda** con la sola lectura de la IA (sin que el banco confirme la
+  transferencia): prometer "en 1 minuto tenés tu carga" por una foto que puede ser falsa o
+  de otro banco sería un riesgo. Tampoco si el monto es menor al mínimo, si la
+  transferencia ya estaba acreditada (duplicado) o si hay varias que coinciden: ahí sólo
+  va la nota interna de siempre.
+- **Validado:** `node --check` ✅, `check-tdz` ✅, helper probado en frío (texto default,
+  texto editado con variables, comando vacío → no envía). Sin server local. **Probar en
+  deploy:** transferir a la cuenta hgcash, mandar el comprobante por el chat → el cliente
+  recibe el mensaje y en el chat del panel aparece la nota verde interna.
 
 ## Sesión 2026-10-02 — REEMBOLSO SEMANAL POR PLANILLA (subir la planilla → cada cliente reclama → el agente entrega)
 
