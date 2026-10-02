@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #221)
+> **Última actualización: 2026-10-01** (última entrada: #222)
 
 ---
 
@@ -49,6 +49,20 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 (8ª) — Fuera el cartel "Verificá tu teléfono" del inicio
+
+### 222. La verificación por SMS se pide sólo al retirar, no con un cartel fijo
+- **Pedido (captura):** el cartel dorado "¡Atención! Verificá tu teléfono" arriba de todo
+  "es lo que más ocupa" y hace que se pierda el chat. Que aparezca cuando quiera retirar.
+- **Cómo estaba:** `refreshVerifyPhoneBanner` (auth.js) lo mostraba a todo usuario con
+  `phoneVerified !== true`. El retiro YA pedía la verificación en su propio modal
+  (`withdraw.js`: sin teléfono verificado pasa al paso `otp-phone` — número + código SMS —
+  antes de procesar) y el server la exige en sus gates.
+- **Cambio (SW v130):** `refreshVerifyPhoneBanner` deja el cartel SIEMPRE oculto. El HTML
+  y el botón quedan (los referencian auth.js y el colapsado del menú), sin uso visible.
+  No cambia nada del retiro ni del backend.
+- `node --check` ✅. Solo front.
 
 ## Sesión 2026-10-02 (7ª) — PÁGINA CASINO: abre GANAMOS aparte y ya no reemplaza la app
 

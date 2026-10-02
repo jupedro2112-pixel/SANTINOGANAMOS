@@ -66,14 +66,17 @@ VIP.auth = (function () {
         }, 1200);
     }
 
-    // Muestra/oculta el cartel de atención del home. Visible para todo usuario
-    // con el teléfono sin verificar — el retiro exige verificación por SMS.
+    // #222 (owner 2026-10-02): el cartel "¡Atención! Verificá tu teléfono" del home YA NO
+    // se muestra. Era lo que más lugar ocupaba arriba del chat y tapaba la conversación.
+    // La verificación por SMS se pide cuando el cliente quiere RETIRAR: el modal de retiro
+    // (withdraw.js, paso `otp-phone`) la exige ahí mismo antes de procesar el pedido, y el
+    // server la sigue exigiendo igual. La función y el HTML quedan (los llaman auth.js y
+    // el colapsado del menú en app.js); sólo que siempre lo deja oculto.
     function refreshVerifyPhoneBanner() {
         const banner = document.getElementById('verifyPhoneBanner');
         if (!banner) return;
-        const user = VIP.state.currentUser;
-        const needsVerify = user && (!user.role || user.role === 'user') && user.phoneVerified !== true;
-        banner.style.display = needsVerify ? '' : 'none';
+        banner.style.display = 'none';
+        delete banner.dataset.wasVisible;
     }
 
     // Registro directo: solo usuario + contraseña, sin SMS. Si hay una pauta
