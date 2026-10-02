@@ -10,9 +10,10 @@
 > fueguito, VIP, lotes…) quedan `pending` en la sección **"⏳ Pendientes GANAMOS"**
 > del panel hasta que un agente las marca hechas (el cliente recibe
 > `/sys_ganamos_acreditado`). Sin saldo, sin SSO (CASINO abre `GANAMOS_PLAY_URL` en
-> pestaña), **SIN reembolsos, SIN niveles VIP/rakeback y SIN rollover de bonos**
+> pestaña), **SIN reembolsos por netwin, SIN niveles VIP/rakeback y SIN rollover de bonos**
 > (#196: todo eso se eliminó de la PWA y se cierra/oculta en backend y panel en modo
-> manual — no volver a mencionarlos en ningún texto al cliente), registro público
+> manual — no volver a mencionarlos en ningún texto al cliente; la ÚNICA excepción es el
+> **reembolso semanal por planilla**, #215, ver gotchas), registro público
 > apagado (alta por agente con el MISMo username que en GANAMOS). **Leer `docs/ARCHITECTURE.md` §0 antes de tocar
 > cualquier flujo de plata.** Todo lo que sigue sobre "1girox" es el diseño heredado
 > (sigue vigente como modelo de flujos; el cliente real de 1girox queda para
@@ -148,13 +149,25 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `Transaction type:'roulette'`**; tipo de Transaction nuevo ⇒ etiqueta + filtro +
   case del resumen en el panel (§6 de ARCHITECTURE). La devolución de retiro
   rechazado sigue como depósito (no es regalo).
-- **GANAMOS NO TIENE ROLLOVER NI REEMBOLSOS (#196, 2026-09-29):** en modo manual
+- **REEMBOLSO SEMANAL POR PLANILLA (#215, 2026-10-02) — el único reembolso de GANAMOS:**
+  el admin general sube la planilla de la semana (Type | User | Amount) en el panel →
+  "Reembolsos semanales"; el server calcula por usuario `neto = cargas − retiros` → rango
+  → % (`src/utils/weeklyRefund.js`, rangos en `Config['weeklyRefund']`). El cliente lo
+  RECLAMA en la app dentro de `/sys_refund_claim_hours` (default 48 h) → `creditGift` con
+  reference `vip-wrf-<semana>-<usuario>` (PlatformTask pendiente) → el agente lo carga en
+  GANAMOS y toca "Marcar como entregado" → `/sys_refund_delivered`. Modelos `RefundBatch`
+  + `WeeklyRefund`. Detalle en ARCHITECTURE §0.1. Tras tocarlo correr
+  `node scripts/test-weekly-refund.js` y `node scripts/test-weekly-refund-flow.js` (este
+  ejecuta el bloque REAL de server.js contra una base falsa: no mover sus comentarios-marca).
+  Los comandos `/sys_refund_*` son los ÚNICOS que pueden decir "reembolso".
+- **GANAMOS NO TIENE ROLLOVER NI REEMBOLSOS POR NETWIN (#196, 2026-09-29):** en modo manual
   `PLATFORM_NO_ROLLOVER` apaga el rollover global (x0 fijo, ignora la Config),
   `_rolloverNoteText` devuelve '' y el adaptador fuerza x0; reembolsos/cashback/
   rakeback/VIP: endpoints de reclamo 404, crons cortados, seeds y PWA sin esos
   textos, panel con `body.platform-manual`. Un texto nuevo al cliente NO puede
-  decir "rollover", "reembolso", "rakeback" ni "nivel VIP". La migración del boot
-  pisa los `/sys_*` que todavía los mencionen. Todo lo de abajo sobre rollover y
+  decir "rollover", "rakeback" ni "nivel VIP" (ni "reembolso", salvo el semanal por
+  planilla de arriba). La migración del boot pisa los `/sys_*` que todavía los
+  mencionen (saltea `/sys_refund_*`). Todo lo de abajo sobre rollover y
   reembolsos aplica sólo a `PLATFORM_MODE=girox`.
 - **ROLLOVER GLOBAL de bonos (2026-09-16):** espec en
   `docs/ESPEC-ROLLOVER-GLOBAL-Y-MULTICUENTA-TITULAR.md`. Se aplica en el CLIENTE
@@ -255,7 +268,8 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 - **Multi-instancia (AWS EB):** los crons son `setInterval` en CADA instancia; su
   idempotencia depende de índices únicos (EncuestaFire.slotKey, InactividadFire.fireKey,
   HgcashCharge.chargeKey, RecordatorioFire.fireKey, DailyRouletteSpin
-  userId+dateKey+seq). No quitar esos índices.
+  userId+dateKey+seq, RefundBatch.activeKey, WeeklyRefund batchId+usernameLower).
+  No quitar esos índices.
 - **Front frágil:** cientos de `onclick` inline dependen de funciones en `window.*`
   (no renombrar exports sin actualizar el HTML/strings). Tabla de usuarios del panel
   acoplada a `USERS_LIST_FIELDS` del backend (columna nueva ⇒ sumar campo al select).
@@ -265,7 +279,9 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 
 1. Leer `WORKLOG.md` al iniciar.
 2. Hacer el cambio. Validar sintaxis (`node --check` en archivos tocados), **si se
-   tocó el adaptador o el contrato de plataforma correr `node scripts/test-ganamos-adapter.js`**, **y, si se
+   tocó el adaptador o el contrato de plataforma correr `node scripts/test-ganamos-adapter.js`**, **si se tocó
+   el reembolso semanal correr `node scripts/test-weekly-refund.js` y
+   `node scripts/test-weekly-refund-flow.js`**, **y, si se
    tocó `server.js`, correr `node scripts/check-tdz.js`** (detecta usos de nivel
    superior antes de su `require` y rutas antes de `const authMiddleware`: `node
    --check` NO los ve y tumban el server al arrancar — pasó el 2026-09-16). No hay

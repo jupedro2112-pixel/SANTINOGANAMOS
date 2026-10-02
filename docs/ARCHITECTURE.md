@@ -5,7 +5,9 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-01** — equipos: comunidad por equipo desde una única
+> Última actualización: **2026-10-02** — REEMBOLSO SEMANAL POR PLANILLA (#215): §0.1
+> (modelos RefundBatch/WeeklyRefund, endpoints, flujo, front, trampas), §4.4 reference
+> `vip-wrf`, §7 motor de avisos. Antes: **2026-10-01** — equipos: comunidad por equipo desde una única
 > fuente (`_communityChannelUrl`, `/go/comunidad?u=`), búsqueda tolerante en el login (§5,
 > #213). Antes: **2026-09-29 (5ª)** — se ELIMINÓ el modo `ganamos_api`
 > (#194; ver nota al final de §0). Quedan dos modos: **MODO MANUAL sin API** (§0:
@@ -146,6 +148,77 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   saldo; `refunds.js` oculta con `enabled:false`.
 - **Para volver a 1girox:** `PLATFORM_MODE=girox` + `GIROX_API_URL/KEY`. Nada del
   cliente original se tocó.
+
+### 0.1 REEMBOLSO SEMANAL POR PLANILLA (#215, 2026-10-02) — el único reembolso de GANAMOS
+
+Sin API no hay netwin, así que los reembolsos de 1girox (`/api/refunds/*`, cashback,
+rakeback) siguen CERRADOS en manual. Lo que sí hay es el reembolso que el owner ya daba a
+mano por WhatsApp, calculado con una planilla semanal y un Apps Script: ahora vive acá.
+
+- **Entrada:** la hoja de la semana del Drive del owner (`Type | User | Amount | fecha`;
+  Type = `deposit` / `withdraw` / `withdrawal`). Se sube en el panel → **💸 Reembolsos
+  semanales** como archivo `.csv` (Archivo → Descargar → CSV) o pegando las celdas. El
+  navegador manda el TEXTO; lo parsea el server (no hay librería de xlsx).
+- **Cálculo (PURO, `src/utils/weeklyRefund.js`, test `scripts/test-weekly-refund.js`):**
+  por usuario (sin distinguir mayúsculas) `neto = Σ cargas − Σ retiros`; rango = el de
+  mayor `min` con `neto >= min`; `reembolso = round(neto × pct / 100)`. Sin rango → sin
+  reembolso. Rangos en `Config['weeklyRefund'].tiers` `[{name,min,pct}]` (editables por el
+  admin general; default = los del script: BRONCE 50.000 → 3% · PLATA 100.001 → 5% · ORO
+  300.001 → 10%). El parser acepta tab / `;` / `,`, encabezado opcional (Type/User/Amount
+  o Tipo/Usuario/Monto; sin encabezado = columnas A,B,C) y montos `50000`, `50.000`,
+  `50.000,50`, `$ 5.384`.
+- **Modelos:** `RefundBatch` (una semana: `periodKey` = fecha "desde", `activeKey` ÚNICO =
+  periodKey mientras está activa → no se sube dos veces; `claimHours`/`expiresAt`
+  congelados al subir, `tiers` usados, `totals`, `notify`/`notifyDone`) y `WeeklyRefund`
+  (un cliente en un lote: cargado/retirado/neto/rango/%/monto, `status` claim_pending →
+  claimed → delivered | expired | rejected | cancelled, `reference`, `platformTaskId`,
+  `notifyState`). Índice único `(batchId, usernameLower)`. Se identifica al cliente por
+  `usernameLower` (planilla = GANAMOS = web): si la cuenta todavía no existe, el reembolso
+  le aparece cuando el agente se la crea con ese usuario.
+- **Flujo (bloque "#215 REEMBOLSO SEMANAL POR ARCHIVO" de server.js, antes de
+  COMUNIDAD; test en frío `scripts/test-weekly-refund-flow.js`):**
+  1. `POST /api/admin/weekly-refund/preview {text}` (admin general) calcula sin guardar:
+     totales, resumen por equipo (`resolveTeamForUsername`), usuarios sin cuenta, filas
+     descartadas. `POST …/batches {text, fromDate, toDate, notify}` publica: crea el lote
+     + los WeeklyRefund `claim_pending` con `expiresAt = ahora + /sys_refund_claim_hours`
+     (default 48). Quien ya reclamó/cobró esa semana en una carga anulada no vuelve a entrar.
+  2. `_processWeeklyRefundNotifyQueue` (cada 60 s + `setImmediate` al publicar) avisa a
+     cada cliente con cuenta: `/sys_refund_available` por chat + push. Claim atómico por
+     destinatario (`notifyState` null → sending → sent | no_account | error).
+  3. Cliente: `GET /api/weekly-refund/status` y `POST /api/weekly-refund/claim {id}`.
+     Reclamar = reserva atómica `claim_pending → claimed` + `girox.creditGift` con
+     reference **`vip-wrf-<periodKey>-<usernameLower>`** y `flow:'weekly_refund'` → en
+     manual, PlatformTask pendiente. Mensaje `/sys_refund_claimed`, nota admin-only
+     "💸 REEMBOLSO SEMANAL RECLAMADO — $X ✅ VERIFICADO POR EL SISTEMA…" (el listener NO
+     pone su nota genérica para este flow) y el chat vuelve a Abiertos. Si creditGift
+     falla, vuelve a `claim_pending`.
+  4. Agente: lo carga en GANAMOS y toca **Marcar como entregado**
+     (`POST /api/admin/weekly-refund/items/:id/delivered` → `girox.settleTask(done)`) —
+     o ✅ en Pendientes GANAMOS: es la MISMA tarea. El listener de tareas llama
+     `_wrfOnTaskSettled`: `claimed → delivered` (atómico = un solo aviso), Transaction
+     `type:'refund'` con `metadata.source:'weekly_refund'`, mensaje
+     `/sys_refund_delivered` (NO el genérico `/sys_ganamos_acreditado`). Tarea rechazada
+     → `rejected`.
+  5. Vencimiento: barrido perezoso `_wrfExpireStale` (sin cron). Anular una semana
+     (`POST …/batches/:id/cancel`, admin general): lo no reclamado → `cancelled`,
+     `activeKey` → `cancelled:<id>` (se puede resubir).
+  - Otros: `GET/POST /api/admin/weekly-refund/config` (rangos), `GET …/batches` (con
+    conteos por estado), `GET …/items?batchId=&status=&search=`, `GET …/user/:userId`
+    (cartel del chat). Roles: subir/rangos/anular = admin general; ver y entregar =
+    admin, depositor, comunidad (`_canSettlePlatformTask(role,'gift')`).
+- **PWA:** `public/js/weeklyrefund.js` (`VIP.weeklyRefund`): cartel `#weeklyRefundBanner`
+  en el home, ítem "Reembolsos" del menú ☰ (con el monto), pantalla con el detalle de
+  cada semana + RECLAMAR + "cómo funciona" (rangos y plazo). Se autoarranca (espera la
+  sesión), refresca cada 5 min y por el evento de socket `weekly_refund`.
+- **Panel:** sección `weeklyRefundSection` (nav `nav-item-weekly-refund`, badge = por
+  entregar), JS al final de admin.js (`loadWeeklyRefundAdmin`, `wrfPreview`,
+  `wrfPublish` —sólo publica lo previsualizado—, `wrfMarkDelivered`, `wrfOpenBatch`,
+  `wrfCancelBatch`, `wrfSaveTiers`), cartel `#chatWeeklyRefundBanner` en el chat
+  (`loadWeeklyRefundBanner`), socket `weekly_refund`. En Transacciones vuelven a verse el
+  filtro y la tarjeta "Reembolsos" (se quitaron de `body.platform-manual`).
+- **Comandos (seed):** `/sys_refund_claim_hours` (número, default 48),
+  `/sys_refund_available`, `/sys_refund_claimed`, `/sys_refund_delivered`. La migración
+  GANAMOS del boot (que pisa los `/sys_*` que digan "reembolso") SALTEA `/sys_refund_*`.
 
 ### Nota: el modo `ganamos_api` se ELIMINÓ (#194, 2026-09-29)
 
@@ -489,6 +562,7 @@ Prefijos en uso hoy:
 | `vip-rake-<fromDateStr>-<userId>` | Rakeback semanal VIP | lunes de la semana reclamada + userId (derivada del PERÍODO, igual que los reembolsos y por el mismo motivo) |
 | `vip-welcome-<userId>` | Bono sorpresa del código de bienvenida (tipo cash) | userId (uno por cuenta para siempre, como el de instalación) |
 | `vip-nbatch-<batchId>-<userId>` | Regalo de fichas de un lote de notificaciones | id del NotifBatch + userId (uno por lote por usuario — los reintentos del motor o del canje jamás pagan dos veces) |
+| `vip-wrf-<periodKey>-<usernameLower>` | Reembolso SEMANAL por planilla (#215, GANAMOS) | la semana (fecha "desde" del lote) + el usuario: estable aunque la semana se anule y se vuelva a subir → una semana se cobra UNA vez |
 | `vip-cbk-<userId>-<YYYY-MM-DD>-<seq>` | Reembolso EN VIVO acumulativo | userId + día ART + `seq` del índice único de CashbackClaim: si el crédito falla se borra el doc y el reintento reusa el MISMO seq → misma reference → `duplicate:true` |
 
 ⚠️ **Por qué la del reembolso sale del período y no del id del claim** (`_refundReference`,
@@ -1206,6 +1280,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
 | `_runFcmPrune` | 24 h | activo | flag anti-overlap en memoria |
 | `_runDailyCloseTick` (cierre diario del banco, #183) | 5 min (corre 1×/día desde las 00:05 ART) | activo | claim `Config['dailyclose_last']` + DailyClose único por dateKey |
 | `_processNotifBatchQueue` (lotes con regalo) | 45 s (+ setImmediate al crear un lote) | activo | claim atómico por recipient (`findOneAndUpdate` posicional a 'sending'; un 'sending' colgado >10 min se re-reclama solo) + reference `vip-nbatch-*` — reanudable tras deploy y multi-instancia safe |
+| `_processWeeklyRefundNotifyQueue` (avisos del reembolso semanal, #215) | 60 s (+ setImmediate al publicar una semana) | activo | claim atómico por destinatario (`WeeklyRefund.notifyState` null → sending; un `sending` colgado >10 min se re-reclama) |
 | `fbAdsWebhook.startWorker` | 5 min | activo | nextRetryAt |
 | Limpieza mensajes >3d | 6 h | activo (red de seguridad del TTL) | deleteMany |
 

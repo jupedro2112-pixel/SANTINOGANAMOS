@@ -666,6 +666,8 @@ function setupRoleBasedUI() {
         ptNavItem.style.display = manual ? '' : 'none';
         if (manual && !window._ptBadgeTimer) { refreshPlatformTasksBadge(); window._ptBadgeTimer = setInterval(refreshPlatformTasksBadge, 60 * 1000); }
     }
+    // #215 Reembolsos semanales por planilla: admin, cargas y comunidad (pagos no entrega bonos).
+    if (typeof wrfSetupNav === 'function') wrfSetupNav();
     // #190 modo manual: no hay saldo del jugador (GANAMOS no lo informa) → ocultar el $ del
     // header del chat y el botón "Seleccionar todo el saldo" del retiro manual.
     // #196 GANAMOS no tiene reembolsos, niveles VIP, rollover ni saldo del jugador: la clase
@@ -1268,6 +1270,13 @@ function initSocket() {
         const sec = document.getElementById('platformTasksSection');
         if (sec && sec.classList.contains('active') && typeof loadPlatformTasks === 'function') loadPlatformTasks(true);
         if (d && d.event === 'created') showToast(`⏳ Nueva pendiente en GANAMOS: ${d.kind === 'withdraw' ? 'retiro' : d.kind === 'gift' ? 'bono' : 'carga'} $${Number(d.amount || 0).toLocaleString('es-AR')} a ${d.username}`, 'info');
+    });
+    // #215 reembolsos semanales: reclamo nuevo / entregado / semana publicada o anulada.
+    socket.on('weekly_refund', (d) => {
+        if (typeof wrfRefreshAll === 'function') wrfRefreshAll();
+        if (d && d.event === 'claimed' && currentAdmin && ['admin', 'depositor', 'comunidad'].includes(currentAdmin.role)) {
+            showToast(`💸 ${d.username} reclamó su reembolso de $${Number(d.amount || 0).toLocaleString('es-AR')}`, 'info');
+        }
     });
     // #183 bandeja del banco en tiempo real: llega el documento entero del movimiento.
     socket.on('bank_movement', (d) => {
@@ -2793,6 +2802,8 @@ async function loadUserInfo(userId) {
 
         // Pago/retiro pendiente (verificar y pagar automático).
         loadPayoutBanner(user.id);
+        // #215 Reembolso semanal reclamado (botón "Marcar como entregado") o sin reclamar.
+        if (typeof loadWeeklyRefundBanner === 'function') loadWeeklyRefundBanner(user.id);
     } catch (error) {
         console.error('Error loading user info:', error);
     }
@@ -4975,6 +4986,7 @@ function switchSection(section) {
     if (section === 'chatDelays') loadChatDelays();
     if (section === 'reviews') loadReviews();
     if (section === 'platformTasks') loadPlatformTasks(); // #190
+    if (section === 'weeklyRefund') loadWeeklyRefundAdmin(); // #215
     if (section === 'bank') loadBankSection();
     if (section === 'campaigns') loadCampaigns();
     if (section === 'publisherAdmins') {
@@ -14510,3 +14522,392 @@ function platformTaskReject(id) {
 }
 window.loadPlatformTasks = loadPlatformTasks; window.platformTasksSetFilter = platformTasksSetFilter;
 window.platformTaskDone = platformTaskDone; window.platformTaskReject = platformTaskReject; window.refreshPlatformTasksBadge = refreshPlatformTasksBadge;
+
+// ============================================
+// #215 REEMBOLSOS SEMANALES POR PLANILLA (GANAMOS sin API)
+// El admin general sube la planilla de la semana (Type | User | Amount); el server
+// calcula el reembolso de cada cliente (neto = cargas − retiros → rango → %). El
+// cliente lo RECLAMA desde la app; el agente lo carga a mano en GANAMOS y toca
+// "Marcar como entregado" (acá, en el cartel del chat o ✅ en Pendientes GANAMOS:
+// es la misma tarea) → el cliente recibe el aviso automático.
+// ============================================
+let _wrfCfg = null;
+let _wrfPreviewSig = null;   // firma de lo previsualizado (texto + fechas): sólo se publica eso
+let _wrfDetailBatch = null;
+let _wrfDetailStatus = '';
+const _wrfM = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-AR');
+const _wrfIsAdmin = () => !!(currentAdmin && currentAdmin.role === 'admin');
+const _wrfCanSettle = () => !!(currentAdmin && ['admin', 'depositor', 'comunidad'].includes(currentAdmin.role));
+const _wrfStatusBadge = (it) => {
+    const map = {
+        claim_pending: ['⏳ Por reclamar', '#ffd479'], claimed: ['💸 RECLAMADO — entregar', '#7dffb0'], delivered: ['✅ Entregado', '#25d366'],
+        expired: ['⌛ Venció sin reclamar', '#888'], rejected: ['❌ Rechazado', '#ff6b6b'], cancelled: ['🚫 Anulado', '#888']
+    };
+    const [label, color] = map[it.status] || [it.status, '#aaa'];
+    let extra = '';
+    if (it.status === 'claim_pending' && it.expiresAt) extra = `vence ${formatDateTime(it.expiresAt)}`;
+    if (it.status === 'claimed' && it.claimedAt) extra = `reclamó ${formatDateTime(it.claimedAt)}`;
+    if (it.status === 'delivered') extra = `${escapeHtml(it.deliveredBy || '')} · ${formatDateTime(it.deliveredAt)}`;
+    if (it.status === 'rejected' && it.rejectedNote) extra = escapeHtml(it.rejectedNote);
+    return `<span style="color:${color};font-weight:900;font-size:11px;white-space:nowrap;">${label}</span>${extra ? `<div style="color:#888;font-size:10px;">${extra}</div>` : ''}`;
+};
+const _wrfUserLink = (it) => it.userId
+    ? `<a href="#" onclick="switchSection('chats');selectConversation('${escapeHtml(it.userId)}','${escapeHtml(it.username)}');return false;" style="color:#d4af37;font-weight:800;">${escapeHtml(it.username)}</a>`
+    : `<span style="font-weight:800;">${escapeHtml(it.username)}</span> <span title="Todavía no tiene cuenta en la web: creásela con este mismo usuario y le aparece el reembolso" style="color:#ff9f43;font-size:10px;font-weight:800;">SIN CUENTA</span>`;
+
+function wrfSetupNav() {
+    const nav = document.querySelector('.nav-item-weekly-refund');
+    if (!nav) return;
+    const role = currentAdmin && currentAdmin.role;
+    const show = ['admin', 'depositor', 'comunidad'].includes(role);
+    nav.style.display = show ? '' : 'none';
+    if (show && !window._wrfBadgeTimer) { refreshWeeklyRefundBadge(); window._wrfBadgeTimer = setInterval(refreshWeeklyRefundBadge, 90 * 1000); }
+}
+
+async function refreshWeeklyRefundBadge() {
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/items?status=claimed&limit=200');
+        if (!r.ok) return;
+        const j = await r.json();
+        const b = document.getElementById('weeklyRefundBadge');
+        const n = (j.items || []).length;
+        if (b) { if (n > 0) { b.textContent = String(n); b.style.display = ''; } else b.style.display = 'none'; }
+    } catch (_) { /* best-effort */ }
+}
+
+async function loadWeeklyRefundAdmin() {
+    const up = document.getElementById('wrfUploadCard');
+    const tc = document.getElementById('wrfTiersCard');
+    if (up) up.style.display = _wrfIsAdmin() ? '' : 'none';
+    if (tc) tc.style.display = _wrfIsAdmin() ? '' : 'none';
+    // Semana por defecto: lunes a domingo de la semana pasada.
+    const from = document.getElementById('wrfFrom'); const to = document.getElementById('wrfTo');
+    if (from && to && !from.value && !to.value) {
+        const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        const now = new Date();
+        const dow = (now.getDay() + 6) % 7; // lunes = 0
+        const lunes = new Date(now.getFullYear(), now.getMonth(), now.getDate() - dow - 7);
+        const domingo = new Date(lunes.getFullYear(), lunes.getMonth(), lunes.getDate() + 6);
+        from.value = iso(lunes); to.value = iso(domingo);
+    }
+    wrfLoadConfig();
+    wrfLoadToDeliver();
+    wrfLoadBatches();
+    if (_wrfDetailBatch) wrfOpenBatch(_wrfDetailBatch, true);
+}
+
+// ---------- Rangos ----------
+function _wrfTierRowHtml(t) {
+    t = t || {};
+    const v = (x) => escapeHtml(String(x == null ? '' : x));
+    return '<div class="wrf-tier-row" style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:8px;">' +
+        '<div class="form-group" style="flex:1;min-width:120px;margin:0;"><label>Rango</label><input type="text" class="wrf-tier-name" value="' + v(t.name) + '" placeholder="BRONCE" maxlength="24"></div>' +
+        '<div class="form-group" style="flex:1;min-width:130px;margin:0;"><label>Neto desde $</label><input type="number" class="wrf-tier-min" value="' + v(t.min) + '" placeholder="50000" min="1" step="1"></div>' +
+        '<div class="form-group" style="flex:0 0 110px;margin:0;"><label>% reembolso</label><input type="number" class="wrf-tier-pct" value="' + v(t.pct) + '" placeholder="3" min="0.1" max="100" step="0.1"></div>' +
+        '<button class="btn-danger" style="background:#dc3545;color:#fff;padding:9px 12px;" onclick="this.closest(\'.wrf-tier-row\').remove()" title="Quitar rango">🗑️</button>' +
+    '</div>';
+}
+function wrfAddTierRow(t) { const c = document.getElementById('wrfTiersList'); if (c) c.insertAdjacentHTML('beforeend', _wrfTierRowHtml(t)); }
+async function wrfLoadConfig() {
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/config');
+        if (!r.ok) return;
+        _wrfCfg = await r.json();
+        const c = document.getElementById('wrfTiersList');
+        if (c) { c.innerHTML = ''; (_wrfCfg.tiers || []).forEach((t) => wrfAddTierRow(t)); }
+        const h = document.getElementById('wrfClaimHoursTxt');
+        if (h) h.textContent = String(_wrfCfg.claimHours);
+        const res = document.getElementById('wrfTiersSummary');
+        if (res) res.innerHTML = (_wrfCfg.tiers || []).map((t) => `<b style="color:#ffd479;">${escapeHtml(t.name)}</b> desde ${_wrfM(t.min)} → <b style="color:#7dffb0;">${t.pct}%</b>`).join(' &nbsp;·&nbsp; ');
+    } catch (e) { console.error('weekly-refund config:', e); }
+}
+async function wrfSaveTiers() {
+    const msg = document.getElementById('wrfTiersMsg');
+    const tiers = [];
+    document.querySelectorAll('#wrfTiersList .wrf-tier-row').forEach((row) => {
+        const name = row.querySelector('.wrf-tier-name').value.trim();
+        const min = row.querySelector('.wrf-tier-min').value;
+        const pct = row.querySelector('.wrf-tier-pct').value;
+        if (!name && !min && !pct) return;
+        tiers.push({ name, min: Number(min), pct: Number(pct) });
+    });
+    if (!confirm('¿Guardar estos rangos?\n\nValen para las planillas que subas DESDE AHORA. Las semanas ya publicadas no cambian.')) return;
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/config', { method: 'POST', body: JSON.stringify({ tiers }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error al guardar');
+        if (msg) { msg.style.color = '#28a745'; msg.textContent = '✅ Rangos guardados'; }
+        showToast('Rangos de reembolso guardados', 'success');
+        _wrfPreviewSig = null;
+        wrfLoadConfig();
+    } catch (e) {
+        if (msg) { msg.style.color = '#dc3545'; msg.textContent = '❌ ' + e.message; }
+        showToast(e.message || 'Error al guardar', 'error');
+    }
+}
+
+// ---------- Subir la planilla ----------
+function wrfFileChosen(input) {
+    const f = input && input.files && input.files[0];
+    if (!f) return;
+    if (/\.(xlsx?|ods|numbers)$/i.test(f.name)) {
+        showToast('Ese formato no se puede leer. En la planilla: Archivo → Descargar → CSV (.csv), o copiá las celdas y pegalas abajo.', 'error');
+        input.value = '';
+        return;
+    }
+    const rd = new FileReader();
+    rd.onload = () => {
+        const ta = document.getElementById('wrfText');
+        if (ta) ta.value = String(rd.result || '');
+        _wrfPreviewSig = null;
+        showToast(`Archivo "${f.name}" cargado. Tocá "Vista previa".`, 'success');
+    };
+    rd.onerror = () => showToast('No se pudo leer el archivo', 'error');
+    rd.readAsText(f);
+}
+function _wrfForm() {
+    return {
+        text: (document.getElementById('wrfText') || {}).value || '',
+        fromDate: (document.getElementById('wrfFrom') || {}).value || '',
+        toDate: (document.getElementById('wrfTo') || {}).value || '',
+        notify: !!((document.getElementById('wrfNotify') || {}).checked)
+    };
+}
+const _wrfSig = (f) => `${f.fromDate}|${f.toDate}|${f.text.length}|${f.text.slice(0, 200)}|${f.text.slice(-200)}`;
+
+async function wrfPreview() {
+    const out = document.getElementById('wrfPreview');
+    const f = _wrfForm();
+    if (!f.text.trim()) { showToast('Elegí el archivo o pegá las filas de la planilla', 'error'); return; }
+    if (out) out.innerHTML = '<div style="color:#aaa;padding:14px;text-align:center;">⏳ Calculando…</div>';
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/preview', { method: 'POST', body: JSON.stringify({ text: f.text }) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error');
+        _wrfPreviewSig = _wrfSig(f);
+        const t = j.totals; const s = j.stats;
+        const tile = (label, val, color) => `<div style="flex:1;min-width:120px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);border-radius:9px;padding:9px;"><div style="color:#999;font-size:10px;text-transform:uppercase;letter-spacing:.5px;">${label}</div><div style="color:${color || '#fff'};font-weight:900;font-size:15px;">${val}</div></div>`;
+        const descartes = s.otherType + s.noUser + s.badAmount;
+        const bad = (s.sampleBad || []).map((b) => `<div>fila ${b.line}: ${escapeHtml(b.why)} — <span style="color:#888;">${escapeHtml(b.text)}</span></div>`).join('');
+        const teams = (j.teams || []).map((g) => `<tr style="border-bottom:1px solid rgba(255,255,255,0.06);"><td style="padding:6px;font-weight:800;">${escapeHtml(g.team)}</td><td style="padding:6px;">${g.usuarios}</td><td style="padding:6px;">${_wrfM(g.depositos)}</td><td style="padding:6px;">${_wrfM(g.retiros)}</td><td style="padding:6px;">${_wrfM(g.neto)}</td><td style="padding:6px;color:#7dffb0;font-weight:900;">${_wrfM(g.regalado)}</td></tr>`).join('');
+        const rows = (j.items || []).slice(0, 400).map((i) => `<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
+            <td style="padding:6px;font-weight:800;">${escapeHtml(i.username)}${i.hasAccount ? '' : ' <span title="Todavía no tiene cuenta en la web" style="color:#ff9f43;font-size:10px;font-weight:800;">SIN CUENTA</span>'}</td>
+            <td style="padding:6px;color:#bbb;">${escapeHtml(i.team || '')}</td>
+            <td style="padding:6px;">${_wrfM(i.depositos)} <span style="color:#777;font-size:10px;">(${i.count})</span></td>
+            <td style="padding:6px;">${_wrfM(i.retiros)}</td>
+            <td style="padding:6px;">${_wrfM(i.neto)}</td>
+            <td style="padding:6px;color:#ffd479;font-weight:800;">${escapeHtml(i.tierName)} ${i.pct}%</td>
+            <td style="padding:6px;color:#7dffb0;font-weight:900;">${_wrfM(i.amount)}</td></tr>`).join('');
+        const th = 'style="padding:6px;"';
+        if (out) out.innerHTML = `
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin:12px 0;">
+                ${tile('Con reembolso', t.conBeneficio, '#7dffb0')}${tile('Total a regalar', _wrfM(t.totalBeneficio), '#7dffb0')}
+                ${tile('Sin reembolso', t.sinBeneficio)}${tile('Sin cuenta en la web', t.sinCuenta, t.sinCuenta ? '#ff9f43' : '#fff')}
+                ${tile('Total cargado', _wrfM(t.totalDepositos))}${tile('Total retirado', _wrfM(t.totalRetiros))}${tile('Neto', _wrfM(t.totalNeto))}
+            </div>
+            <div style="color:#aaa;font-size:11.5px;line-height:1.6;margin-bottom:10px;">
+                Leí <b>${s.deposits}</b> cargas y <b>${s.withdraws}</b> retiros de <b>${t.usuarios}</b> usuarios${s.header ? ' (con encabezado)' : ''}.
+                ${descartes ? `<span style="color:#ff9f43;"> ⚠️ ${descartes} fila(s) descartada(s): ${s.otherType} con otro tipo, ${s.noUser} sin usuario, ${s.badAmount} con monto inválido.</span>` : ''}
+                ${s.truncated ? '<span style="color:#ff6b6b;"> ⚠️ La planilla es demasiado larga: se cortó.</span>' : ''}
+                <br>Cada cliente va a tener <b style="color:#ffd479;">${j.claimHours} horas</b> para reclamar desde que publiques.
+                ${t.sinCuenta ? `<br><span style="color:#ff9f43;">Los ${t.sinCuenta} "SIN CUENTA" quedan guardados: cuando les crees la cuenta con ese mismo usuario les aparece el reembolso (si no venció).</span>` : ''}
+            </div>
+            ${bad ? `<details style="margin-bottom:10px;font-size:11px;color:#bbb;"><summary style="cursor:pointer;color:#ff9f43;">Ver filas descartadas (primeras)</summary>${bad}</details>` : ''}
+            ${teams ? `<div style="font-weight:800;color:#d4af37;font-size:12px;margin:8px 0 4px;">📊 Resumen por equipo</div><div style="overflow-x:auto;margin-bottom:10px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:#d4af37;font-size:11px;text-align:left;border-bottom:1px solid rgba(212,175,55,0.3);"><th ${th}>Equipo</th><th ${th}>Usuarios</th><th ${th}>Cargado</th><th ${th}>Retirado</th><th ${th}>Neto</th><th ${th}>Regalado</th></tr></thead><tbody>${teams}</tbody></table></div>` : ''}
+            <div style="font-weight:800;color:#d4af37;font-size:12px;margin:8px 0 4px;">🧑‍🤝‍🧑 Usuarios con reembolso${(j.items || []).length > 400 ? ` (primeros 400 de ${t.conBeneficio})` : ''}</div>
+            <div style="overflow:auto;max-height:420px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:#d4af37;font-size:11px;text-align:left;border-bottom:1px solid rgba(212,175,55,0.3);"><th ${th}>Usuario</th><th ${th}>Equipo</th><th ${th}>Cargado</th><th ${th}>Retirado</th><th ${th}>Neto</th><th ${th}>Rango</th><th ${th}>Reembolso</th></tr></thead><tbody>${rows || '<tr><td colspan="7" style="padding:14px;color:#aaa;text-align:center;">Ningún usuario llega al primer rango.</td></tr>'}</tbody></table></div>
+            ${t.conBeneficio ? `<button class="btn-primary" onclick="wrfPublish()" style="margin-top:12px;background:#1f8f4a;">✅ Publicar ${t.conBeneficio} reembolsos (${_wrfM(t.totalBeneficio)})</button>` : ''}`;
+    } catch (e) {
+        _wrfPreviewSig = null;
+        if (out) out.innerHTML = `<div style="color:#ff8080;padding:12px;">❌ ${escapeHtml(e.message || 'Error de conexión')}</div>`;
+    }
+}
+
+async function wrfPublish() {
+    const f = _wrfForm();
+    if (!f.fromDate || !f.toDate) { showToast('Indicá la semana (desde / hasta)', 'error'); return; }
+    if (_wrfPreviewSig !== _wrfSig(f)) { showToast('Cambiaste la planilla o las fechas: tocá "Vista previa" de nuevo antes de publicar.', 'error'); return; }
+    const dm = (v) => v.split('-').reverse().slice(0, 2).join('/');
+    if (!confirm(`¿Publicar los reembolsos de la semana ${dm(f.fromDate)} al ${dm(f.toDate)}?\n\n${f.notify ? 'Se le AVISA a cada cliente por chat y notificación, y' : 'NO se avisa a los clientes, pero'} les aparece en la app para reclamar.\n\nUna vez publicada, esa semana no se puede volver a subir (salvo que la anules).`)) return;
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/batches', { method: 'POST', body: JSON.stringify(f) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error al publicar');
+        showToast(`✅ Semana ${j.label} publicada: ${j.reembolsos} reembolsos por ${_wrfM(j.total)}`, 'success');
+        const out = document.getElementById('wrfPreview');
+        if (out) out.innerHTML = `<div style="color:#7dffb0;padding:12px;font-weight:800;">✅ Publicada la semana ${escapeHtml(j.label)}: ${j.reembolsos} reembolsos por ${_wrfM(j.total)}.${j.sinCuenta ? ` ${j.sinCuenta} usuario(s) todavía sin cuenta en la web.` : ''}${j.yaReclamados ? ` ${j.yaReclamados} ya habían reclamado esta semana en una carga anterior (no se repiten).` : ''}${j.notify ? ' Se están enviando los avisos.' : ''}</div>`;
+        const ta = document.getElementById('wrfText'); if (ta) ta.value = '';
+        const fi = document.getElementById('wrfFile'); if (fi) fi.value = '';
+        _wrfPreviewSig = null;
+        wrfLoadBatches();
+    } catch (e) { showToast(e.message || 'Error al publicar', 'error'); }
+}
+
+// ---------- Por entregar ----------
+function _wrfItemsTable(items, withActions) {
+    const th = 'style="padding:6px;"';
+    const rows = items.map((it) => `<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
+        <td style="padding:7px 6px;">${_wrfUserLink(it)}<div style="color:#777;font-size:10px;">${escapeHtml(it.team || '')}</div></td>
+        <td style="padding:7px 6px;color:#bbb;font-size:11px;white-space:nowrap;">${escapeHtml(it.label)}</td>
+        <td style="padding:7px 6px;">${_wrfM(it.depositos)} <span style="color:#777;font-size:10px;">(${it.count})</span></td>
+        <td style="padding:7px 6px;">${_wrfM(it.retiros)}</td>
+        <td style="padding:7px 6px;">${_wrfM(it.neto)}</td>
+        <td style="padding:7px 6px;color:#ffd479;font-weight:800;white-space:nowrap;">${escapeHtml(it.tierName || '')} ${it.pct}%</td>
+        <td style="padding:7px 6px;color:#7dffb0;font-weight:900;white-space:nowrap;">${_wrfM(it.amount)}</td>
+        <td style="padding:7px 6px;">${_wrfStatusBadge(it)}</td>
+        ${withActions ? `<td style="padding:7px 6px;white-space:nowrap;">${it.status === 'claimed' && _wrfCanSettle() ? `<button onclick="wrfMarkDelivered('${escapeHtml(it.id)}')" style="background:#1f6f3a;color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12px;">✅ Marcar como entregado</button>` : ''}</td>` : ''}
+    </tr>`).join('');
+    return `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;"><thead><tr style="color:#d4af37;font-size:11px;text-align:left;border-bottom:1px solid rgba(212,175,55,0.3);">
+        <th ${th}>Usuario</th><th ${th}>Semana</th><th ${th}>Cargado</th><th ${th}>Retirado</th><th ${th}>Neto</th><th ${th}>Rango</th><th ${th}>Reembolso</th><th ${th}>Estado</th>${withActions ? `<th ${th}></th>` : ''}
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+let _wrfItemsCache = {};
+async function wrfLoadToDeliver() {
+    const el = document.getElementById('wrfToDeliver');
+    if (!el) return;
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/items?status=claimed&limit=500');
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error');
+        const items = j.items || [];
+        items.forEach((i) => { _wrfItemsCache[i.id] = i; });
+        const b = document.getElementById('weeklyRefundBadge');
+        if (b) { if (items.length) { b.textContent = String(items.length); b.style.display = ''; } else b.style.display = 'none'; }
+        el.innerHTML = `<div style="background:rgba(37,211,102,0.07);border:1px solid rgba(37,211,102,0.40);border-radius:10px;padding:12px;margin-bottom:14px;">
+            <div style="font-weight:900;color:#7dffb0;font-size:13.5px;margin-bottom:8px;">💸 RECLAMADOS — POR ENTREGAR (${items.length})</div>
+            ${items.length ? `<div style="color:#bbb;font-size:11.5px;margin-bottom:8px;">El cliente ya lo reclamó desde la app. Cargale ese monto en GANAMOS y tocá <b>Marcar como entregado</b>: le llega el aviso automático.</div>${_wrfItemsTable(items, true)}`
+                : '<div style="color:#aaa;font-size:12px;">🎉 No hay reembolsos reclamados sin entregar.</div>'}
+        </div>`;
+    } catch (e) { el.innerHTML = `<div style="color:#ff8080;padding:10px;">${escapeHtml(e.message || 'Error de conexión')}</div>`; }
+}
+
+async function wrfMarkDelivered(id) {
+    const it = _wrfItemsCache[id];
+    const det = it ? `${_wrfM(it.amount)} a ${it.username} (semana ${it.label})` : 'este reembolso';
+    if (!confirm(`¿Ya le cargaste en GANAMOS ${det}?\n\nAl confirmar, el cliente recibe el aviso de que su reembolso fue acreditado.`)) return;
+    try {
+        const r = await authFetch(`/api/admin/weekly-refund/items/${encodeURIComponent(id)}/delivered`, { method: 'POST', body: JSON.stringify({}) });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'No se pudo marcar', 'error'); return; }
+        showToast(j.alreadyDelivered ? (j.message || 'Ya estaba entregado') : '✅ Marcado como entregado. El cliente ya recibió el aviso.', j.alreadyDelivered ? 'info' : 'success');
+    } catch (e) { showToast('Error de conexión', 'error'); }
+    wrfRefreshAll();
+}
+function wrfRefreshAll() {
+    refreshWeeklyRefundBadge();
+    if (typeof refreshPlatformTasksBadge === 'function') refreshPlatformTasksBadge();
+    const sec = document.getElementById('weeklyRefundSection');
+    if (sec && sec.classList.contains('active')) { wrfLoadToDeliver(); wrfLoadBatches(); if (_wrfDetailBatch) wrfOpenBatch(_wrfDetailBatch, true); }
+    if (typeof selectedUserId !== 'undefined' && selectedUserId) loadWeeklyRefundBanner(selectedUserId);
+}
+
+// ---------- Semanas cargadas ----------
+async function wrfLoadBatches() {
+    const el = document.getElementById('wrfBatches');
+    if (!el) return;
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/batches');
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error');
+        const list = j.batches || [];
+        if (!list.length) { el.innerHTML = '<div style="color:#aaa;font-size:12px;padding:10px;">Todavía no se subió ninguna semana.</div>'; return; }
+        el.innerHTML = list.map((b) => {
+            const c = b.counts || {}; const n = (k) => (c[k] ? c[k].n : 0); const tot = (k) => (c[k] ? c[k].total : 0);
+            const vencido = new Date(b.expiresAt).getTime() < Date.now();
+            const estado = b.status === 'cancelled' ? '<span style="color:#ff6b6b;font-weight:900;">🚫 ANULADA</span>' : (vencido ? '<span style="color:#888;font-weight:900;">⌛ Plazo cerrado</span>' : `<span style="color:#7dffb0;font-weight:900;">🟢 Abierta · vence ${formatDateTime(b.expiresAt)}</span>`);
+            const chip = (label, val, color) => `<span style="display:inline-block;margin:2px 6px 2px 0;padding:3px 8px;border-radius:8px;background:rgba(0,0,0,0.30);border:1px solid rgba(255,255,255,0.10);font-size:11px;color:#bbb;">${label}: <b style="color:${color};">${val}</b></span>`;
+            return `<div style="border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:11px;margin-bottom:9px;background:rgba(0,0,0,0.18);${b.status === 'cancelled' ? 'opacity:.6;' : ''}">
+                <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
+                    <div><b style="color:#ffd479;font-size:13.5px;">📅 Semana ${escapeHtml(b.label)}</b> &nbsp; ${estado}
+                        <div style="color:#888;font-size:10.5px;">Subida por ${escapeHtml(b.createdBy || '?')} el ${formatDateTime(b.createdAt)} · ${b.claimHours} h para reclamar${b.notify ? (b.notifyDone ? ' · avisos enviados' : ' · ⏳ enviando avisos…') : ' · sin avisos'}</div></div>
+                    <div style="white-space:nowrap;">
+                        <button class="btn-secondary" onclick="wrfOpenBatch('${escapeHtml(b.id)}')" style="padding:6px 11px;font-size:12px;">👥 Ver detalle</button>
+                        ${b.status === 'active' && _wrfIsAdmin() ? `<button onclick="wrfCancelBatch('${escapeHtml(b.id)}','${escapeHtml(b.label)}')" style="padding:6px 10px;font-size:12px;margin-left:6px;background:#3a1a1a;color:#ff6666;border:1px solid rgba(255,80,80,0.3);border-radius:8px;cursor:pointer;font-weight:800;">🚫 Anular</button>` : ''}
+                    </div>
+                </div>
+                <div style="margin-top:7px;">
+                    ${chip('Reembolsos', (b.totals && b.totals.conBeneficio) || 0, '#fff')}${chip('Total', _wrfM((b.totals && b.totals.totalBeneficio) || 0), '#7dffb0')}
+                    ${chip('Por reclamar', n('claim_pending'), '#ffd479')}${chip('Reclamados sin entregar', n('claimed'), '#7dffb0')}
+                    ${chip('Entregados', `${n('delivered')} (${_wrfM(tot('delivered'))})`, '#25d366')}${chip('Vencidos', n('expired'), '#888')}
+                    ${n('rejected') ? chip('Rechazados', n('rejected'), '#ff6b6b') : ''}${n('cancelled') ? chip('Anulados', n('cancelled'), '#888') : ''}
+                    ${b.totals && b.totals.sinCuenta ? chip('Sin cuenta al subir', b.totals.sinCuenta, '#ff9f43') : ''}
+                </div>
+            </div>`;
+        }).join('');
+    } catch (e) { el.innerHTML = `<div style="color:#ff8080;padding:10px;">${escapeHtml(e.message || 'Error de conexión')}</div>`; }
+}
+
+async function wrfOpenBatch(id, silent) {
+    _wrfDetailBatch = id;
+    const el = document.getElementById('wrfDetail');
+    if (!el) return;
+    if (!silent) { _wrfDetailStatus = ''; el.innerHTML = '<div style="color:#aaa;padding:14px;text-align:center;">⏳ Cargando…</div>'; }
+    try {
+        const q = (document.getElementById('wrfDetailSearch') || {}).value || '';
+        const r = await authFetch(`/api/admin/weekly-refund/items?batchId=${encodeURIComponent(id)}&limit=3000${_wrfDetailStatus ? '&status=' + _wrfDetailStatus : ''}${q.trim() ? '&search=' + encodeURIComponent(q.trim()) : ''}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error');
+        const items = j.items || [];
+        items.forEach((i) => { _wrfItemsCache[i.id] = i; });
+        const fbtn = (st, label) => `<button onclick="wrfDetailFilter('${st}')" style="padding:6px 11px;border-radius:8px;border:1px solid ${_wrfDetailStatus === st ? 'rgba(212,175,55,0.6)' : 'rgba(255,255,255,0.12)'};background:${_wrfDetailStatus === st ? 'rgba(212,175,55,0.18)' : 'rgba(0,0,0,0.30)'};color:${_wrfDetailStatus === st ? '#ffd479' : '#bbb'};font-size:11.5px;font-weight:800;cursor:pointer;">${label}</button>`;
+        el.innerHTML = `<div style="border:1px solid rgba(212,175,55,0.35);border-radius:10px;padding:12px;margin-top:12px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:9px;">
+                <b style="color:#d4af37;">👥 Detalle de la semana ${items[0] ? escapeHtml(items[0].label) : ''} (${items.length}${j.truncated ? '+' : ''})</b>
+                <button onclick="wrfCloseDetail()" style="background:none;border:1px solid rgba(255,255,255,0.2);color:#bbb;border-radius:8px;padding:4px 10px;cursor:pointer;">✕ Cerrar</button>
+            </div>
+            <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:9px;">
+                ${fbtn('', 'Todos')}${fbtn('claim_pending', '⏳ Por reclamar')}${fbtn('claimed', '💸 Por entregar')}${fbtn('delivered', '✅ Entregados')}${fbtn('expired', '⌛ Vencidos')}
+                <input id="wrfDetailSearch" type="text" value="${escapeHtml(q)}" placeholder="Buscar usuario…" onkeydown="if(event.key==='Enter')wrfOpenBatch('${escapeHtml(id)}',true)" style="margin-left:auto;padding:6px 9px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.3);color:#fff;font-size:12px;">
+            </div>
+            ${items.length ? _wrfItemsTable(items, true) : '<div style="color:#aaa;padding:12px;text-align:center;">Sin resultados.</div>'}
+        </div>`;
+    } catch (e) { el.innerHTML = `<div style="color:#ff8080;padding:10px;">${escapeHtml(e.message || 'Error de conexión')}</div>`; }
+}
+function wrfDetailFilter(st) { _wrfDetailStatus = st; if (_wrfDetailBatch) wrfOpenBatch(_wrfDetailBatch, true); }
+function wrfCloseDetail() { _wrfDetailBatch = null; const el = document.getElementById('wrfDetail'); if (el) el.innerHTML = ''; }
+
+async function wrfCancelBatch(id, label) {
+    if (!confirm(`¿ANULAR la semana ${label}?\n\nLos reembolsos que todavía NO se reclamaron dejan de estar disponibles para los clientes.\nLos que ya se reclamaron o entregaron quedan como están.\n\nDespués vas a poder volver a subir esa semana.`)) return;
+    try {
+        const r = await authFetch(`/api/admin/weekly-refund/batches/${encodeURIComponent(id)}/cancel`, { method: 'POST', body: JSON.stringify({}) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'No se pudo anular');
+        showToast(`Semana anulada: ${j.cancelados} reembolso(s) cancelados${j.quedan ? `, ${j.quedan} ya reclamados/entregados quedan` : ''}.`, 'success');
+        wrfRefreshAll();
+    } catch (e) { showToast(e.message || 'Error', 'error'); }
+}
+
+// ---------- Cartel en el chat del cliente ----------
+async function loadWeeklyRefundBanner(userId) {
+    const el = document.getElementById('chatWeeklyRefundBanner');
+    if (!el) return;
+    try {
+        const r = await authFetch('/api/admin/weekly-refund/user/' + encodeURIComponent(userId));
+        if (!r.ok) { el.style.display = 'none'; return; }
+        const j = await r.json();
+        if (typeof selectedUserId !== 'undefined' && selectedUserId !== userId) return; // cambió de chat en el medio
+        const items = j.items || [];
+        if (!items.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        items.forEach((i) => { _wrfItemsCache[i.id] = i; });
+        el.style.display = '';
+        el.innerHTML = items.map((it) => {
+            const det = `semana ${escapeHtml(it.label)} · cargó ${_wrfM(it.depositos)} · retiró ${_wrfM(it.retiros)} · neto ${_wrfM(it.neto)} · ${escapeHtml(it.tierName || '')} ${it.pct}%`;
+            if (it.status === 'claimed') {
+                return `<div style="padding:9px 14px;border-bottom:1px solid rgba(0,0,0,0.30);background:linear-gradient(90deg,#0f6b3a,#0b4f2b);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                    <div style="flex:1;min-width:200px;"><div style="color:#fff;font-weight:900;font-size:13px;">💸 REEMBOLSO RECLAMADO: enviarle ${_wrfM(it.amount)}</div>
+                    <div style="color:#c9f7dc;font-size:11px;">✅ Verificado por el sistema — ${det}</div></div>
+                    ${j.canSettle ? `<button onclick="wrfMarkDelivered('${escapeHtml(it.id)}')" style="background:#fff;color:#0b4f2b;border:none;border-radius:7px;padding:8px 13px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">✅ Marcar como entregado</button>` : ''}
+                </div>`;
+            }
+            return `<div style="padding:7px 14px;border-bottom:1px solid rgba(0,0,0,0.30);background:rgba(212,175,55,0.10);font-size:11.5px;color:#ffe9a8;">
+                ⏳ Tiene un reembolso de <b>${_wrfM(it.amount)}</b> SIN RECLAMAR (${det}). Lo tiene que reclamar él desde la app (menú ☰ → Reembolsos) antes del ${formatDateTime(it.expiresAt)}.
+            </div>`;
+        }).join('');
+    } catch (e) { el.style.display = 'none'; }
+}
+
+window.loadWeeklyRefundAdmin = loadWeeklyRefundAdmin; window.wrfSetupNav = wrfSetupNav; window.refreshWeeklyRefundBadge = refreshWeeklyRefundBadge;
+window.wrfAddTierRow = wrfAddTierRow; window.wrfSaveTiers = wrfSaveTiers; window.wrfFileChosen = wrfFileChosen;
+window.wrfPreview = wrfPreview; window.wrfPublish = wrfPublish; window.wrfMarkDelivered = wrfMarkDelivered;
+window.wrfOpenBatch = wrfOpenBatch; window.wrfDetailFilter = wrfDetailFilter; window.wrfCloseDetail = wrfCloseDetail;
+window.wrfCancelBatch = wrfCancelBatch; window.loadWeeklyRefundBanner = loadWeeklyRefundBanner; window.wrfRefreshAll = wrfRefreshAll;

@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #214)
+> **Última actualización: 2026-10-01** (última entrada: #215)
 
 ---
 
@@ -33,7 +33,11 @@
 >    ✅ Hecha → "ya te cargamos"; ruleta → premio en la bandeja; Depositar/Bonificación/
 >    pagar retiro NO generan pendientes; registro público da 410.
 >
+> 6. **Reembolso semanal (#215):** probar en deploy con una planilla chica (ver checklist
+>    de la entrada #215) ANTES de subir la primera semana real.
+>
 > **Tests que corro antes de tocar nada** (no hay node_modules, sólo esto):
+> `node scripts/test-weekly-refund.js` · `node scripts/test-weekly-refund-flow.js` ·
 > `node scripts/test-ganamos-adapter.js` · `node scripts/check-tdz.js` ·
 > `node scripts/test-cashback-formula.js` · `node scripts/test-rollover-multicuenta.js`.
 >
@@ -42,6 +46,80 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 — REEMBOLSO SEMANAL POR PLANILLA (subir la planilla → cada cliente reclama → el agente entrega)
+
+### 215. Los reembolsos que se daban a mano por WhatsApp pasan a la web: planilla semanal, cálculo automático, reclamo en la app y "Marcar como entregado"
+- **Pedido del owner:** hoy carga los movimientos de la semana en un Google Sheet y un
+  Apps Script le manda a Telegram cuánto le toca a cada usuario; los agentes lo entregan
+  a mano por WhatsApp. Quiere: subir el archivo los lunes, que calcule solo, que el
+  cliente vea el detalle en una sección REEMBOLSOS y toque RECLAMAR (2 días máximo,
+  editable desde COMANDOS), que al agente le llegue "$X a reclamar" verificado por el
+  sistema (no un mensaje armado por el cliente), con un botón para marcarlo entregado
+  cuando ya lo cargó en GANAMOS, y que ahí salga el aviso automático al cliente.
+- **Regla de cálculo (la del script, tal cual):** por usuario `neto = Σ deposit − Σ
+  withdraw/withdrawal`; BRONCE neto ≥ 50.000 → 3% · PLATA ≥ 100.001 → 5% · ORO ≥ 300.001
+  → 10%; menos de 50.000 → sin reembolso; `beneficio = neto × %`. Diferencias con el
+  script: el reembolso se redondea a pesos enteros; el usuario se agrupa sin distinguir
+  mayúsculas; el equipo sale de la card Equipos (prefijo) y no de un `includes`; los
+  rangos son editables desde el panel.
+- **Diseño:** se montó sobre lo que ya había — el reclamo con vencimiento de la ruleta
+  (#197) y la bandeja Pendientes GANAMOS (#190). Detalle completo (modelos, endpoints,
+  flujo, front) en `docs/ARCHITECTURE.md` §0.1. Resumen:
+  - **Parte pura** `src/utils/weeklyRefund.js`: parser de la planilla (CSV o celdas
+    pegadas; tab/`;`/`,`; encabezado opcional; montos con o sin separador de miles) +
+    cálculo + validación de rangos.
+  - **Modelos** `RefundBatch` (la semana; `activeKey` único = no se sube dos veces) y
+    `WeeklyRefund` (cada cliente; único por lote + usuario).
+  - **Backend** (bloque "#215 REEMBOLSO SEMANAL POR ARCHIVO" de server.js): vista previa,
+    publicar, listar, anular, rangos, cartel del chat, marcar entregado; del lado del
+    cliente `GET /api/weekly-refund/status` y `POST /api/weekly-refund/claim`. El reclamo
+    va por `girox.creditGift` con reference `vip-wrf-<semana>-<usuario>` (flow
+    `weekly_refund`) → tarea pendiente; el listener de tareas refleja ✅/❌ en el
+    WeeklyRefund (`_wrfOnTaskSettled`) y manda `/sys_refund_delivered`.
+  - **Avisos:** al publicar, cada cliente con cuenta recibe `/sys_refund_available` por
+    chat + push (motor reanudable `_processWeeklyRefundNotifyQueue`, cada 60 s).
+  - **PWA (SW v127):** `public/js/weeklyrefund.js` — cartel verde en el inicio "¡Tenés $X
+    de reembolso para reclamar!", ítem **Reembolsos** en el menú ☰, pantalla con el
+    detalle por semana (cargaste / retiraste / neto / rango / reembolso / vence en…),
+    botón RECLAMAR, estados (reclamado, acreditado, vencido) y "¿cómo funciona?".
+  - **Panel (admin-sw v54):** sección **💸 Reembolsos semanales** (admin, cargas y
+    comunidad; subir/rangos/anular sólo admin general): "Reclamados — por entregar" con
+    **✅ Marcar como entregado**, subir planilla con **vista previa obligatoria** (totales,
+    resumen por equipo, sin cuenta, filas descartadas), rangos editables, semanas cargadas
+    con conteo por estado y detalle filtrable. En el chat del cliente, cartel verde
+    "💸 REEMBOLSO RECLAMADO: enviarle $X — ✅ Verificado por el sistema" con el mismo
+    botón. En Transacciones vuelve el filtro/tarjeta "Reembolsos".
+  - **Comandos nuevos (seed):** `/sys_refund_claim_hours` (48), `/sys_refund_available`,
+    `/sys_refund_claimed`, `/sys_refund_delivered`. La migración GANAMOS del boot (pisa
+    los `/sys_*` que digan "reembolso") ahora saltea `/sys_refund_*`.
+- **Garantías de plata:** el monto sale de la planilla (el cliente sólo manda el id);
+  doble toque / dos pestañas → un solo reclamo (reserva atómica); misma semana subida dos
+  veces → 409; semana anulada y resubida → quien ya cobró queda afuera y la reference
+  repetida no genera otra tarea; marcar entregado dos veces → un solo aviso y una sola
+  Transaction; fuera de plazo → vencido.
+- **FIX de paso (bug de #207):** al sacar referidos se habían borrado por error las
+  semillas de `/sys_roulette_claim_hours`, `/sys_roulette_won` y `/sys_roulette_claimed`
+  (#197). En una base ya sembrada seguían existiendo; en una base nueva no aparecían en
+  COMANDOS. Restauradas.
+- **Lo que NO se hizo (decidir con el owner):** no se lee `.xlsx` directo (hay que
+  descargar CSV o pegar las celdas: no hay librería y no hay node_modules para sumarla);
+  no hay tarjeta de reembolsos en "Información del Servicio"; la planilla no se conecta
+  sola al Drive; al rechazar una tarea de reembolso no sale mensaje al cliente.
+- **Validado:** `node --check` en todo lo tocado, `check-tdz` ✅, `test-ganamos-adapter`
+  ✅, `scripts/test-weekly-refund.js` ✅ (parser + cálculo, cortes 50.000/100.001/300.001),
+  `scripts/test-weekly-refund-flow.js` ✅ (34 chequeos ejecutando el bloque REAL de
+  server.js contra una base falsa: permisos, vista previa, publicar, avisos, reclamo con
+  doble toque, entrega, vencimiento, anular/resubir, rangos) y una prueba de humo de los
+  dos fronts con un DOM mínimo (16 chequeos). HTML: PWA 323/323 divs, panel 725/725, ids
+  únicos. **No se pudo levantar el server ni abrir un navegador.**
+- **Checklist post-deploy (hacerlo con una planilla de 3–4 filas y un usuario de prueba
+  propio antes de la primera semana real):** boot sin errores → panel → Reembolsos
+  semanales → pegar filas → Vista previa (ver totales y el usuario) → Publicar → al
+  usuario le llega el mensaje y la notificación → app: cartel verde + menú ☰ →
+  Reembolsos → RECLAMAR → en el panel aparece en "por entregar", en su chat el cartel
+  verde y en Pendientes GANAMOS → Marcar como entregado → le llega "ya está acreditado"
+  y en Transacciones figura como Reembolso. Después: anular esa semana de prueba.
 
 ## Sesión 2026-10-01 (2ª) — Cartel del login: SÓLO WhatsApp (fuera la comunidad)
 

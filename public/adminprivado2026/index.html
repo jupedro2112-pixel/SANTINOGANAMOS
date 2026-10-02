@@ -38,7 +38,6 @@
 body.platform-manual .manual-hide,
 body.platform-manual .nav-group-title.nav-group-refunds,
 body.platform-manual .nav-item[data-section="reembolsos"],
-body.platform-manual .filter-btn[data-filter="refund"],
 body.platform-manual .filter-btn[data-filter="cashback"],
 body.platform-manual .filter-btn[data-filter="rakeback"],
 body.platform-manual .filter-btn[data-filter="vip_levelup"],
@@ -51,7 +50,7 @@ body.platform-manual #schedType option[value="reembolso"],
 body.platform-manual #schedPlan option[value="solo_reembolsos"],
 body.platform-manual #notifSegment option[value="with_balance"],
 body.platform-manual .col-balance,
-body.platform-manual .stat-card.refund, body.platform-manual .stat-card.cashback,
+body.platform-manual .stat-card.cashback,
 body.platform-manual .stat-card.rakeback, body.platform-manual .stat-card.vip_levelup,
 body.platform-manual .rp-roll-col,
 body.platform-manual .nav-item[data-section="referrals"],
@@ -153,6 +152,12 @@ document.addEventListener('change', function (ev) {
                     <span>⏳</span>
                     <span>Pendientes GANAMOS</span>
                     <span id="platformTasksBadge" style="display:none;background:#ff5050;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;">0</span>
+                </a>
+                <!-- #215 Reembolsos semanales por planilla (la muestra wrfSetupNav según el rol). -->
+                <a href="#" class="nav-item nav-item-weekly-refund" data-section="weeklyRefund" style="display:none">
+                    <span>💸</span>
+                    <span>Reembolsos semanales</span>
+                    <span id="weeklyRefundBadge" style="display:none;background:#1f8f4a;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;">0</span>
                 </a>
                 <a href="#" class="nav-item" data-section="commands">
                     <span class="icon icon-terminal"></span>
@@ -402,6 +407,8 @@ document.addEventListener('change', function (ev) {
                             .msg-ticks.msg-read .msg-read-label { display:inline; }
                         </style>
                         <div id="chatFraudBanner" style="display:none;"></div>
+                        <!-- #215 Reembolso semanal reclamado / sin reclamar — lo llena loadWeeklyRefundBanner() -->
+                        <div id="chatWeeklyRefundBanner" style="display:none;"></div>
                         <!-- Bono 100% pendiente — lo llena renderFirstChargeBonusBanner() al abrir el chat -->
                         <div id="chatBonusBanner" style="display:none;"></div>
                         <!-- Bono sorpresa del código de bienvenida (Comunidad Telegram) -->
@@ -2047,6 +2054,50 @@ document.addEventListener('change', function (ev) {
                 <div id="platformTasksBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
+            </section>
+
+            <!-- #215 REEMBOLSOS SEMANALES POR PLANILLA (GANAMOS sin API) -->
+            <section id="weeklyRefundSection" class="section">
+                <div class="panel-header">
+                    <h2>💸 Reembolsos semanales</h2>
+                    <button class="refresh-btn" onclick="loadWeeklyRefundAdmin()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">Cada semana se sube la planilla de movimientos y el sistema calcula el reembolso de cada cliente: <strong style="color:#ffd479;">neto = lo que cargó − lo que retiró</strong>, y según ese neto le toca un porcentaje. El cliente recibe el aviso, entra a la app y toca <strong style="color:#7dffb0;">RECLAMAR</strong> (tiene <span id="wrfClaimHoursTxt">48</span> horas — se cambia en COMANDOS → <code>/sys_refund_claim_hours</code>). Ahí te aparece acá abajo y en su chat: se lo cargás en GANAMOS y tocás <strong style="color:#7dffb0;">Marcar como entregado</strong> — le llega el aviso automático.<br>
+                    Rangos vigentes: <span id="wrfTiersSummary" style="color:#ccc;">—</span></p>
+                </div>
+
+                <div id="wrfToDeliver"></div>
+
+                <!-- Subir la planilla (solo admin general) -->
+                <div id="wrfUploadCard" style="display:none;border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:12px;margin-bottom:14px;background:rgba(0,0,0,0.18);">
+                    <div style="font-weight:900;color:#d4af37;font-size:13.5px;margin-bottom:8px;">⬆️ SUBIR LA PLANILLA DE LA SEMANA</div>
+                    <p style="margin:0 0 10px;color:#aaa;font-size:11.5px;line-height:1.6;">Columnas: <b>Type</b> (deposit / withdraw), <b>User</b>, <b>Amount</b> (la fecha se ignora). Dos formas: en la hoja de la semana, <b>Archivo → Descargar → Valores separados por comas (.csv)</b> y elegí ese archivo; o seleccioná las columnas, copiá y <b>pegá</b> en el recuadro.</p>
+                    <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">
+                        <div class="form-group" style="margin:0;"><label for="wrfFrom">Semana desde</label><input type="date" id="wrfFrom"></div>
+                        <div class="form-group" style="margin:0;"><label for="wrfTo">hasta</label><input type="date" id="wrfTo"></div>
+                        <div class="form-group" style="margin:0;flex:1;min-width:220px;"><label for="wrfFile">Archivo .csv</label><input type="file" id="wrfFile" accept=".csv,.tsv,.txt,text/csv,text/plain" onchange="wrfFileChosen(this)"></div>
+                    </div>
+                    <div class="form-group" style="margin:0 0 10px;"><label for="wrfText">…o pegá acá las filas copiadas de la planilla</label>
+                        <textarea id="wrfText" rows="6" placeholder="Type	User	Amount	fecha&#10;deposit	bigoscar072	50000	23/11&#10;withdraw	bigoscar072	10000	24/11" style="width:100%;font-family:monospace;font-size:12px;"></textarea></div>
+                    <label style="display:flex;align-items:center;gap:7px;color:#ccc;font-size:12px;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="wrfNotify" checked> Avisarle a cada cliente por chat y notificación que tiene un reembolso para reclamar</label>
+                    <button class="btn-secondary" onclick="wrfPreview()">👁 Vista previa (calcular sin publicar)</button>
+                    <div id="wrfPreview"></div>
+                </div>
+
+                <!-- Rangos (solo admin general) -->
+                <div id="wrfTiersCard" style="display:none;border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:12px;margin-bottom:14px;background:rgba(0,0,0,0.18);">
+                    <div style="font-weight:900;color:#d4af37;font-size:13.5px;margin-bottom:8px;">🏅 RANGOS DEL REEMBOLSO</div>
+                    <p style="margin:0 0 10px;color:#aaa;font-size:11.5px;line-height:1.6;">El rango sale del <b>neto de la semana</b> (cargas − retiros). Un cliente que no llega al primer "desde" no tiene reembolso. Valen para las planillas que se suban desde ahora.</p>
+                    <div id="wrfTiersList"></div>
+                    <button class="btn-secondary" onclick="wrfAddTierRow()" style="margin-top:4px;">➕ Agregar rango</button>
+                    <button class="btn-primary" onclick="wrfSaveTiers()" style="margin-top:4px;margin-left:8px;">💾 Guardar rangos</button>
+                    <div id="wrfTiersMsg" style="font-size:12px;margin-top:8px;color:#aaa;"></div>
+                </div>
+
+                <div style="font-weight:900;color:#d4af37;font-size:13.5px;margin:4px 0 8px;">📅 SEMANAS CARGADAS</div>
+                <div id="wrfBatches"><div style="color:#aaa;text-align:center;padding:18px;">⏳ Cargando…</div></div>
+                <div id="wrfDetail"></div>
             </section>
 
             <section id="reviewsSection" class="section">

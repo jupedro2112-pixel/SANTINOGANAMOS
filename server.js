@@ -601,7 +601,7 @@ function _taskFlowLabel(flow) {
     hgcash: 'transferencia hgcash', hgcash_assigned: 'carga asignada desde la bandeja', admin_deposit: 'carga manual',
     admin_withdrawal: 'retiro manual', admin_bonus: 'Bonificación', payout: 'retiro autogestionado', payout_refund: 'devolución de retiro rechazado',
     roulette: 'ruleta diaria', fire: 'fueguito', vip: 'nivel VIP', referral: 'comisión de referidos', batch: 'lote', welcome_code: 'código de bienvenida',
-    refund: 'reembolso', cashback: 'reembolso en vivo', rakeback: 'rakeback', movements: 'autogestión'
+    refund: 'reembolso', weekly_refund: 'reembolso semanal', cashback: 'reembolso en vivo', rakeback: 'rakeback', movements: 'autogestión'
   }[flow] || (flow || 'operación');
 }
 async function _sendSystemMessageToUser(userId, username, content) {
@@ -615,6 +615,11 @@ async function _sendSystemMessageToUser(userId, username, content) {
   notifyAdmins('new_message', { message: msgData, userId, username });
   return sysMsg;
 }
+// #215 Reembolso semanal por archivo (los usa el listener de tareas de abajo y el bloque
+// "#215 REEMBOLSO SEMANAL POR ARCHIVO", más adelante).
+const weeklyRefundCalc = require('./src/utils/weeklyRefund');
+const RefundBatch = require('./src/models/RefundBatch');
+const WeeklyRefund = require('./src/models/WeeklyRefund');
 if (PLATFORM_MANUAL) {
   girox.setUserIdResolver(async (username) => {
     const u = await findUserByUsernameCI(username);
@@ -632,7 +637,8 @@ if (PLATFORM_MANUAL) {
     const taskId = String(task._id);
     if (event === 'created') {
       // hgcash deja su propia nota (con el detalle del movimiento) en hgcashAutoCarga.
-      if (userId && !['hgcash', 'hgcash_assigned'].includes(task.flow)) await _emitAdminOnlyChatNote(userId, task.username, `⏳ PENDIENTE EN GANAMOS — ${kindLabel} de ${money(task.amount)}${bonusTxt}${rollTxt} · ${motivo}. Hacelo en el panel de GANAMOS y marcalo ✅ en "Pendientes GANAMOS".`);
+      // #215 el reclamo del reembolso semanal también deja la suya (con el detalle verificado).
+      if (userId && !['hgcash', 'hgcash_assigned', 'weekly_refund'].includes(task.flow)) await _emitAdminOnlyChatNote(userId, task.username, `⏳ PENDIENTE EN GANAMOS — ${kindLabel} de ${money(task.amount)}${bonusTxt}${rollTxt} · ${motivo}. Hacelo en el panel de GANAMOS y marcalo ✅ en "Pendientes GANAMOS".`);
       notifyAdmins('platform_task', { event, taskId, kind: task.kind, username: task.username, amount: task.amount, flow: task.flow || null });
       return;
     }
@@ -650,7 +656,13 @@ if (PLATFORM_MANUAL) {
         ).catch(() => {});
       }
     }
-    if (event === 'done' && userId && task.source === 'server' && task.kind !== 'withdraw') {
+    // #215 Reembolso semanal: la tarea refleja su estado en el WeeklyRefund y el aviso al
+    // cliente es el suyo (/sys_refund_delivered), no el genérico de abajo.
+    const isWeeklyRefund = task.flow === 'weekly_refund' || /^vip-wrf-/.test(String(task.reference || ''));
+    if (isWeeklyRefund) {
+      try { await _wrfOnTaskSettled(event, task); } catch (e) { logger.error(`[weekly-refund] tarea ${taskId} ${event}: ${e.message}`); }
+    }
+    if (event === 'done' && userId && task.source === 'server' && task.kind !== 'withdraw' && !isWeeklyRefund) {
       const text = await renderSystemCommand('/sys_ganamos_acreditado',
         '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰',
         { amount: money(task.amount), bonus: task.bonus && task.bonus.amount > 0 ? money(task.bonus.amount) : '', motivo, rollover: _rolloverNoteText(rollX) });
@@ -10832,6 +10844,51 @@ async function initializeData() {
       response: '20'
     },
     {
+      // #197 NO es un mensaje: horas que tiene el cliente para reclamar un premio de la ruleta.
+      // (Estas 3 semillas de la ruleta se habían borrado por error en #207; restauradas en #215.)
+      name: '/sys_roulette_claim_hours',
+      description: 'RULETA DIARIA — HORAS PARA RECLAMAR (no es un mensaje). Escribí SOLO el número de horas que tiene el cliente para tocar "Reclamar premio" en la app después de ganar (dinero o %). Pasado el plazo el premio VENCE. Vacío o inválido = 24.',
+      type: 'info',
+      response: '24'
+    },
+    {
+      name: '/sys_roulette_won',
+      description: 'RULETA DIARIA — mensaje al cliente cuando GANA un premio (dinero o %). Variables: {username}, {premio} (ej. "$5.000" o "+50% EXTRA en tu próxima carga"), {horas} (plazo para reclamar), {vence} (fecha y hora límite). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '🎡 ¡GANASTE {premio} en la ruleta diaria! 🎉\n\nTenés {horas} horas para reclamarlo: entrá a la app, tocá RULETA y después RECLAMAR PREMIO. ⏰ Vence el {vence}.'
+    },
+    {
+      name: '/sys_roulette_claimed',
+      description: 'RULETA DIARIA — mensaje al cliente cuando RECLAMA su premio. Variables: {username}, {premio}, {detalle} (dinero: "en unos minutos un agente te lo carga…"; %: "avisale al agente en tu próxima carga…"). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '✅ ¡Premio reclamado! {detalle}'
+    },
+    {
+      // #215 NO es un mensaje: horas que tiene el cliente para reclamar su reembolso semanal.
+      name: '/sys_refund_claim_hours',
+      description: 'REEMBOLSO SEMANAL — HORAS PARA RECLAMAR (no es un mensaje). Escribí SOLO el número de horas que tiene el cliente para tocar "Reclamar" en la app desde que se sube la planilla de la semana. Pasado el plazo el reembolso VENCE. Vale para las planillas que se suban DESPUÉS de cambiarlo. Vacío o inválido = 48 (2 días).',
+      type: 'info',
+      response: '48'
+    },
+    {
+      name: '/sys_refund_available',
+      description: 'REEMBOLSO SEMANAL — aviso al cliente cuando se sube la planilla y tiene un reembolso para reclamar. Variables: {username}, {monto}, {semana} (ej. "23/11 al 29/11"), {cargado}, {retirado}, {neto}, {rango}, {pct}, {horas} (plazo), {vence} (fecha y hora límite). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '🎁 ¡{username}, tenés un REEMBOLSO de {monto} para reclamar!\n\n📅 Semana {semana}\n💵 Cargaste {cargado} · 🏧 Retiraste {retirado}\n🏷 Rango {rango}: {pct}% de {neto}\n\nEntrá a la app, tocá REEMBOLSOS y después RECLAMAR. ⏰ Tenés {horas} horas: vence el {vence}.'
+    },
+    {
+      name: '/sys_refund_claimed',
+      description: 'REEMBOLSO SEMANAL — mensaje al cliente cuando toca RECLAMAR (queda pendiente de que un agente lo cargue en GANAMOS). Variables: {username}, {monto}, {semana}, {rango}, {pct}. Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '✅ ¡Reclamo recibido! Tu reembolso de {monto} (semana {semana}) ya está verificado. En unos minutos un agente te lo carga en tu usuario de GANAMOS y te avisamos por acá. 🙌'
+    },
+    {
+      name: '/sys_refund_delivered',
+      description: 'REEMBOLSO SEMANAL — mensaje al cliente cuando el agente toca "Marcar como entregado" (ya lo cargó en GANAMOS). Variables: {username}, {monto}, {semana}, {rango}, {pct}. Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '✅ ¡Listo {username}! Tu reembolso de {monto} (semana {semana}) ya está acreditado en tu usuario de GANAMOS. ¡A jugar! 🎰'
+    },
+    {
       name: '/sys_withdrawal',
       description: 'Mensaje automático al realizar un retiro. Variables disponibles: ${amount}, ${balance}',
       type: 'message',
@@ -11056,6 +11113,9 @@ async function initializeData() {
     const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|\{referral_pct\}|referid|rakeback|nivel VIP/i; // #207 + referidos
     let fixed = 0;
     for (const cmd of systemCmds) {
+      // #215 los /sys_refund_* son del reembolso semanal por archivo: mencionan "reembolso"
+      // a propósito y el owner los edita desde COMANDOS → esta migración no los toca.
+      if (/^\/sys_refund_/.test(cmd.name)) continue;
       try {
         const r = await Command.updateOne(
           { name: cmd.name, response: { $regex: STALE_RE } },
@@ -21442,6 +21502,486 @@ app.post('/api/admin/bonus-strategy/activate', authMiddleware, adminMiddleware, 
   }
 });
 
+
+// ============================================================
+// #215 REEMBOLSO SEMANAL POR ARCHIVO (GANAMOS sin API, owner 2026-10-02)
+// ============================================================
+// GANAMOS no tiene API → no hay netwin. El owner ya calculaba los reembolsos con una
+// planilla semanal (Type | User | Amount) y un Apps Script que los mandaba a Telegram
+// para entregarlos a mano por WhatsApp. Acá es lo mismo, adentro de la web:
+//   1. El admin general sube la planilla de la semana (panel → Reembolsos semanales).
+//      El cálculo es el del script (src/utils/weeklyRefund.js): neto = cargas − retiros,
+//      rango sobre el neto, reembolso = neto × %. Rangos editables (Config['weeklyRefund']).
+//   2. Cada cliente con rango queda con un WeeklyRefund "por reclamar" y recibe el aviso
+//      por chat + push (/sys_refund_available). Tiene las horas del comando
+//      /sys_refund_claim_hours (default 48) para tocar RECLAMAR en la app; si no, vence.
+//   3. Al reclamar: creditGift con reference `vip-wrf-<semana>-<usuario>` → en manual es
+//      una PlatformTask pendiente ("Pendientes GANAMOS") + nota en el chat con el detalle
+//      VERIFICADO por el sistema (el monto sale de la planilla, no lo escribe el cliente).
+//   4. El agente lo carga en GANAMOS y toca "Marcar como entregado" (banner del chat,
+//      sección Reembolsos semanales, o ✅ en Pendientes GANAMOS: es la misma tarea) → el
+//      listener de tareas pasa el WeeklyRefund a `delivered`, registra la Transaction
+//      `refund` y le avisa al cliente (/sys_refund_delivered).
+// Idempotencia: índice único (batchId, usernameLower) + reference estable por semana y
+// usuario + `RefundBatch.activeKey` único (una semana no se sube dos veces).
+// NO tiene nada que ver con los reembolsos por netwin de 1girox (/api/refunds/*), que
+// siguen cerrados en modo manual.
+const WRF_CLAIM_HOURS_DEFAULT = 48;
+let _wrfClaimHoursCache = { v: null, at: 0 };
+async function getRefundClaimHours() {
+  if (_wrfClaimHoursCache.v != null && Date.now() - _wrfClaimHoursCache.at < 30000) return _wrfClaimHoursCache.v;
+  let v = WRF_CLAIM_HOURS_DEFAULT;
+  try {
+    const cmd = await Command.findOne({ name: '/sys_refund_claim_hours', isActive: true }).lean();
+    const n = Number(String((cmd && cmd.response) || '').trim().replace(',', '.'));
+    if (Number.isFinite(n) && n >= 1 && n <= 720) v = n;
+  } catch (_) {}
+  _wrfClaimHoursCache = { v, at: Date.now() };
+  return v;
+}
+// Rangos vigentes (sin cache: multi-instancia). Config rota/ausente → los default del script.
+async function getWeeklyRefundTiers() {
+  const c = (await getConfig('weeklyRefund')) || {};
+  return weeklyRefundCalc.safeTiers(c.tiers);
+}
+const _wrfMoney = (n) => '$' + Math.round(Number(n) || 0).toLocaleString('es-AR');
+function _wrfFmtVence(d) {
+  try { return new Date(d).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; }
+}
+function _wrfReference(periodKey, usernameLower) { return `vip-wrf-${periodKey}-${usernameLower}`.slice(0, 100); }
+function _wrfVars(it, extra) {
+  return Object.assign({
+    username: it.username, monto: _wrfMoney(it.amount), semana: it.label, cargado: _wrfMoney(it.depositos),
+    retirado: _wrfMoney(it.retiros), neto: _wrfMoney(it.neto), rango: it.tierName || '', pct: it.pct
+  }, extra || {});
+}
+function _wrfDetalle(it) {
+  return `semana ${it.label} · cargó ${_wrfMoney(it.depositos)} (${it.count} carga${it.count === 1 ? '' : 's'}) · retiró ${_wrfMoney(it.retiros)} · neto ${_wrfMoney(it.neto)} · rango ${it.tierName} ${it.pct}%`;
+}
+// Reembolsos por reclamar cuyo plazo venció → `expired`. Barrido perezoso (status/claim
+// del cliente y listados del panel); no hace falta cron.
+async function _wrfExpireStale(filter = {}) {
+  try {
+    const r = await WeeklyRefund.updateMany({ ...filter, status: 'claim_pending', expiresAt: { $lt: new Date() } }, { $set: { status: 'expired' } });
+    return r.modifiedCount || 0;
+  } catch (e) { logger.warn(`[weekly-refund] expire: ${e.message}`); return 0; }
+}
+// Forma pública (PWA).
+function _wrfPublic(it) {
+  const exp = it.expiresAt ? new Date(it.expiresAt) : null;
+  return {
+    id: it.id, label: it.label, depositos: it.depositos, retiros: it.retiros, neto: it.neto, count: it.count,
+    tierName: it.tierName, pct: it.pct, falta: it.falta, nextTierName: it.nextTierName, amount: it.amount,
+    status: it.status, expiresAt: exp, msLeft: it.status === 'claim_pending' && exp ? Math.max(0, exp.getTime() - Date.now()) : 0,
+    claimedAt: it.claimedAt || null, deliveredAt: it.deliveredAt || null
+  };
+}
+// Forma del panel.
+function _wrfAdmin(it) {
+  return {
+    id: it.id, batchId: it.batchId, periodKey: it.periodKey, label: it.label, username: it.username, userId: it.userId || null,
+    team: it.team || null, depositos: it.depositos, retiros: it.retiros, neto: it.neto, count: it.count, tierName: it.tierName,
+    pct: it.pct, falta: it.falta, nextTierName: it.nextTierName, amount: it.amount, status: it.status, expiresAt: it.expiresAt,
+    claimedAt: it.claimedAt, deliveredAt: it.deliveredAt, deliveredBy: it.deliveredBy, rejectedNote: it.rejectedNote,
+    platformTaskId: it.platformTaskId, notifyState: it.notifyState
+  };
+}
+
+// Lo llama el listener de tareas (arriba, setTaskListener) cuando la PlatformTask del
+// reembolso se marca hecha o se rechaza. Idempotente: sólo actúa si el WeeklyRefund
+// seguía `claimed` (la transición atómica es el candado → un solo aviso al cliente).
+async function _wrfOnTaskSettled(event, task) {
+  const ref = String(task.reference || '');
+  if (!ref) return null;
+  if (event !== 'done') {
+    const rej = await WeeklyRefund.findOneAndUpdate({ reference: ref, status: 'claimed' },
+      { $set: { status: 'rejected', rejectedNote: `Rechazado por ${task.doneBy || 'agente'}: ${task.note || ''}`.slice(0, 300) } }, { new: true }).lean();
+    if (rej) logger.info(`[weekly-refund] ${rej.username} ${_wrfMoney(rej.amount)} (${rej.label}) RECHAZADO por ${task.doneBy || '?'}`);
+    return rej;
+  }
+  const it = await WeeklyRefund.findOneAndUpdate({ reference: ref, status: 'claimed' },
+    { $set: { status: 'delivered', deliveredAt: new Date(), deliveredBy: task.doneBy || null } }, { new: true }).lean();
+  if (!it) return null;
+  let userId = it.userId || task.userId || null;
+  if (!userId) { try { const u = await findUserByUsernameCI(it.username); userId = u ? u.id : null; } catch (_) {} }
+  try {
+    await Transaction.create({
+      id: uuidv4(), type: 'refund', userId, username: it.username, amount: Number(it.amount) || 0,
+      description: `Reembolso semanal ${it.label} (${it.tierName} ${it.pct}%)`,
+      adminUsername: task.doneBy || null, transactionId: String(task._id),
+      metadata: { source: 'weekly_refund', weeklyRefundId: it.id, batchId: it.batchId, periodKey: it.periodKey, creditedAs: 'bonus', platformTaskStatus: 'done' },
+      timestamp: new Date()
+    });
+  } catch (e) { logger.warn(`[weekly-refund] Transaction de ${it.username} (${it.id}): ${e.message}`); }
+  if (userId) {
+    try {
+      const m = await renderSystemCommand('/sys_refund_delivered',
+        '✅ ¡Listo {username}! Tu reembolso de {monto} (semana {semana}) ya está acreditado en tu usuario de GANAMOS. ¡A jugar! 🎰', _wrfVars(it));
+      if (m) await _sendSystemMessageToUser(userId, it.username, m);
+    } catch (e) { logger.warn(`[weekly-refund] aviso de entrega a ${it.username}: ${e.message}`); }
+    try { io.to(`user_${userId}`).emit('weekly_refund', { event: 'delivered', id: it.id }); } catch (_) {}
+  }
+  notifyAdmins('weekly_refund', { event: 'delivered', id: it.id, username: it.username, userId, amount: it.amount, by: task.doneBy || null });
+  logger.info(`[weekly-refund] ${it.username} ${_wrfMoney(it.amount)} (${it.label}) ENTREGADO por ${task.doneBy || '?'}`);
+  return it;
+}
+
+// ---------- Cliente (PWA) ----------
+app.get('/api/weekly-refund/status', authMiddleware, async (req, res) => {
+  try {
+    const uLower = String(req.user.username || '').trim().toLowerCase();
+    await _wrfExpireStale({ usernameLower: uLower });
+    const items = await WeeklyRefund.find({ usernameLower: uLower, status: { $ne: 'cancelled' } }).sort({ createdAt: -1 }).limit(8).lean();
+    res.json({
+      enabled: true,
+      pending: items.filter((i) => i.status === 'claim_pending').map(_wrfPublic),
+      items: items.map(_wrfPublic),
+      tiers: await getWeeklyRefundTiers(),
+      claimHours: await getRefundClaimHours()
+    });
+  } catch (e) {
+    logger.error(`/api/weekly-refund/status: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.post('/api/weekly-refund/claim', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.userId;
+    const username = req.user.username;
+    const uLower = String(username || '').trim().toLowerCase();
+    await _wrfExpireStale({ usernameLower: uLower });
+    const id = req.body && req.body.id ? String(req.body.id) : null;
+    const q = { usernameLower: uLower, status: 'claim_pending' };
+    if (id) q.id = id;
+    const it = await WeeklyRefund.findOne(q).sort({ createdAt: -1 }).lean();
+    if (!it) {
+      const last = id ? await WeeklyRefund.findOne({ id, usernameLower: uLower }).lean() : null;
+      if (last && last.status === 'expired') return res.status(410).json({ error: 'Este reembolso venció: el plazo para reclamarlo ya pasó.', expired: true, item: _wrfPublic(last) });
+      if (last && ['claimed', 'delivered'].includes(last.status)) return res.status(409).json({ error: 'Este reembolso ya fue reclamado.', item: _wrfPublic(last) });
+      return res.status(404).json({ error: 'No tenés ningún reembolso para reclamar.' });
+    }
+    const reference = _wrfReference(it.periodKey, uLower);
+    // Reserva atómica: de dos toques (o dos pestañas) gana uno solo.
+    const r = await WeeklyRefund.updateOne({ id: it.id, status: 'claim_pending' }, { $set: { status: 'claimed', claimedAt: new Date(), userId, reference } });
+    if (!r.modifiedCount) return res.status(409).json({ error: 'Este reembolso ya fue reclamado.' });
+    let credit;
+    try {
+      credit = await girox.creditGift(username, it.amount, {
+        reference, flow: 'weekly_refund', ignoreGlobalRollover: true,
+        description: `Reembolso semanal ${it.label} (${it.tierName} ${it.pct}% de ${_wrfMoney(it.neto)})`,
+        meta: { weeklyRefundId: it.id, batchId: it.batchId, periodKey: it.periodKey }
+      });
+    } catch (e) { credit = { success: false, error: e.message }; }
+    if (!credit || !credit.success) {
+      // No se registró nada en la plataforma: se devuelve a "por reclamar" para que reintente.
+      await WeeklyRefund.updateOne({ id: it.id, status: 'claimed' }, { $set: { status: 'claim_pending', claimedAt: null } }).catch(() => {});
+      logger.error(`[weekly-refund] claim FAIL ${username} ${_wrfMoney(it.amount)}: ${(credit && credit.error) || 'unknown'}`);
+      return res.status(503).json({ success: false, error: 'No pudimos registrar tu reclamo ahora. Probá de nuevo en un momento.' });
+    }
+    const taskId = (credit.data && (credit.data.transfer_id || credit.data.transferId)) || null;
+    await WeeklyRefund.updateOne({ id: it.id }, { $set: { platformTaskId: taskId } }).catch(() => {});
+    const pendingInGanamos = !!credit.pending;
+    if (!pendingInGanamos && credit.manual && taskId) {
+      // Reference repetida (la semana se anuló y se volvió a subir) cuya tarea anterior fue
+      // RECHAZADA: no se entrega ni se da por acreditado.
+      const prev = await girox.PlatformTask.findById(taskId).lean().catch(() => null);
+      if (prev && prev.status === 'rejected') {
+        await WeeklyRefund.updateOne({ id: it.id }, { $set: { status: 'rejected', rejectedNote: `La tarea de esta semana ya había sido rechazada por ${prev.doneBy || 'un agente'}: ${prev.note || ''}`.slice(0, 300) } }).catch(() => {});
+        return res.status(409).json({ success: false, error: 'Este reembolso fue rechazado por un agente. Escribinos por el chat y lo revisamos.' });
+      }
+    }
+    if (!pendingInGanamos) {
+      // Plataforma con API (o la tarea ya estaba hecha): se da por entregado en el acto.
+      await _wrfOnTaskSettled('done', { _id: taskId, reference, userId, doneBy: 'sistema' });
+    } else {
+      // El reclamo cuenta como un mensaje del cliente: el chat vuelve a Abiertos para que
+      // el agente lo vea, con la nota del detalle verificado.
+      try {
+        await ChatStatus.findOneAndUpdate({ userId }, { userId, username, lastMessageAt: new Date() }, { upsert: true, setDefaultsOnInsert: true });
+        await ChatStatus.findOneAndUpdate({ userId, status: 'closed' }, { status: 'open', closedAt: null, closedBy: null });
+      } catch (_) {}
+      try {
+        const m = await renderSystemCommand('/sys_refund_claimed',
+          '✅ ¡Reclamo recibido! Tu reembolso de {monto} (semana {semana}) ya está verificado. En unos minutos un agente te lo carga en tu usuario de GANAMOS y te avisamos por acá. 🙌', _wrfVars(it));
+        if (m) await _sendSystemMessageToUser(userId, username, m);
+      } catch (_) {}
+      await _emitAdminOnlyChatNote(userId, username,
+        `💸 REEMBOLSO SEMANAL RECLAMADO — ${_wrfMoney(it.amount)} ✅ VERIFICADO POR EL SISTEMA (sale de la planilla, no lo escribió el cliente): ${_wrfDetalle(it)}. 👉 Cargale ${_wrfMoney(it.amount)} en GANAMOS y tocá "Marcar como entregado" (acá arriba, en Reembolsos semanales o en Pendientes GANAMOS).`).catch(() => {});
+      notifyAdmins('weekly_refund', { event: 'claimed', id: it.id, username, userId, amount: it.amount });
+    }
+    logger.info(`[weekly-refund] ${username} reclamó ${_wrfMoney(it.amount)} (${it.label}) → ${pendingInGanamos ? 'PENDIENTE GANAMOS ' + taskId : 'acreditado'}`);
+    const fresh = await WeeklyRefund.findOne({ id: it.id }).lean();
+    res.json({ success: true, item: _wrfPublic(fresh) });
+  } catch (e) {
+    logger.error(`/api/weekly-refund/claim: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+// ---------- Panel ----------
+const _wrfOnlyAdmin = (req, res) => {
+  if (req.user.role === 'admin') return true;
+  res.status(403).json({ error: 'Solo el administrador principal puede hacer esto.' });
+  return false;
+};
+const _wrfIsDate = (v) => /^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) && !Number.isNaN(new Date(`${v}T12:00:00-03:00`).getTime());
+const _wrfDM = (v) => { const [, m, d] = String(v).split('-'); return `${d}/${m}`; };
+
+// Rangos (config) — los ve cualquier agente, los edita el admin general.
+app.get('/api/admin/weekly-refund/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    res.json({ tiers: await getWeeklyRefundTiers(), defaults: weeklyRefundCalc.DEFAULT_TIERS, maxTiers: weeklyRefundCalc.MAX_TIERS, claimHours: await getRefundClaimHours(), canEdit: req.user.role === 'admin' });
+  } catch (e) { logger.error(`GET weekly-refund/config: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.post('/api/admin/weekly-refund/config', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!_wrfOnlyAdmin(req, res)) return;
+    let tiers;
+    try { tiers = weeklyRefundCalc.normalizeTiers(req.body && req.body.tiers); } catch (err) { return res.status(400).json({ error: err.message }); }
+    await setConfig('weeklyRefund', { tiers, updatedBy: req.user.username, updatedAt: new Date() });
+    logger.info(`[weekly-refund] ${req.user.username} guardó los rangos: ${tiers.map((t) => `${t.name} ${t.min}→${t.pct}%`).join(' · ')}`);
+    res.json({ success: true, tiers });
+  } catch (e) { logger.error(`POST weekly-refund/config: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// Calcula la planilla (sin guardar nada) y la cruza con las cuentas y los equipos.
+async function _wrfCompute(text) {
+  const parsed = weeklyRefundCalc.parseSheetText(text);
+  const tiers = await getWeeklyRefundTiers();
+  const calc = weeklyRefundCalc.computeWeeklyRefunds(parsed.rows, tiers);
+  let teamsCfg = null;
+  try { teamsCfg = await getTeamsConfig(); } catch (_) {}
+  const accounts = new Map();
+  const lowers = calc.items.map((i) => i.usernameLower);
+  for (let i = 0; i < lowers.length; i += 2000) {
+    const found = await User.find({ usernameLower: { $in: lowers.slice(i, i + 2000) }, role: 'user' }, { id: 1, usernameLower: 1 }).lean();
+    for (const u of found) accounts.set(u.usernameLower, u.id);
+  }
+  const teams = new Map();
+  let sinCuenta = 0;
+  for (const it of calc.items) {
+    const t = teamsCfg ? resolveTeamForUsername(it.usernameLower, teamsCfg) : null;
+    it.team = t ? t.name : 'SIN EQUIPO';
+    it.userId = accounts.get(it.usernameLower) || null;
+    if (!it.userId) sinCuenta++;
+    let g = teams.get(it.team);
+    if (!g) { g = { team: it.team, usuarios: 0, depositos: 0, retiros: 0, neto: 0, regalado: 0 }; teams.set(it.team, g); }
+    g.usuarios++; g.depositos += it.depositos; g.retiros += it.retiros; g.neto += it.neto; g.regalado += it.amount;
+  }
+  return { parsed, calc, tiers, sinCuenta, teams: Array.from(teams.values()).sort((a, b) => b.regalado - a.regalado) };
+}
+
+app.post('/api/admin/weekly-refund/preview', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!_wrfOnlyAdmin(req, res)) return;
+    const text = String((req.body && req.body.text) || '');
+    if (!text.trim()) return res.status(400).json({ error: 'Pegá las filas de la planilla o elegí el archivo.' });
+    const c = await _wrfCompute(text);
+    res.json({
+      stats: c.parsed.stats, tiers: c.tiers, totals: { ...c.calc.totals, sinCuenta: c.sinCuenta }, teams: c.teams,
+      claimHours: await getRefundClaimHours(),
+      items: c.calc.items.slice(0, 3000).map((i) => ({ username: i.username, team: i.team, depositos: i.depositos, retiros: i.retiros, neto: i.neto, count: i.count, tierName: i.tierName, pct: i.pct, amount: i.amount, falta: i.falta, hasAccount: !!i.userId })),
+      truncated: c.calc.items.length > 3000,
+      sinBeneficio: c.calc.sinBeneficio.slice(0, 30).map((s) => ({ username: s.username, neto: s.neto, falta: s.falta }))
+    });
+  } catch (e) { logger.error(`weekly-refund/preview: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// PUBLICA la semana: crea el lote + un WeeklyRefund por cliente con rango.
+app.post('/api/admin/weekly-refund/batches', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!_wrfOnlyAdmin(req, res)) return;
+    const b = req.body || {};
+    const text = String(b.text || '');
+    const fromDate = String(b.fromDate || '');
+    const toDate = String(b.toDate || '');
+    if (!text.trim()) return res.status(400).json({ error: 'Pegá las filas de la planilla o elegí el archivo.' });
+    if (!_wrfIsDate(fromDate) || !_wrfIsDate(toDate) || toDate < fromDate) return res.status(400).json({ error: 'Indicá la semana: fecha "desde" y "hasta" válidas.' });
+    const periodKey = fromDate;
+    const dup = await RefundBatch.findOne({ activeKey: periodKey }).lean();
+    if (dup) return res.status(409).json({ error: `La semana que arranca el ${_wrfDM(fromDate)} ya está cargada (la subió ${dup.createdBy || '?'}). Si querés reemplazarla, primero anulá esa carga.` });
+    const c = await _wrfCompute(text);
+    if (!c.calc.items.length) return res.status(400).json({ error: 'Con esa planilla ningún usuario llega al primer rango: no hay reembolsos para publicar.' });
+    // Quien ya reclamó (o ya cobró) esta misma semana en una carga anterior anulada no vuelve a entrar.
+    const ya = new Set((await WeeklyRefund.find({ periodKey, status: { $in: ['claimed', 'delivered'] } }, { usernameLower: 1 }).lean()).map((x) => x.usernameLower));
+    const claimHours = await getRefundClaimHours();
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + claimHours * 3600 * 1000);
+    const label = `${_wrfDM(fromDate)} al ${_wrfDM(toDate)}`;
+    const batchId = uuidv4();
+    const docs = c.calc.items.filter((i) => !ya.has(i.usernameLower)).map((i) => ({
+      id: uuidv4(), batchId, periodKey, label, username: i.username, usernameLower: i.usernameLower, userId: i.userId || null, team: i.team,
+      depositos: i.depositos, retiros: i.retiros, neto: i.neto, count: i.count, tierName: i.tierName, pct: i.pct, falta: i.falta,
+      nextTierName: i.nextTierName || null, amount: i.amount, status: 'claim_pending', expiresAt, createdAt: now
+    }));
+    if (!docs.length) return res.status(400).json({ error: 'Todos los usuarios de la planilla ya reclamaron esta semana en una carga anterior.' });
+    const notify = b.notify !== false;
+    try {
+      await RefundBatch.create({
+        id: batchId, periodKey, activeKey: periodKey, fromDate, toDate, label, status: 'active', claimHours, expiresAt, tiers: c.tiers,
+        totals: {
+          filas: c.parsed.rows.length, usuarios: c.calc.totals.usuarios, conBeneficio: docs.length, sinBeneficio: c.calc.totals.sinBeneficio,
+          sinCuenta: docs.filter((d) => !d.userId).length, yaReclamados: c.calc.items.length - docs.length,
+          totalDepositos: c.calc.totals.totalDepositos, totalRetiros: c.calc.totals.totalRetiros, totalNeto: c.calc.totals.totalNeto,
+          totalBeneficio: docs.reduce((s, d) => s + d.amount, 0)
+        },
+        notify, notifyDone: !notify, createdBy: req.user.username, createdAt: now
+      });
+    } catch (err) {
+      if (err && err.code === 11000) return res.status(409).json({ error: 'Esa semana ya se está cargando (otra sesión la subió recién).' });
+      throw err;
+    }
+    try {
+      for (let i = 0; i < docs.length; i += 1000) await WeeklyRefund.insertMany(docs.slice(i, i + 1000), { ordered: false });
+    } catch (err) {
+      // Lote a medias: se deshace entero para que se pueda volver a subir limpio.
+      await WeeklyRefund.deleteMany({ batchId }).catch(() => {});
+      await RefundBatch.deleteOne({ id: batchId }).catch(() => {});
+      logger.error(`[weekly-refund] alta del lote ${label}: ${err.message}`);
+      return res.status(500).json({ error: 'No se pudo guardar la carga. No quedó nada publicado: probá de nuevo.' });
+    }
+    logger.info(`[weekly-refund] ${req.user.username} publicó la semana ${label}: ${docs.length} reembolsos por ${_wrfMoney(docs.reduce((s, d) => s + d.amount, 0))} (vence ${expiresAt.toISOString()})`);
+    if (notify) setImmediate(() => { _processWeeklyRefundNotifyQueue().catch(() => {}); });
+    notifyAdmins('weekly_refund', { event: 'batch', batchId });
+    res.json({ success: true, batchId, label, reembolsos: docs.length, total: docs.reduce((s, d) => s + d.amount, 0), sinCuenta: docs.filter((d) => !d.userId).length, yaReclamados: c.calc.items.length - docs.length, claimHours, expiresAt, notify });
+  } catch (e) { logger.error(`POST weekly-refund/batches: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// Semanas cargadas, con el conteo por estado.
+app.get('/api/admin/weekly-refund/batches', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await _wrfExpireStale();
+    const batches = await RefundBatch.find({}).sort({ createdAt: -1 }).limit(40).lean();
+    const agg = batches.length ? await WeeklyRefund.aggregate([
+      { $match: { batchId: { $in: batches.map((b) => b.id) } } },
+      { $group: { _id: { b: '$batchId', s: '$status' }, n: { $sum: 1 }, total: { $sum: '$amount' } } }
+    ]) : [];
+    const by = {};
+    for (const a of agg) { (by[a._id.b] = by[a._id.b] || {})[a._id.s] = { n: a.n, total: a.total }; }
+    const porEntregar = await WeeklyRefund.countDocuments({ status: 'claimed' });
+    res.json({ canUpload: req.user.role === 'admin', porEntregar, batches: batches.map((b) => ({
+      id: b.id, label: b.label, fromDate: b.fromDate, toDate: b.toDate, status: b.status, claimHours: b.claimHours, expiresAt: b.expiresAt,
+      totals: b.totals || {}, tiers: b.tiers || [], notify: b.notify, notifyDone: b.notifyDone, createdBy: b.createdBy, createdAt: b.createdAt,
+      cancelledBy: b.cancelledBy, cancelledAt: b.cancelledAt, counts: by[b.id] || {}
+    })) });
+  } catch (e) { logger.error(`GET weekly-refund/batches: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// Reembolsos (de una semana o de todas) filtrados por estado / usuario.
+app.get('/api/admin/weekly-refund/items', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    await _wrfExpireStale();
+    const q = {};
+    if (req.query.batchId) q.batchId = String(req.query.batchId);
+    const st = String(req.query.status || '');
+    if (['claim_pending', 'claimed', 'delivered', 'expired', 'rejected', 'cancelled'].includes(st)) q.status = st;
+    const search = String(req.query.search || '').trim().toLowerCase().slice(0, 40);
+    if (search) q.usernameLower = { $regex: escapeRegex(search) };
+    const limit = Math.min(3000, Math.max(1, Number(req.query.limit) || 1000));
+    const sort = q.status === 'claimed' ? { claimedAt: 1 } : (q.status === 'delivered' ? { deliveredAt: -1 } : { neto: -1 });
+    const items = await WeeklyRefund.find(q).sort(sort).limit(limit).lean();
+    res.json({ items: items.map(_wrfAdmin), truncated: items.length === limit, canSettle: _canSettlePlatformTask(req.user.role, 'gift') });
+  } catch (e) { logger.error(`GET weekly-refund/items: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// Banner del chat: lo que ese cliente tiene por reclamar / reclamado sin entregar.
+app.get('/api/admin/weekly-refund/user/:userId', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const u = await User.findOne({ id: String(req.params.userId) }, { username: 1, usernameLower: 1 }).lean();
+    if (!u) return res.json({ items: [] });
+    const uLower = String(u.usernameLower || u.username || '').toLowerCase();
+    await _wrfExpireStale({ usernameLower: uLower });
+    const items = await WeeklyRefund.find({ usernameLower: uLower, status: { $in: ['claim_pending', 'claimed'] } }).sort({ createdAt: -1 }).limit(5).lean();
+    res.json({ items: items.map(_wrfAdmin), canSettle: _canSettlePlatformTask(req.user.role, 'gift') });
+  } catch (e) { logger.error(`GET weekly-refund/user: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// "Marcar como entregado": el agente ya lo cargó a mano en GANAMOS. Es la MISMA tarea de
+// "Pendientes GANAMOS" (un solo camino → un solo aviso al cliente).
+app.post('/api/admin/weekly-refund/items/:id/delivered', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!_canSettlePlatformTask(req.user.role, 'gift')) return res.status(403).json({ error: 'Tu rol no puede entregar reembolsos.' });
+    const it = await WeeklyRefund.findOne({ id: String(req.params.id) }).lean();
+    if (!it) return res.status(404).json({ error: 'Reembolso inexistente' });
+    if (it.status === 'delivered') return res.json({ success: true, alreadyDelivered: true, item: _wrfAdmin(it), message: `Ya lo había entregado ${it.deliveredBy || 'otro agente'}.` });
+    if (it.status !== 'claimed') return res.status(400).json({ error: it.status === 'claim_pending' ? 'El cliente todavía no lo reclamó desde la app.' : 'Este reembolso no está para entregar (venció, se rechazó o se anuló).' });
+    if (!PLATFORM_MANUAL || !it.platformTaskId) return res.status(400).json({ error: 'Este reembolso no tiene una tarea asociada. Avisale al administrador.' });
+    const r = await girox.settleTask(it.platformTaskId, { status: 'done', by: req.user.username, note: '' });
+    if (!r || !r.success) return res.status(400).json({ error: (r && r.error) || 'No se pudo marcar' });
+    // Si la tarea ya estaba hecha (✅ desde Pendientes GANAMOS) y el reembolso quedó sin reflejar, se repara acá.
+    if (r.task && r.task.status === 'done') await _wrfOnTaskSettled('done', r.task);
+    const fresh = await WeeklyRefund.findOne({ id: it.id }).lean();
+    if (fresh.status !== 'delivered') return res.status(400).json({ error: 'La tarea de este reembolso fue rechazada: no se puede entregar.' });
+    res.json({ success: true, item: _wrfAdmin(fresh) });
+  } catch (e) { logger.error(`POST weekly-refund/delivered: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// Anular una semana: lo que seguía por reclamar se cancela; lo ya reclamado/entregado queda.
+app.post('/api/admin/weekly-refund/batches/:id/cancel', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!_wrfOnlyAdmin(req, res)) return;
+    const b = await RefundBatch.findOneAndUpdate({ id: String(req.params.id), status: 'active' },
+      { $set: { status: 'cancelled', activeKey: `cancelled:${req.params.id}`, cancelledBy: req.user.username, cancelledAt: new Date(), notifyDone: true } }, { new: true }).lean();
+    if (!b) return res.status(404).json({ error: 'Esa carga no existe o ya estaba anulada.' });
+    const r = await WeeklyRefund.updateMany({ batchId: b.id, status: 'claim_pending' }, { $set: { status: 'cancelled' } });
+    const quedan = await WeeklyRefund.countDocuments({ batchId: b.id, status: { $in: ['claimed', 'delivered'] } });
+    logger.info(`[weekly-refund] ${req.user.username} ANULÓ la semana ${b.label}: ${r.modifiedCount || 0} cancelados, ${quedan} ya reclamados/entregados quedan`);
+    notifyAdmins('weekly_refund', { event: 'batch', batchId: b.id });
+    res.json({ success: true, cancelados: r.modifiedCount || 0, quedan });
+  } catch (e) { logger.error(`POST weekly-refund/cancel: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
+// Motor del AVISO al cliente (chat + push) de un lote recién publicado. Reanudable y
+// multi-instancia: cada destinatario se reclama con un findOneAndUpdate atómico
+// (notifyState null → sending); un `sending` colgado más de 10 min se re-reclama.
+let _wrfNotifyRunning = false;
+async function _processWeeklyRefundNotifyQueue() {
+  if (_wrfNotifyRunning) return;
+  _wrfNotifyRunning = true;
+  try {
+    const batches = await RefundBatch.find({ status: 'active', notify: true, notifyDone: false }).sort({ createdAt: 1 }).limit(3).lean();
+    const startedAt = Date.now();
+    for (const b of batches) {
+      if (new Date(b.expiresAt).getTime() < Date.now()) { await RefundBatch.updateOne({ id: b.id }, { $set: { notifyDone: true } }); continue; }
+      let enviados = 0;
+      for (;;) {
+        if (Date.now() - startedAt > 40000) return; // el próximo tick sigue
+        const stale = new Date(Date.now() - 10 * 60 * 1000);
+        const it = await WeeklyRefund.findOneAndUpdate(
+          { batchId: b.id, status: 'claim_pending', $or: [{ notifyState: null }, { notifyState: 'sending', notifyAt: { $lt: stale } }] },
+          { $set: { notifyState: 'sending', notifyAt: new Date() } }, { new: true }).lean();
+        if (!it) { await RefundBatch.updateOne({ id: b.id }, { $set: { notifyDone: true } }); break; }
+        let state = 'sent';
+        try {
+          const user = await User.findOne({ usernameLower: it.usernameLower, role: 'user' }).select('id username fcmToken fcmTokens isBlocked').lean();
+          if (!user) state = 'no_account';
+          else {
+            if (!it.userId) await WeeklyRefund.updateOne({ id: it.id }, { $set: { userId: user.id } });
+            const vence = _wrfFmtVence(it.expiresAt);
+            const m = await renderSystemCommand('/sys_refund_available',
+              '🎁 ¡{username}, tenés un REEMBOLSO de {monto} para reclamar!\n\n📅 Semana {semana}\n💵 Cargaste {cargado} · 🏧 Retiraste {retirado}\n🏷 Rango {rango}: {pct}% de {neto}\n\nEntrá a la app, tocá REEMBOLSOS y después RECLAMAR. ⏰ Tenés {horas} horas: vence el {vence}.',
+              _wrfVars(it, { username: user.username, horas: b.claimHours, vence }));
+            if (m) {
+              await _sendSystemMessageToUser(user.id, user.username, m);
+              try { io.to(`user_${user.id}`).emit('weekly_refund', { event: 'available', id: it.id }); } catch (_) {}
+              sendPushIfOffline(user, `🎁 Tenés ${_wrfMoney(it.amount)} de reembolso`, `Semana ${it.label}. Entrá a la app y tocá RECLAMAR antes del ${vence}.`, { tag: 'weekly-refund' }).catch(() => {});
+            }
+          }
+        } catch (e) { state = 'error'; logger.warn(`[weekly-refund] aviso a ${it.username}: ${e.message}`); }
+        await WeeklyRefund.updateOne({ id: it.id }, { $set: { notifyState: state, notifyAt: new Date() } }).catch(() => {});
+        enviados++;
+        await new Promise((r) => setTimeout(r, 40));
+      }
+      if (enviados) logger.info(`[weekly-refund] avisos de la semana ${b.label}: ${enviados} procesados`);
+    }
+  } catch (e) {
+    logger.warn(`[weekly-refund] cola de avisos: ${e.message}`);
+  } finally {
+    _wrfNotifyRunning = false;
+  }
+}
+setInterval(() => { _processWeeklyRefundNotifyQueue().catch(() => {}); }, 60 * 1000);
 
 // ============================================================
 // COMUNIDAD — config del link de la comunidad / canal de Telegram.

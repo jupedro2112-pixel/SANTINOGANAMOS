@@ -525,6 +525,11 @@
                 onclick="if(window.VIP&&VIP.roulette)VIP.roulette.openFromMenu();">
                 <span class="menu-item-icon menu-item-svg"><svg viewBox="0 0 40 40" width="20" height="20" xmlns="http://www.w3.org/2000/svg" style="display:inline-block;vertical-align:middle;flex:none;"><circle cx="20" cy="20" r="18.5" fill="#0a0015"/><circle cx="20" cy="20" r="17.5" fill="none" stroke="#d4af37" stroke-width="3"/><path d="M20 20 L20.00 4.50 A15.5 15.5 0 0 1 30.96 9.04 Z" fill="#5b1a8c"/><path d="M20 20 L30.96 9.04 A15.5 15.5 0 0 1 35.50 20.00 Z" fill="#a3172d"/><path d="M20 20 L35.50 20.00 A15.5 15.5 0 0 1 30.96 30.96 Z" fill="#0f7a4f"/><path d="M20 20 L30.96 30.96 A15.5 15.5 0 0 1 20.00 35.50 Z" fill="#1d2e8f"/><path d="M20 20 L20.00 35.50 A15.5 15.5 0 0 1 9.04 30.96 Z" fill="#8a5a12"/><path d="M20 20 L9.04 30.96 A15.5 15.5 0 0 1 4.50 20.00 Z" fill="#0f6c7a"/><path d="M20 20 L4.50 20.00 A15.5 15.5 0 0 1 9.04 9.04 Z" fill="#7a1a5e"/><path d="M20 20 L9.04 9.04 A15.5 15.5 0 0 1 20.00 4.50 Z" fill="#2f5f1a"/><circle cx="20" cy="20" r="15.5" fill="none" stroke="rgba(0,0,0,.35)" stroke-width=".8"/><circle cx="20" cy="20" r="4.2" fill="#1a0033" stroke="#ffd700" stroke-width="1.4"/><polygon points="20,0.5 24,7.5 16,7.5" fill="#ffd700" stroke="#6b4e00" stroke-width=".8"/></svg></span><span class="menu-item-label">Ruleta diaria <span style="font-weight:600;color:#ffd700;font-size:11px;">(1 giro cada 24 h)</span></span>
             </button>
+            <!-- #215 Reembolso semanal (por planilla): detalle + RECLAMAR. js/weeklyrefund.js -->
+            <button class="menu-item" title="Tu reembolso semanal" role="menuitem"
+                onclick="if(window.VIP&&VIP.weeklyRefund)VIP.weeklyRefund.open();">
+                <span class="menu-item-icon">💸</span><span class="menu-item-label">Reembolsos <span id="weeklyRefundMenuBadge" style="display:none;font-weight:800;color:#7dffb0;font-size:11px;"></span></span>
+            </button>
             <!-- Info del servicio: dispara el MISMO handler del botón del header
                  (.click() para no duplicar la lógica de diagnósticos + reseñas). -->
             <button class="menu-item" title="Información de nuestro servicio" role="menuitem"
@@ -973,6 +978,10 @@
                     ⚠️ Por única vez. Al cargar, avisale al agente que tenés el bono por instalar la app.
                 </div>
             </div>
+
+            <!-- #215 Reembolso semanal por reclamar / esperando al agente. Render dinámico
+                 desde js/weeklyrefund.js (oculto si no hay nada). -->
+            <div id="weeklyRefundBanner" style="display:none;margin:8px 8px 0;"></div>
 
             <!-- Cartel de bonificación vigente (bono de carga activado por
                  una notificación). Render dinámico desde js/promobonus.js. -->
@@ -2107,6 +2116,7 @@
     <script src="/js/chat.js"></script>
     <script src="/js/fire.js"></script>
     <script src="/js/roulette.js"></script>
+    <script src="/js/weeklyrefund.js"></script>
     <script src="/js/reviews.js"></script>
     <script src="/js/promobonus.js"></script>
     <script src="/js/notifications.js"></script>
