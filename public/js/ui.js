@@ -951,15 +951,35 @@ VIP.ui._fetchCasinoSession = async function(timeoutMs) {
   }
 };
 
+// #221 Abre una URL SIEMPRE en una pestaña aparte, sin tocar la página actual.
+// Antes: `window.open(url, '_blank', 'noopener')` + `if (!win) location.href = url`.
+// Con 'noopener' window.open devuelve null AUNQUE la pestaña se haya abierto, así que
+// ese "respaldo" corría siempre: se abría GANAMOS en otra pestaña Y ADEMÁS la app se
+// reemplazaba por GANAMOS (el cliente perdía el chat). Un <a target="_blank"> clickeado
+// dentro del gesto del usuario abre aparte, no lo frena el bloqueador de pop-ups y no
+// necesita valor de retorno. En la app instalada abre el navegador, la app queda atrás.
+VIP.ui._openInNewTab = function(url) {
+  try {
+    const a = document.createElement('a');
+    a.href = url;
+    a.target = '_blank';
+    a.rel = 'noopener noreferrer';
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) {
+    try { window.open(url, '_blank'); } catch (_) { /* sin respaldo que reemplace la app */ }
+  }
+};
+
 VIP.ui.enterCasino = async function() {
   // #190 modo manual (GANAMOS sin API): no hay SSO ni iframe (otro dominio, sin
   // sesión compartida). Se abre la página de GANAMOS en una pestaña, DENTRO del
   // gesto del usuario (si no, el bloqueador de pop-ups mobile la mata).
   if (VIP.platform && VIP.platform.isManual()) {
     VIP.ui.closePlatformModal();
-    const url = VIP.platform.playUrl();
-    const win = window.open(url, '_blank', 'noopener');
-    if (!win) window.location.href = url;
+    VIP.ui._openInNewTab(VIP.platform.playUrl());
     return;
   }
   if (VIP.ui._casinoOpening) return; // anti doble-click

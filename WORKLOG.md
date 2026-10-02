@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #220)
+> **Última actualización: 2026-10-01** (última entrada: #221)
 
 ---
 
@@ -49,6 +49,24 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 (7ª) — PÁGINA CASINO: abre GANAMOS aparte y ya no reemplaza la app
+
+### 221. Fix: el botón del casino abría la pestaña nueva Y ADEMÁS reemplazaba la app
+- **Pregunta del owner:** "cuando abre la página ¿se reemplaza la que está o se abre una
+  aparte? Quiero que abra una aparte."
+- **Bug encontrado (venía de #190):** `enterCasino` en modo manual hacía
+  `window.open(url, '_blank', 'noopener')` y después `if (!win) window.location.href =
+  url`. Con `noopener`, `window.open` devuelve `null` aunque la pestaña se abra → el
+  "respaldo" corría SIEMPRE: GANAMOS se abría en otra pestaña y la app también navegaba a
+  GANAMOS (el cliente perdía el chat y tenía que volver atrás).
+- **Fix (`ui.js`, SW v129):** helper `VIP.ui._openInNewTab(url)` — crea un
+  `<a target="_blank" rel="noopener noreferrer">` y lo clickea dentro del gesto del
+  usuario. Abre siempre aparte, no lo frena el bloqueador de pop-ups y no depende de un
+  valor de retorno. Sin respaldo que reemplace la página: la app nunca se pisa.
+- `node --check` ✅. Solo front (no necesita reiniciar el server, sí subir la versión).
+  **Probar:** tocar PÁGINA CASINO AQUÍ → GANAMOS en otra pestaña y la app sigue en su
+  lugar; en la app instalada, GANAMOS abre en el navegador y la app queda atrás.
 
 ## Sesión 2026-10-02 (6ª) — Limpieza tras el primer deploy en AWS: comandos huérfanos + log de arranque sin ruido
 
