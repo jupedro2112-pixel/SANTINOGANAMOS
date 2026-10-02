@@ -33,6 +33,9 @@
 >    ✅ Hecha → "ya te cargamos"; ruleta → premio en la bandeja; Depositar/Bonificación/
 >    pagar retiro NO generan pendientes; registro público da 410.
 >
+> 7. **Deploy en AWS:** la lista de variables (qué va en EB, qué en SSM y qué NO cargar)
+>    está en `docs/ARCHITECTURE.md` §0.2. Ojo con `PUBLIC_BASE_URL`, `ALLOWED_ORIGINS` y
+>    `HGCASH_FANOUT_URL` (tienen defaults que no sirven para GANAMOS).
 > 6. **Reembolso semanal (#215):** probar en deploy con una planilla chica (ver checklist
 >    de la entrada #215) ANTES de subir la primera semana real.
 >

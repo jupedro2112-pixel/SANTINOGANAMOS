@@ -5,7 +5,8 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-02** — REEMBOLSO SEMANAL POR PLANILLA (#215): §0.1
+> Última actualización: **2026-10-02** — variables de entorno del deploy GANAMOS (§0.2) y
+> REEMBOLSO SEMANAL POR PLANILLA (#215): §0.1
 > (modelos RefundBatch/WeeklyRefund, endpoints, flujo, front, trampas), §4.4 reference
 > `vip-wrf`, §7 motor de avisos. Antes: **2026-10-01** — equipos: comunidad por equipo desde una única
 > fuente (`_communityChannelUrl`, `/go/comunidad?u=`), búsqueda tolerante en el login (§5,
@@ -219,6 +220,52 @@ mano por WhatsApp, calculado con una planilla semanal y un Apps Script: ahora vi
 - **Comandos (seed):** `/sys_refund_claim_hours` (número, default 48),
   `/sys_refund_available`, `/sys_refund_claimed`, `/sys_refund_delivered`. La migración
   GANAMOS del boot (que pisa los `/sys_*` que digan "reembolso") SALTEA `/sys_refund_*`.
+
+### 0.2 Variables de entorno del deploy GANAMOS (auditoría del código, 2026-10-02)
+
+Sale de un grep de TODOS los `process.env.*` vivos. `loadSecretsFromSSM`
+(`src/config/loadSecrets.js`) copia a `process.env` todo lo que haya bajo `SSM_PATH`,
+pero corre en el bootstrap ASYNC: lo que el código lee al `require` (antes) tiene que ir
+como **propiedad del entorno de Elastic Beanstalk**, no en SSM.
+
+- **Propiedades del entorno EB (NO SSM):** `SSM_PATH` (sin ella no carga nada),
+  `AWS_REGION` (región del Parameter Store y de SNS; default `sa-east-1`),
+  `NODE_ENV=production`. Opcionales que también se leen al require: `LOG_LEVEL`,
+  `PUBLIC_REGISTER_ENABLED` (reabrir el registro público), `PLATFORM_MODE` (no ponerla:
+  default `manual`), `SSM_SKIP_KEYS` (sólo clones), `FCM_DEBUG_LOGS`. `PORT` lo pone EB.
+- **SSM obligatorias:** `JWT_SECRET` (sin ella el server no arranca; 32+ caracteres),
+  `MONGODB_URI` (base PROPIA de GANAMOS; default localhost), `PUBLIC_BASE_URL` (⚠️ default
+  `https://cargas1girox.com`: links de acceso y de comprobantes), `ALLOWED_ORIGINS` (⚠️ en
+  producción sin ella se rechaza todo request con cabecera `Origin`, o sea los POST del
+  propio sitio y el socket: listar TODOS los orígenes desde los que se sirve la web y el
+  panel, separados por coma), `ADMIN_USERNAME` + `ADMIN_PASSWORD` (crean el admin en el
+  primer arranque y son el login de emergencia si Mongo no responde), y la cuenta de
+  servicio de Firebase en UNA de tres formas: `FIREBASE_SERVICE_ACCOUNT_JSON_BASE64` |
+  `FIREBASE_SERVICE_ACCOUNT_JSON` | `FIREBASE_PROJECT_ID` + `FIREBASE_CLIENT_EMAIL` +
+  `FIREBASE_PRIVATE_KEY` (⚠️ tiene que ser del proyecto `saladejuegos-673fa`, que está
+  hardcodeado en el front junto con la VAPID key).
+- **SSM según lo que se use:** `GANAMOS_PLAY_URL` (default `https://ganamos.net`);
+  hgcash: `HGCASH_WEBHOOK_SECRET` (sin ella en producción el webhook se rechaza),
+  `HGCASH_API_TOKEN` (pagos/saldo/comprobantes), `HGCASH_FANOUT_URL` (⚠️ default = reenvía
+  cada webhook a autoreembolsos.com; poner `off` si GANAMOS no comparte la cuenta hgcash),
+  `HGCASH_API_URL` (default ok, y se lee al require); `ANTHROPIC_API_KEY` (IA de
+  comprobantes; sin ella queda dormida) + `COMPROBANTE_AI_MODEL`; `TELEGRAM_ALERT_BOT_TOKEN`
+  + `TELEGRAM_ALERT_CHAT_ID` (cierre diario/bajadas); `REDIS_URL` (o `REDIS_HOST` /
+  `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD`) — obligatorio con 2+ instancias, con
+  base lógica propia; `ADMIN_HOST` (panel servido sólo en ese host); `SMS_MASIVO_PASSWORD`
+  (sección SMS masivo); `META_PIXEL_ID` + `META_CAPI_ACCESS_TOKEN` (+ `META_TEST_EVENT_CODE`
+  y las `_2`); `FBADS_WEBHOOK_URL` + `FBADS_WEBHOOK_TOKEN`; `BRAND_NAME`;
+  `LANDING_SIGNUP_DISABLED`. SMS (OTP por SNS): en EB usa el rol de la instancia —
+  `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` sólo fuera de AWS; `AWS_SNS_REGION` opcional.
+- **NO cargar (nadie las lee en modo manual):** todas las `GIROX_*`, las `VIP_*`, las
+  `JUGAYGANA_*` + `PLATFORM_USER`/`PLATFORM_PASS`/`PROXY_URL`/`TOKEN_TTL_MINUTES` (código
+  muerto), las `GANAMOS_AGENT_*`/`GANAMOS_OP_*`/`GANAMOS_PROXY_URL`/`GANAMOS_DEBUG_SHAPES`
+  (modo eliminado), `JWT_REFRESH_SECRET`/`ACCESS_TOKEN_EXPIRY`/`REFRESH_TOKEN_EXPIRY` (sólo
+  rutas de referidos, cerradas), `S3_BUCKET` (endpoint sin callers), `DB_PASSWORD`,
+  `JUGAYGANA_CREDS_KEY`, `GIROX_ADMIN_*`, `VIP_LEVELS_DISABLED` (eliminadas), `BACKFILL_*`
+  y `GIROX_MIGRATION_*` (scripts), `VERCEL`.
+- **Rol IAM de la instancia:** `ssm:GetParametersByPath` sobre el path (+ `kms:Decrypt` si
+  son SecureString) y `sns:Publish` para los SMS.
 
 ### Nota: el modo `ganamos_api` se ELIMINÓ (#194, 2026-09-29)
 
