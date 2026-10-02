@@ -5739,10 +5739,11 @@ function renderCommands(commands) {
         return;
     }
     
+    window._commandsCache = commands; // #220 lo usa deleteCommand (huérfanos = borrado real)
     container.innerHTML = commands.map(cmd => `
         <div class="command-card">
             <div class="command-info">
-                <code class="command-name">${escapeHtml(cmd.name)}${cmd.isSystem ? ' 🔒' : ''}</code>
+                <code class="command-name">${escapeHtml(cmd.name)}${cmd.isSystem ? ' 🔒' : ''}</code>${cmd.unknown ? ' <span title="Este proyecto no usa este comando: quedó de otro proyecto o de una versión vieja. Se puede borrar." style="display:inline-block;margin-left:6px;padding:1px 7px;border-radius:8px;background:rgba(255,159,67,.15);border:1px solid #ff9f43;color:#ff9f43;font-size:10px;font-weight:800;">⚠️ NO ES DE ESTE PROYECTO — se puede borrar</span>' : ''}
                 <p class="command-desc">${escapeHtml(cmd.description || 'Sin descripción')}</p>
                 <p class="command-response">${escapeHtml(cmd.response || 'Sin respuesta')}</p>
             </div>
@@ -6876,7 +6877,10 @@ async function deleteCommand(name) {
     // /sys_* = mensajes automáticos: el server los APAGA (vacía) en vez de
     // borrarlos — el confirm avisa la diferencia (ver comentario en renderCommands).
     const isSys = String(name).startsWith('/sys_');
-    const confirmMsg = isSys
+    const _cached = (window._commandsCache || []).find((c) => c.name === name);
+    const confirmMsg = (_cached && _cached.unknown)
+        ? `${name} NO es de este proyecto (quedó de otro proyecto o de una versión vieja) y nadie lo usa.\n\n¿Borrarlo definitivamente?`
+        : isSys
         ? `${name} es un MENSAJE AUTOMÁTICO del sistema.\n\nAl borrarlo se APAGA: no se le envía NUNCA MÁS a los clientes. Queda en la lista vacío por si algún día lo querés reactivar escribiéndole un texto nuevo.\n\n¿Apagarlo?`
         : `¿Estás seguro de eliminar el comando ${name}?`;
     if (!confirm(confirmMsg)) return;

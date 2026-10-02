@@ -168,9 +168,10 @@ const generalLimiter = rateLimit({
     }
     return req.ip;
   },
-  // Desactiva la validación de IPv6-fallback de la lib: usamos cookie para admins
-  // e IP para clientes a propósito (no necesitamos el helper de IPv6 acá).
-  validate: { keyGeneratorIpFallback: false },
+  // (#220) Acá iba `validate: { keyGeneratorIpFallback: false }`: esa opción es de
+  // express-rate-limit 8.x; con la 7.5.1 del lockfile no existe y la lib imprimía un
+  // ValidationError (ERR_ERL_UNKNOWN_VALIDATION) en CADA arranque. No era fatal, pero
+  // ensuciaba el log justo donde se buscan los errores reales del boot.
   message: { error: 'Demasiadas solicitudes. Intenta más tarde.' }
 });
 
@@ -917,9 +918,9 @@ app.use(compression({
   }
 }));
 app.use(securityHeaders);
-if (!process.env.ALLOWED_ORIGINS && process.env.NODE_ENV === 'production') {
-  logger.warn('⚠️ SEGURIDAD: ALLOWED_ORIGINS no configurado en producción. CORS rechazará orígenes cruzados.');
-}
+// (#220) Acá había un aviso "ALLOWED_ORIGINS no configurado en producción": salía SIEMPRE,
+// aunque la variable estuviera en SSM (se evaluaba al require, antes de cargar SSM), y
+// desde #219 el mismo origen siempre pasa → sin esa variable el sitio funciona igual.
 // CORS abierto SOLO para el alta por landing externa: las landings puente rotan
 // de dominio (Vercel/Cloudflare/dominio final) y no se puede redeployar por cada
 // host nuevo. Es seguro: endpoint público, sin credenciales (no manda cookies —
@@ -5127,7 +5128,6 @@ const platformSessionLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   keyGenerator: (req) => (req.user && req.user.userId) ? ('u:' + req.user.userId) : req.ip,
-  validate: { keyGeneratorIpFallback: false },
   message: { error: 'Demasiados intentos de entrar al casino. Esperá un momento.' }
 });
 
@@ -11094,6 +11094,16 @@ async function initializeData() {
     );
   }
   console.log('✅ Comandos de sistema verificados');
+  // #220 Comandos /sys_* que están en la base pero que ESTE código no conoce (los sembró
+  // otro proyecto corriendo contra esta base, o quedaron de una versión vieja). Nadie los
+  // usa. Se avisan en el log y el panel los marca y deja BORRARLOS de verdad (admin general).
+  _knownSysCmds = new Set(systemCmds.map((c) => c.name));
+  if (!PLATFORM_MANUAL) _knownSysCmds.add('/sys_referral_pct');
+  try {
+    const enBase = await Command.find({ name: /^\/sys_/ }, { name: 1 }).lean();
+    const huerfanos = enBase.map((c) => c.name).filter((n) => !_knownSysCmds.has(n));
+    if (huerfanos.length) console.warn(`⚠️ ${huerfanos.length} comando(s) /sys_* que este proyecto NO usa (de otro proyecto o versión): ${huerfanos.join(', ')}. Se pueden borrar desde COMANDOS.`);
+  } catch (e) { console.warn(`⚠️ chequeo de comandos huérfanos: ${e.message}`); }
 
   // MIGRACIÓN (2026-08-06, pedido owner): el /sys_reminder sembrado en la base
   // conservaba el texto viejo de VIPCARGAS (www.vipcargas.com) y se le mandaba
@@ -18159,9 +18169,16 @@ app.post('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) =
 // ============================================
 
 // Obtener todos los comandos
+// #220 Nombres de los /sys_* que este código siembra y usa (lo llena initializeData).
+// null = todavía no arrancó. Un /sys_* que no esté acá es HUÉRFANO (de otro proyecto).
+let _knownSysCmds = null;
+function _isOrphanSysCommand(name) {
+  return !!_knownSysCmds && String(name || '').startsWith('/sys_') && !_knownSysCmds.has(name);
+}
 app.get('/api/admin/commands', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const commands = await Command.find().lean();
+    for (const c of commands) if (_isOrphanSysCommand(c.name)) c.unknown = true;
     res.json({ commands });
   } catch (error) {
     console.error('Error obteniendo comandos:', error);
@@ -18229,6 +18246,12 @@ app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (
       // Mismo gate que el POST (#149): los /sys_* son solo del admin general.
       if (req.user.role !== 'admin') {
         return res.status(403).json({ error: 'Solo el administrador general puede tocar los comandos del sistema.' });
+      }
+      // #220 huérfano (este proyecto no lo usa ni lo siembra): se BORRA de verdad.
+      if (_isOrphanSysCommand(cmd.name)) {
+        await Command.deleteOne({ name: cmd.name });
+        logger.info(`[commands] ${req.user.username} borró el comando huérfano ${cmd.name}`);
+        return res.json({ success: true, orphanDeleted: true, message: 'Comando eliminado: no era de este proyecto.' });
       }
       await Command.updateOne({ name: cmd.name }, { $set: { response: '', updatedAt: new Date() } });
       return res.json({

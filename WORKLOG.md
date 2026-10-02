@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #219)
+> **Última actualización: 2026-10-01** (última entrada: #220)
 
 ---
 
@@ -49,6 +49,36 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 (6ª) — Limpieza tras el primer deploy en AWS: comandos huérfanos + log de arranque sin ruido
+
+### 220. COMANDOS marca y deja borrar los `/sys_*` que no son de este proyecto; fuera dos avisos falsos del boot
+- **Contexto (#219):** el log mostró que entre las 03:08 y las 03:28 UTC el entorno corrió el
+  código de OTRO proyecto (login a JUGAYGANA) contra la base de GANAMOS. Ese código
+  siembra sus propios `/sys_*`; con este repo quedan huérfanos (nadie los usa) y desde el
+  panel no se podían borrar (el 🗑️ de un `/sys_*` sólo lo vacía, #152).
+- **Comandos huérfanos:** `_knownSysCmds` = los nombres que ESTE código siembra (los 35 de
+  `systemCmds`; verificado que todo `/sys_*` que el código usa está sembrado). Al arrancar
+  se loguea `⚠️ N comando(s) /sys_* que este proyecto NO usa: …`. `GET /api/admin/commands`
+  los marca `unknown:true`; el panel (admin-sw v56) les pone el cartel naranja "⚠️ NO ES DE
+  ESTE PROYECTO — se puede borrar" y el 🗑️ los BORRA de verdad (sólo admin general). Los
+  `/sys_*` propios siguen como siempre (borrar = vaciar).
+- **Ruido del arranque, eliminado:** (a) "ALLOWED_ORIGINS no configurado en producción"
+  salía siempre (se evaluaba antes de cargar SSM) y desde #219 ya no aplica; (b)
+  `validate: { keyGeneratorIpFallback: false }` en dos limiters: la opción es de
+  express-rate-limit 8.x y con la 7.5.1 del lockfile imprimía un `ValidationError
+  ERR_ERL_UNKNOWN_VALIDATION` en cada boot (la nota de #123 que decía "con 7.5.1 es válida"
+  estaba mal). Sin la opción no hay aviso.
+- **Aclaración sobre #219:** el `JWT_SECRET` corto (30 caracteres) era del arranque con la
+  config del OTRO proyecto (`/autoreembjyg/prod`); en los arranques de GANAMOS no aparece
+  el aviso → el de GANAMOS tiene 32+.
+- **Queda del lado del owner (no es código):** en Elastic Beanstalk → Configuration →
+  Environment properties quedaron variables del proyecto del que se clonó el entorno
+  (Firebase se inicializa ANTES de cargar SSM, o sea que su credencial está ahí; el login a
+  JUGAYGANA funcionaba, o sea que `PLATFORM_USER`/`PLATFORM_PASS` siguen cargadas en EB o
+  en SSM). Dejar sólo `SSM_PATH`, `AWS_REGION`, `NODE_ENV` (+ Firebase si se la quiere
+  ahí) y borrar el resto.
+- `node --check` ✅, `check-tdz` ✅. Sin server local.
 
 ## Sesión 2026-10-02 (5ª) — Primer deploy en AWS: el login fallaba por CORS (el sitio se bloqueaba a sí mismo)
 
