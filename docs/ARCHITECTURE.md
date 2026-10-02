@@ -214,9 +214,12 @@ mano por WhatsApp, calculado con una planilla semanal y un Apps Script: ahora vi
     conteos por estado), `GET …/items?batchId=&status=&search=`, `GET …/user/:userId`
     (cartel del chat). Roles: subir/rangos/anular = admin general; ver y entregar =
     admin, depositor, comunidad (`_canSettlePlatformTask(role,'gift')`).
-- **PWA:** `public/js/weeklyrefund.js` (`VIP.weeklyRefund`): cartel `#weeklyRefundBanner`
-  en el home, ítem "Reembolsos" del menú ☰ (con el monto), pantalla con el detalle de
-  cada semana + RECLAMAR + "cómo funciona" (rangos y plazo). Se autoarranca (espera la
+- **PWA:** `public/js/weeklyrefund.js` (`VIP.weeklyRefund`): barra `#weeklyRefundBanner`
+  SIEMPRE visible arriba del chat, FUERA de `#homePanel` (#217: "$0 para reclamar" hasta
+  que haya un reembolso; después verde con el monto + RECLAMAR; "reclamado" mientras el
+  agente lo carga), ítem "Reembolso semanal" del menú ☰ (con el monto), pantalla con
+  "disponible para reclamar", el detalle de cada semana + RECLAMAR + "cómo funciona"
+  (rangos y plazo). Se autoarranca (espera la
   sesión), refresca cada 5 min y por el evento de socket `weekly_refund`.
 - **Panel:** sección `weeklyRefundSection` (nav `nav-item-weekly-refund`, badge = por
   entregar), JS al final de admin.js (`loadWeeklyRefundAdmin`, `wrfPreview`,

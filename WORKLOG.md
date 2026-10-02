@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #216)
+> **Última actualización: 2026-10-01** (última entrada: #217)
 
 ---
 
@@ -49,6 +49,28 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 (3ª) — Reembolso SEMANAL siempre visible arriba del chat ($0 hasta que haya uno)
+
+### 217. La barra "REEMBOLSO SEMANAL" queda fija arriba del chat y marca $0 para reclamar
+- **Pedido:** que Reembolsos aparezca del lado del usuario aunque no tenga nada ("0 para
+  reclamar" hasta que se cargue el reembolso), que sea sólo el SEMANAL (el único que hay
+  en GANAMOS), y que esté arriba del chat, más llamativo, para reclamar desde ahí.
+- **Antes (#215):** el cartel sólo aparecía cuando había algo por reclamar o reclamado, y
+  vivía dentro de `#homePanel` (se iba con "Ocultar menú").
+- **Ahora (PWA, SW v128):** `#weeklyRefundBanner` salió de `#homePanel` y está justo arriba
+  de "RETIRAR MI PREMIO" / el chat → siempre visible. Tres estados (`weeklyrefund.js
+  _renderBanner`): sin reembolso → "REEMBOLSO SEMANAL · $0 para reclamar" (sobrio, borde
+  dorado; el HTML inicial ya trae este estado, así se ve aunque el fetch tarde); con
+  reembolso → verde, "$X para reclamar · Semana … · vence en …" + botón RECLAMAR;
+  reclamado → "$X RECLAMADO · un agente te lo está cargando" y $0 para reclamar. Tocarla
+  abre la pantalla del detalle, que ahora arranca con "DISPONIBLE PARA RECLAMAR $X" (o
+  $0). El ítem del menú ☰ pasó a llamarse "Reembolso semanal".
+- **Textos:** el aviso `/sys_refund_available` (seed y fallback) y el cartel del agente
+  dicen "REEMBOLSO SEMANAL (arriba del chat)" en vez de "REEMBOLSOS" / "menú ☰". En una
+  base ya sembrada con #215 el comando conserva el texto viejo: se edita en COMANDOS.
+- `node --check` ✅, `check-tdz` ✅, `test-weekly-refund-flow` ✅, humo del front ✅
+  (barra en $0, con monto y en "reclamado"). HTML 325/325 divs, ids únicos.
 
 ## Sesión 2026-10-02 (2ª) — Comprobante verificado con el banco: aviso al cliente + nota interna "COMPROBANTE OK"
 

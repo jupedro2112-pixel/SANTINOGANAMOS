@@ -4,9 +4,10 @@
 // de cada cliente (neto = cargas − retiros → rango → %). Acá el cliente ve
 // el detalle y lo RECLAMA dentro del plazo; un agente lo carga a mano en
 // GANAMOS y al marcarlo entregado le llega el aviso por el chat.
-//   - Cartel en el home (#weeklyRefundBanner) cuando hay algo por reclamar
-//     o reclamado esperando al agente.
-//   - Ítem "Reembolsos" del menú ☰ (con el monto si hay algo por reclamar).
+//   - Barra SIEMPRE visible arriba del chat (#weeklyRefundBanner, #217): "$0 para
+//     reclamar" hasta que haya un reembolso cargado; después el monto + RECLAMAR.
+//   - Ítem "Reembolso semanal" del menú ☰ (con el monto si hay algo por reclamar).
+// En GANAMOS el ÚNICO reembolso es el SEMANAL.
 //   - Pantalla con el detalle de cada semana + cómo se calcula.
 // Endpoints: GET /api/weekly-refund/status · POST /api/weekly-refund/claim
 // =====================================================================
@@ -74,29 +75,45 @@
         if (document.getElementById('weeklyRefundModal')) _paintModal();
     }
 
+    // #217 Barra SIEMPRE visible arriba del chat: "$0 para reclamar" hasta que haya un
+    // reembolso cargado; ahí pasa a verde con el monto y el botón RECLAMAR.
     function _renderBanner() {
         const el = document.getElementById('weeklyRefundBanner');
         if (!el) return;
         const pend = _pending();
         const wait = _waiting();
-        if (!pend.length && !wait.length) { el.style.display = 'none'; el.innerHTML = ''; return; }
+        const box = 'display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:10px;padding:7px 10px;-webkit-tap-highlight-color:rgba(37,211,102,.25);';
         let html;
         if (pend.length) {
             const total = pend.reduce((s, i) => s + (Number(i.amount) || 0), 0);
             const first = pend[0];
-            html = '<div onclick="VIP.weeklyRefund.open()" style="display:flex;align-items:center;gap:8px;cursor:pointer;background:linear-gradient(135deg,#0f5132,#1a8f55);border:2px solid #7dffb0;border-radius:12px;padding:8px 10px;box-shadow:0 3px 12px rgba(37,211,102,0.35);">'
-                + '<span style="font-size:22px;flex:none;">💸</span>'
+            html = '<div onclick="VIP.weeklyRefund.open()" style="' + box + 'background:linear-gradient(135deg,#0f5132,#1a8f55);border:2px solid #7dffb0;box-shadow:0 3px 12px rgba(37,211,102,0.35);">'
+                + '<span style="font-size:20px;flex:none;">💸</span>'
                 + '<div style="flex:1;min-width:0;">'
-                + '<strong style="display:block;font-size:12.5px;line-height:1.25;color:#fff;">¡Tenés ' + _money(total) + ' de reembolso para reclamar!</strong>'
-                + '<span style="display:block;font-size:10.5px;line-height:1.3;color:#d6ffe6;">Semana ' + _esc(first.label) + ' · vence en ' + _left(_msLeft(first)) + '</span>'
+                + '<strong style="display:block;font-size:11px;letter-spacing:.4px;color:#d6ffe6;">REEMBOLSO SEMANAL</strong>'
+                + '<span style="display:block;font-size:14px;font-weight:900;line-height:1.2;color:#fff;">' + _money(total) + ' para reclamar</span>'
+                + '<span style="display:block;font-size:10px;line-height:1.3;color:#d6ffe6;">Semana ' + _esc(first.label) + ' · vence en ' + _left(_msLeft(first)) + '</span>'
                 + '</div>'
-                + '<button type="button" style="background:#fff;color:#0f5132;border:none;border-radius:9px;padding:8px 11px;font-weight:900;font-size:12px;cursor:pointer;flex-shrink:0;white-space:nowrap;">💸 Reclamar</button>'
+                + '<button type="button" style="background:#fff;color:#0f5132;border:none;border-radius:9px;padding:9px 12px;font-weight:900;font-size:12.5px;cursor:pointer;flex-shrink:0;white-space:nowrap;">RECLAMAR</button>'
+                + '</div>';
+        } else if (wait.length) {
+            const total = wait.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+            html = '<div onclick="VIP.weeklyRefund.open()" style="' + box + 'background:linear-gradient(135deg,#12301f,#0c2216);border:1px solid rgba(37,211,102,0.55);">'
+                + '<span style="font-size:18px;flex:none;">⏳</span>'
+                + '<div style="flex:1;min-width:0;">'
+                + '<strong style="display:block;font-size:11px;letter-spacing:.4px;color:#7dffb0;">REEMBOLSO SEMANAL · ' + _money(total) + ' RECLAMADO</strong>'
+                + '<span style="display:block;font-size:10.5px;line-height:1.3;color:#d6ffe6;">Un agente te lo está cargando en GANAMOS</span>'
+                + '</div>'
+                + '<span style="flex:none;text-align:right;line-height:1.1;"><span style="display:block;font-size:15px;font-weight:900;color:#fff;">$0</span><span style="display:block;font-size:9px;color:#aaa;">para reclamar</span></span>'
                 + '</div>';
         } else {
-            const total = wait.reduce((s, i) => s + (Number(i.amount) || 0), 0);
-            html = '<div onclick="VIP.weeklyRefund.open()" style="display:flex;align-items:center;gap:8px;cursor:pointer;background:rgba(37,211,102,0.10);border:1px solid rgba(37,211,102,0.45);border-radius:12px;padding:7px 10px;">'
-                + '<span style="font-size:18px;flex:none;">⏳</span>'
-                + '<div style="flex:1;min-width:0;font-size:11.5px;line-height:1.35;color:#d6ffe6;"><strong style="color:#7dffb0;">Reembolso de ' + _money(total) + ' reclamado.</strong> Un agente te lo está cargando en GANAMOS.</div>'
+            html = '<div onclick="VIP.weeklyRefund.open()" style="' + box + 'background:linear-gradient(135deg,#241038,#150826);border:1px solid rgba(212,175,55,0.5);">'
+                + '<span style="font-size:18px;flex:none;">💸</span>'
+                + '<div style="flex:1;min-width:0;">'
+                + '<strong style="display:block;font-size:11px;letter-spacing:.4px;color:#ffd700;">REEMBOLSO SEMANAL</strong>'
+                + '<span style="display:block;font-size:10.5px;line-height:1.3;color:#bbb;">Te avisamos cuando esté el de esta semana</span>'
+                + '</div>'
+                + '<span style="flex:none;text-align:right;line-height:1.1;"><span style="display:block;font-size:15px;font-weight:900;color:#fff;">$0</span><span style="display:block;font-size:9px;color:#aaa;">para reclamar</span></span>'
                 + '</div>';
         }
         el.innerHTML = html;
@@ -167,9 +184,14 @@
         if (!body) return;
         if (!_st) { body.innerHTML = '<div style="text-align:center;color:#aaa;padding:24px;font-size:13px;">⏳ Cargando…</div>'; return; }
         const items = _st.items || [];
-        let html = '';
+        const disponible = _pending().reduce((s, i) => s + (Number(i.amount) || 0), 0);
+        let html = '<div style="text-align:center;padding:12px;margin-bottom:10px;border-radius:13px;background:' + (disponible > 0 ? 'linear-gradient(135deg,#0f5132,#1a8f55)' : 'rgba(255,255,255,0.05)') + ';border:1px solid ' + (disponible > 0 ? '#7dffb0' : 'rgba(255,255,255,0.14)') + ';">'
+            + '<div style="font-size:10.5px;letter-spacing:.6px;color:' + (disponible > 0 ? '#d6ffe6' : '#aaa') + ';font-weight:800;">DISPONIBLE PARA RECLAMAR</div>'
+            + '<div style="font-size:28px;font-weight:900;color:#fff;line-height:1.2;">' + _money(disponible) + '</div>'
+            + (disponible > 0 ? '' : '<div style="font-size:11px;color:#999;margin-top:2px;">Cuando esté tu reembolso de la semana lo ves acá y te avisamos por el chat.</div>')
+            + '</div>';
         if (!items.length) {
-            html += '<div style="text-align:center;padding:14px 8px 16px;color:#ccc;font-size:13px;line-height:1.5;">Todavía no tenés reembolsos para reclamar.<br><span style="color:#888;font-size:11.5px;">Cuando calculemos el de la semana te avisamos por el chat.</span></div>';
+            html += '';
         } else {
             html += items.map(_itemCard).join('');
         }

@@ -528,7 +528,7 @@
             <!-- #215 Reembolso semanal (por planilla): detalle + RECLAMAR. js/weeklyrefund.js -->
             <button class="menu-item" title="Tu reembolso semanal" role="menuitem"
                 onclick="if(window.VIP&&VIP.weeklyRefund)VIP.weeklyRefund.open();">
-                <span class="menu-item-icon">💸</span><span class="menu-item-label">Reembolsos <span id="weeklyRefundMenuBadge" style="display:none;font-weight:800;color:#7dffb0;font-size:11px;"></span></span>
+                <span class="menu-item-icon">💸</span><span class="menu-item-label">Reembolso semanal <span id="weeklyRefundMenuBadge" style="display:none;font-weight:800;color:#7dffb0;font-size:11px;"></span></span>
             </button>
             <!-- Info del servicio: dispara el MISMO handler del botón del header
                  (.click() para no duplicar la lógica de diagnósticos + reseñas). -->
@@ -979,10 +979,6 @@
                 </div>
             </div>
 
-            <!-- #215 Reembolso semanal por reclamar / esperando al agente. Render dinámico
-                 desde js/weeklyrefund.js (oculto si no hay nada). -->
-            <div id="weeklyRefundBanner" style="display:none;margin:8px 8px 0;"></div>
-
             <!-- Cartel de bonificación vigente (bono de carga activado por
                  una notificación). Render dinámico desde js/promobonus.js. -->
             <div id="promoBonusCard" style="display:none;"></div>
@@ -1001,6 +997,21 @@
                 <span class="hpt-chevron">▲</span>
                 <span class="hpt-label">Ocultar menú</span>
             </button>
+
+            <!-- #217 REEMBOLSO SEMANAL (el único de GANAMOS): barra SIEMPRE visible arriba del
+                 chat, FUERA de #homePanel (sigue aunque se oculte el menú). Marca "$0 para
+                 reclamar" hasta que se sube la planilla; ahí js/weeklyrefund.js la pinta en
+                 verde con el monto y RECLAMAR. El HTML de abajo es el estado inicial ($0). -->
+            <div id="weeklyRefundBanner" style="margin:7px 8px 0;">
+                <div onclick="if(window.VIP&&VIP.weeklyRefund)VIP.weeklyRefund.open()" style="display:flex;align-items:center;gap:8px;cursor:pointer;border-radius:10px;padding:7px 10px;background:linear-gradient(135deg,#241038,#150826);border:1px solid rgba(212,175,55,0.5);">
+                    <span style="font-size:18px;flex:none;">💸</span>
+                    <div style="flex:1;min-width:0;">
+                        <strong style="display:block;font-size:11px;letter-spacing:.4px;color:#ffd700;">REEMBOLSO SEMANAL</strong>
+                        <span style="display:block;font-size:10.5px;line-height:1.3;color:#bbb;">Te avisamos cuando esté el de esta semana</span>
+                    </div>
+                    <span style="flex:none;text-align:right;line-height:1.1;"><span style="display:block;font-size:15px;font-weight:900;color:#fff;">$0</span><span style="display:block;font-size:9px;color:#aaa;">para reclamar</span></span>
+                </div>
+            </div>
 
             <!-- Retirar mi premio: queda FUERA de #homePanel, así sigue
                  visible aunque se oculte el menú. -->

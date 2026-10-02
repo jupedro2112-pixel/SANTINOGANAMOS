@@ -10897,7 +10897,7 @@ async function initializeData() {
       name: '/sys_refund_available',
       description: 'REEMBOLSO SEMANAL — aviso al cliente cuando se sube la planilla y tiene un reembolso para reclamar. Variables: {username}, {monto}, {semana} (ej. "23/11 al 29/11"), {cargado}, {retirado}, {neto}, {rango}, {pct}, {horas} (plazo), {vence} (fecha y hora límite). Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '🎁 ¡{username}, tenés un REEMBOLSO de {monto} para reclamar!\n\n📅 Semana {semana}\n💵 Cargaste {cargado} · 🏧 Retiraste {retirado}\n🏷 Rango {rango}: {pct}% de {neto}\n\nEntrá a la app, tocá REEMBOLSOS y después RECLAMAR. ⏰ Tenés {horas} horas: vence el {vence}.'
+      response: '🎁 ¡{username}, tenés un REEMBOLSO de {monto} para reclamar!\n\n📅 Semana {semana}\n💵 Cargaste {cargado} · 🏧 Retiraste {retirado}\n🏷 Rango {rango}: {pct}% de {neto}\n\nEntrá a la app, tocá REEMBOLSO SEMANAL (arriba del chat) y después RECLAMAR. ⏰ Tenés {horas} horas: vence el {vence}.'
     },
     {
       name: '/sys_refund_claimed',
@@ -21990,7 +21990,7 @@ async function _processWeeklyRefundNotifyQueue() {
             if (!it.userId) await WeeklyRefund.updateOne({ id: it.id }, { $set: { userId: user.id } });
             const vence = _wrfFmtVence(it.expiresAt);
             const m = await renderSystemCommand('/sys_refund_available',
-              '🎁 ¡{username}, tenés un REEMBOLSO de {monto} para reclamar!\n\n📅 Semana {semana}\n💵 Cargaste {cargado} · 🏧 Retiraste {retirado}\n🏷 Rango {rango}: {pct}% de {neto}\n\nEntrá a la app, tocá REEMBOLSOS y después RECLAMAR. ⏰ Tenés {horas} horas: vence el {vence}.',
+              '🎁 ¡{username}, tenés un REEMBOLSO de {monto} para reclamar!\n\n📅 Semana {semana}\n💵 Cargaste {cargado} · 🏧 Retiraste {retirado}\n🏷 Rango {rango}: {pct}% de {neto}\n\nEntrá a la app, tocá REEMBOLSO SEMANAL (arriba del chat) y después RECLAMAR. ⏰ Tenés {horas} horas: vence el {vence}.',
               _wrfVars(it, { username: user.username, horas: b.claimHours, vence }));
             if (m) {
               await _sendSystemMessageToUser(user.id, user.username, m);

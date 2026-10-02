@@ -14900,7 +14900,7 @@ async function loadWeeklyRefundBanner(userId) {
                 </div>`;
             }
             return `<div style="padding:7px 14px;border-bottom:1px solid rgba(0,0,0,0.30);background:rgba(212,175,55,0.10);font-size:11.5px;color:#ffe9a8;">
-                ⏳ Tiene un reembolso de <b>${_wrfM(it.amount)}</b> SIN RECLAMAR (${det}). Lo tiene que reclamar él desde la app (menú ☰ → Reembolsos) antes del ${formatDateTime(it.expiresAt)}.
+                ⏳ Tiene un reembolso de <b>${_wrfM(it.amount)}</b> SIN RECLAMAR (${det}). Lo tiene que reclamar él desde la app (barra "REEMBOLSO SEMANAL" arriba del chat) antes del ${formatDateTime(it.expiresAt)}.
             </div>`;
         }).join('');
     } catch (e) { el.style.display = 'none'; }
