@@ -35,22 +35,41 @@ function generateCode() {
  * @param {string} code    - Código OTP de 6 dígitos
  * @returns {string} Texto del SMS listo para enviar
  */
+// Marca y dominio del SMS: salen del entorno (lazy: SSM carga en el bootstrap async).
+// Antes decían "VIPCARGAS ... vipcargas .com" fijo, también en los clones (#218).
+function _smsBrand() {
+  const b = String(process.env.BRAND_NAME || 'GANAMOS').normalize('NFD').replace(/[^\x20-\x7E]/g, '').trim().toUpperCase();
+  return b || 'GANAMOS';
+}
+// Dominio de PUBLIC_BASE_URL con un espacio antes del último punto ("cargasganamos .com").
+// '' si no hay URL pública cargada (el SMS sale sin dominio, nunca con uno ajeno).
+function _smsDomain() {
+  try {
+    const host = new URL(String(process.env.PUBLIC_BASE_URL || '')).hostname.replace(/^www\./, '');
+    if (!host || !/^[\x21-\x7E]+$/.test(host) || host.indexOf('.') === -1) return '';
+    const k = host.lastIndexOf('.');
+    return ` ${host.slice(0, k)} ${host.slice(k)}`;
+  } catch (_) { return ''; }
+}
+
 function buildOtpMessage(purpose, code) {
-  // El espacio en "vipcargas .com" es intencional: rompe la detección de URL
+  // El espacio en "dominio .com" es intencional: rompe la detección de URL
   // que usan los filtros antispam de los carriers LATAM (sobre todo Tigo/Claro
   // en Paraguay y Argentina), evitando que el SMS caiga en spam. El usuario
   // sigue entendiendo el dominio sin problema. Sigue siendo 1 SMS (GSM-7,
   // ~80 chars, muy por debajo del límite de 160).
+  const brand = _smsBrand();
+  const tail = `Valido 5 min.${_smsDomain()}`;
   if (purpose === 'register') {
-    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas .com`;
+    return `${brand}: codigo de verificacion ${code}. ${tail}`;
   } else if (purpose === 'reset') {
-    return `VIPCARGAS: codigo para restablecer contrasena ${code}. Valido 5 min. vipcargas .com`;
+    return `${brand}: codigo para restablecer contrasena ${code}. ${tail}`;
   } else if (purpose === 'change-password') {
-    return `VIPCARGAS: codigo para cambiar contrasena ${code}. Valido 5 min. vipcargas .com`;
+    return `${brand}: codigo para cambiar contrasena ${code}. ${tail}`;
   } else if (purpose === 'login') {
-    return `VIPCARGAS: codigo de inicio de sesion ${code}. Valido 5 min. vipcargas .com`;
+    return `${brand}: codigo de inicio de sesion ${code}. ${tail}`;
   } else {
-    return `VIPCARGAS: codigo de verificacion ${code}. Valido 5 min. vipcargas .com`;
+    return `${brand}: codigo de verificacion ${code}. ${tail}`;
   }
 }
 

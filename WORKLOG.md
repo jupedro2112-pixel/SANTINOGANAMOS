@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #217)
+> **Última actualización: 2026-10-01** (última entrada: #218)
 
 ---
 
@@ -49,6 +49,28 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-02 (4ª) — Marca: el panel pasa a "ADMIN GANAMOS" y los SMS dejan de decir VIPCARGAS
+
+### 218. Título/manifest/login del panel → GANAMOS; SMS de verificación con la marca y el dominio del deploy
+- **Reporte del owner (captura del deploy en AWS):** la pestaña del panel decía "ADMIN
+  VIPCARGAS". Era un resto a propósito del #161 ("sólo lo ve el staff"); ahora se cambia.
+- **Panel (admin-sw v55):** `<title>` y metas → **ADMIN GANAMOS**; `manifest.json` (nombre
+  de la app instalada) → "ADMIN GANAMOS"; el subtítulo del login "Sala de Juegos" →
+  "GANAMOS"; título por defecto de las notificaciones del panel; ayuda del logo del chat;
+  el ejemplo de link de campaña ya no muestra vipcargas.com y `buildCampaignLink` cae a
+  `window.location.origin` (antes a `https://vipcargas.com`) si el server no inyectó la URL.
+- **SMS de verificación (encontrado al revisar la marca; pendiente desde #151/#161):**
+  `otpService.buildOtpMessage` mandaba "VIPCARGAS: codigo … vipcargas .com" a los clientes
+  de GANAMOS. Ahora la marca sale de `BRAND_NAME` (default GANAMOS, pasada a ASCII) y el
+  dominio de `PUBLIC_BASE_URL` (con el espacio anti-spam antes del último punto: "GANAMOS:
+  codigo de verificacion 123456. Valido 5 min. cargasganamos .com"). Sin `PUBLIC_BASE_URL`
+  el SMS sale sin dominio. Lectura lazy (SSM). Test jest actualizado (no se puede correr
+  acá: sin node_modules); la función se probó en frío: ASCII puro y < 160 caracteres.
+- **Texto al agente:** "Usuario creado en VIPCARGAS, PERO NO en la plataforma" → "…en la web…".
+- **Sobre el "Algo salió mal" del login en la captura:** NO es de este cambio. Es el error
+  genérico del server; lo más probable es CORS: la URL de Elastic Beanstalk no está en
+  `ALLOWED_ORIGINS` (ver ARCHITECTURE §0.2). Se le indicó al owner.
 
 ## Sesión 2026-10-02 (3ª) — Reembolso SEMANAL siempre visible arriba del chat ($0 hasta que haya uno)
 

@@ -1,7 +1,7 @@
 {
-  "name": "Admin Sala de Juegos",
-  "short_name": "Admin Sala",
-  "description": "Panel de administración para Sala de Juegos con notificaciones push",
+  "name": "ADMIN GANAMOS",
+  "short_name": "Admin GANAMOS",
+  "description": "Panel de administración de GANAMOS con notificaciones push",
   "start_url": "/adminprivado2026/",
   "display": "standalone",
   "background_color": "#0f172a",

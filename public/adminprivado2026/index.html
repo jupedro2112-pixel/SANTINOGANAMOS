@@ -4,14 +4,14 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>ADMIN VIPCARGAS</title>
+    <title>ADMIN GANAMOS</title>
     
     <!-- PWA Meta Tags -->
     <meta name="mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-    <meta name="apple-mobile-web-app-title" content="ADMIN VIPCARGAS">
-    <meta name="application-name" content="ADMIN VIPCARGAS">
+    <meta name="apple-mobile-web-app-title" content="ADMIN GANAMOS">
+    <meta name="application-name" content="ADMIN GANAMOS">
     <meta name="msapplication-TileColor" content="#6366f1">
     <meta name="theme-color" content="#6366f1">
     
@@ -94,7 +94,7 @@ document.addEventListener('change', function (ev) {
             <div class="login-logo">
                 <span class="icon icon-gamepad"></span>
                 <h1>Panel de Administración</h1>
-                <p>Sala de Juegos</p>
+                <p>GANAMOS</p>
             </div>
             <form id="loginForm" class="login-form">
                 <div class="input-group">
@@ -684,7 +684,7 @@ document.addEventListener('change', function (ev) {
                                     <button type="button" class="btn-secondary" id="communityChatLogoClearBtn" onclick="clearCommunityChatLogo()" style="display:none;white-space:nowrap;">🗑️ Quitar</button>
                                 </div>
                                 <input type="url" id="communityChatLogoUrl" placeholder="…o pegá una URL https:// (imagen cuadrada, ej. 96x96)" style="width:100%;">
-                                <small style="color:#aaa;font-size:11px;">Es la foto de perfil que el cliente ve en la cabecera del chat de soporte. Podés SUBIR una imagen (se achica sola a 128x128) o pegar una URL. Vacío = el logo de VIPCARGAS de siempre. Se aplica al tocar "Guardar Comunidad".</small>
+                                <small style="color:#aaa;font-size:11px;">Es la foto de perfil que el cliente ve en la cabecera del chat de soporte. Podés SUBIR una imagen (se achica sola a 128x128) o pegar una URL. Vacío = el logo de GANAMOS de siempre. Se aplica al tocar "Guardar Comunidad".</small>
                             </div>
                             <button class="btn-primary" onclick="saveCommunityConfig()">
                                 <span class="icon icon-save"></span> Guardar Comunidad
@@ -2228,7 +2228,7 @@ document.addEventListener('change', function (ev) {
                 <div style="padding:16px;display:grid;gap:16px;">
                     <p style="color:#aaa;font-size:13px;margin:0;">
                         Cada campaña genera un link único del tipo
-                        <code style="background:rgba(212,175,55,0.15);padding:2px 6px;border-radius:4px;color:#d4af37;">https://vipcargas.com/?p=CODIGO</code>
+                        <code style="background:rgba(212,175,55,0.15);padding:2px 6px;border-radius:4px;color:#d4af37;">https://tudominio.com/?p=CODIGO</code>
                         que podés entregar a cada publicista. Los usuarios que entren por ese link se registran sin SMS y quedan vinculados a la campaña.
                     </p>
                     <div id="campaignsList" style="display:grid;gap:10px;">
@@ -3430,7 +3430,7 @@ document.addEventListener('change', function (ev) {
             console.log('[FCM Admin] Notificación recibida en primer plano:', payload);
             
             // Mostrar toast de notificación
-            const notificationTitle = (payload.notification && payload.notification.title) || 'Sala de Juegos';
+            const notificationTitle = (payload.notification && payload.notification.title) || 'ADMIN GANAMOS';
             const notificationBody = (payload.notification && payload.notification.body) || 'Nueva notificación';
             
             // Mostrar toast si la función existe

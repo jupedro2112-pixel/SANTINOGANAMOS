@@ -6202,7 +6202,7 @@ app.post('/api/users', authMiddleware, adminMiddleware, async (req, res) => {
 
     res.status(201).json({
       message: platformWarning
-        ? 'Usuario creado en VIPCARGAS, PERO NO en la plataforma de juego'
+        ? 'Usuario creado en la web, PERO NO en la plataforma de juego'
         : 'Usuario creado exitosamente',
       // El panel muestra esto en rojo: el agente tiene que saber que la cuenta quedó
       // a medias y que el cliente todavía no puede jugar.
