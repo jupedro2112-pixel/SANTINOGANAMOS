@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-01** (última entrada: #222)
+> **Última actualización: 2026-10-07** (última entrada: #223)
 
 ---
 
@@ -49,6 +49,56 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-07 — hgcash desde el PANEL: credenciales cifradas + reenvío de avisos a otras páginas (réplica #320/#326 del gemelo)
+
+### 223. Aplicada tal cual `AUTOGIROXcompartido/docs/ESPEC-HGCASH-PANEL.md` (los 6 bloques; acá no había nada de eso)
+- **Origen:** espec portable del gemelo AUTOGIROXcompartido (WORKLOG #320 credenciales y #326
+  reenvío, 2026-10-06). Se verificó antes que en este repo NO existía ninguna parte (ni
+  `setTokenOverride` ni `/api/admin/hgcash/credentials` ni las cards): se copió todo.
+- **(1) `src/services/hgcashService.js`:** `setTokenOverride` / `getTokenSource` /
+  `getToken()` (panel > SSM); `getAccounts(withToken)` prueba un token nuevo sin pisar el
+  vigente. Todas las llamadas ya usaban `getToken()`/`_headers()`.
+- **(2) server.js, bloque #320 (antes del fan-out):** `Config['hgcashCredentials']` con
+  token y secreto CIFRADOS (AES-256-GCM, clave = sha256(JWT_SECRET + sal)); `_loadHgcashCredentials`
+  a los 8 s del arranque y cada 60 s por instancia; `_hgcashWebhookSecrets()` = panel + SSM.
+  El webhook acepta la firma con CUALQUIERA de los dos (cambio de cuenta sin perder avisos)
+  y loguea el origen de los rechazos (#277 del gemelo). Fail-closed en producción sin
+  ningún secreto. ⚠️ Si cambia `JWT_SECRET`, lo guardado no se descifra → se usa SSM y la
+  card lo avisa.
+- **(3) server.js, bloque #326:** el fan-out viejo (una sola `HGCASH_FANOUT_URL`) pasa a
+  destinos desde el panel: `Config['hgcashFanout'].urls` (hasta 5, sólo https, sin
+  localhost/IP privada/credenciales, nunca la URL propia); si ese Config existe manda el
+  panel (lista vacía = no reenviar), si no vale `HGCASH_FANOUT_URL` (default autoreembolsos,
+  `off` apaga). Cache 30 s. Anti-círculo: un aviso que llega con `X-Forwarded-By` no se
+  reenvía. Stats por destino en memoria (`_hgcashFanoutStats`).
+- **(4) Endpoints (admin general):** `GET/POST/DELETE /api/admin/hgcash/credentials`
+  (el POST PRUEBA el token contra `GET /accounts` antes de guardar y limpia el `accountId`
+  cacheado, #53) y `GET/POST/DELETE /api/admin/hgcash/fanout`. `GET /api/admin/hgcash/config`
+  → `secretConfigured` mira panel o SSM.
+- **(5/6) Panel (admin-sw v57):** en Comandos → Banco automático, cards "🔐 Cuenta hgcash
+  conectada (token y secreto)" (estado: token en uso PANEL/AWS/NINGUNO, secreto, último
+  cambio, aviso si no se pudo descifrar; "Probar y guardar", "Volver a usar AWS (SSM)") y
+  "🔁 Reenviar los avisos de hgcash a otras páginas" (una URL por línea, URL propia para
+  cargar en la otra, último resultado por destino). `loadHgcashConfig` las carga; la línea
+  de estado dice "falta el secreto del webhook: cargalo abajo o en SSM".
+- **Para GANAMOS en particular:** con esto `HGCASH_API_TOKEN`, `HGCASH_WEBHOOK_SECRET` y
+  `HGCASH_FANOUT_URL` pueden no estar en SSM (ARCHITECTURE §0.2 actualizado). Si GANAMOS NO
+  comparte la cuenta hgcash con otra página, guardar la lista de reenvío VACÍA desde el
+  panel (o `HGCASH_FANOUT_URL=off`): sin nada, el default sigue reenviando a autoreembolsos.
+- **Validado:** `node --check` (hgcashService.js, server.js, admin.js, admin-sw.js) ✅,
+  `check-tdz` ✅, HTML del panel 734/734 divs e ids únicos, prueba en frío de
+  `_credEncrypt/_credDecrypt` (ida y vuelta, otro JWT_SECRET falla, sin JWT_SECRET no cifra)
+  y de `_normalizeFanoutUrl`/`_fanoutUrlKey` (12 casos) ✅. Sin server local.
+- **Probar en vivo (tras subir la versión):** (1) panel → Comandos → Banco automático: las
+  dos cards nuevas con el estado (token AWS/panel/ninguno); (2) pegar un token inválido →
+  "hgcash rechazó ese token" y no cambia nada; token válido → lista la cuenta y el saldo
+  hgcash del panel se actualiza; (3) transferencia real → el webhook entra (firma con el
+  secreto del panel o de SSM) y la auto-carga queda en Pendientes GANAMOS; (4) reenvío: con
+  una URL cargada, tras una transferencia la card muestra "✅ último reenvío OK" y el
+  movimiento aparece en la otra página; con la lista vacía, nada se reenvía; (5) "Volver a
+  usar AWS (SSM)" en las dos cards vuelve al estado anterior; (6) en el log del arranque no
+  tiene que aparecer "credenciales del panel NO se pudieron descifrar".
 
 ## Sesión 2026-10-02 (8ª) — Fuera el cartel "Verificá tu teléfono" del inicio
 

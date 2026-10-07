@@ -270,6 +270,10 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   Telegram 00:05 ART) lo marca. Mismos nombres de modelos/endpoints/funciones del panel
   que el gemelo: no renombrar. El cruce con el cajero queda `sin_datos` hasta que 1girox
   informe el saldo del agente.
+- **hgcash: token/secreto/reenvío pueden venir del PANEL (#223):** `Config['hgcashCredentials']`
+  (cifrado con `JWT_SECRET`) y `Config['hgcashFanout']` mandan sobre SSM. Leer SIEMPRE con
+  `hgcashPay.getToken()` / `_hgcashWebhookSecrets()` / `_getHgcashFanout()`, nunca
+  `process.env.HGCASH_*` directo. Cambiar `JWT_SECRET` invalida lo guardado en el panel.
 - **Multi-instancia (AWS EB):** los crons son `setInterval` en CADA instancia; su
   idempotencia depende de índices únicos (EncuestaFire.slotKey, InactividadFire.fireKey,
   HgcashCharge.chargeKey, RecordatorioFire.fireKey, DailyRouletteSpin

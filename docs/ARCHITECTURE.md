@@ -5,7 +5,8 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-02** — variables de entorno del deploy GANAMOS (§0.2) y
+> Última actualización: **2026-10-07** — hgcash desde el PANEL (#223: credenciales cifradas +
+> reenvío de avisos a otras páginas; §0, §0.2). Antes: **2026-10-02** — variables de entorno del deploy GANAMOS (§0.2) y
 > REEMBOLSO SEMANAL POR PLANILLA (#215): §0.1
 > (modelos RefundBatch/WeeklyRefund, endpoints, flujo, front, trampas), §4.4 reference
 > `vip-wrf`, §7 motor de avisos. Antes: **2026-10-01** — equipos: comunidad por equipo desde una única
@@ -87,6 +88,22 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
     la confirmación de que ya lo hizo en GANAMOS. No va a la bandeja.
   - Sin esa opción (hgcash, ruleta, fueguito, VIP, lotes, welcome code, devolución,
     referidos) → nace **`pending`** y se ve en el panel **"⏳ Pendientes GANAMOS"**.
+- **hgcash desde el PANEL (#223 = #320/#326 del gemelo, espec
+  `AUTOGIROXcompartido/docs/ESPEC-HGCASH-PANEL.md`):** el token de API y el secreto del
+  webhook se cargan en Comandos → Banco automático → "🔐 Cuenta hgcash conectada" y se
+  guardan CIFRADOS (AES-256-GCM con clave derivada de `JWT_SECRET`) en
+  `Config['hgcashCredentials']`; `_loadHgcashCredentials` (8 s tras el boot y cada 60 s)
+  los pone en memoria (`hgcashPay.setTokenOverride`, `_hgcashPanelSecret`). Prioridad
+  panel > SSM; el webhook acepta la firma con cualquiera de los dos secretos
+  (`_hgcashWebhookSecrets()`). El POST prueba el token con `GET /accounts` antes de guardar
+  y limpia `Config['hgcash'].accountId`. **Siempre `hgcashPay.getToken()` /
+  `_hgcashWebhookSecrets()`, nunca `process.env.HGCASH_*` directo.** Si cambia
+  `JWT_SECRET` lo guardado no se descifra → cae a SSM y la card avisa. El reenvío (fan-out)
+  de avisos a otras páginas que comparten la cuenta hgcash sale de `Config['hgcashFanout']
+  .urls` (card "🔁 Reenviar…", hasta 5, sólo https; con ese Config manda el panel, sin él
+  vale `HGCASH_FANOUT_URL`); anti-círculo por `X-Forwarded-By` y nunca a la URL propia;
+  `_hgcashFanoutStats` muestra el último resultado por destino. Endpoints
+  `GET/POST/DELETE /api/admin/hgcash/credentials` y `…/fanout` (admin general).
 - **Comprobante verificado con el banco (#216):** cuando un comprobante leído por la IA
   coincide con una transferencia confirmada por hgcash (`hgcashAutoCarga`), el cliente
   recibe **`/sys_comprobante_ok`** ("en 1 minuto tenés tu carga"; `_hgComprobanteOkMessage`)
@@ -255,10 +272,13 @@ como **propiedad del entorno de Elastic Beanstalk**, no en SSM.
   `FIREBASE_PRIVATE_KEY` (⚠️ tiene que ser del proyecto `saladejuegos-673fa`, que está
   hardcodeado en el front junto con la VAPID key).
 - **SSM según lo que se use:** `GANAMOS_PLAY_URL` (default `https://ganamos.net`);
-  hgcash: `HGCASH_WEBHOOK_SECRET` (sin ella en producción el webhook se rechaza),
-  `HGCASH_API_TOKEN` (pagos/saldo/comprobantes), `HGCASH_FANOUT_URL` (⚠️ default = reenvía
-  cada webhook a autoreembolsos.com; poner `off` si GANAMOS no comparte la cuenta hgcash),
-  `HGCASH_API_URL` (default ok, y se lee al require); `ANTHROPIC_API_KEY` (IA de
+  hgcash: desde #223 el token, el secreto del webhook y los destinos del reenvío se pueden
+  cargar desde el PANEL (Banco automático) y mandan sobre SSM; `HGCASH_WEBHOOK_SECRET`
+  (sin secreto en panel ni SSM el webhook se rechaza en producción), `HGCASH_API_TOKEN`
+  (pagos/saldo/comprobantes), `HGCASH_FANOUT_URL` (⚠️ sin config del panel, el default
+  reenvía cada webhook a autoreembolsos.com: guardar la lista vacía en el panel o poner
+  `off` si GANAMOS no comparte la cuenta hgcash), `HGCASH_API_URL` (default ok, y se lee al
+  require); `ANTHROPIC_API_KEY` (IA de
   comprobantes; sin ella queda dormida) + `COMPROBANTE_AI_MODEL`; `TELEGRAM_ALERT_BOT_TOKEN`
   + `TELEGRAM_ALERT_CHAT_ID` (cierre diario/bajadas); `REDIS_URL` (o `REDIS_HOST` /
   `REDIS_PORT` / `REDIS_USERNAME` / `REDIS_PASSWORD`) — obligatorio con 2+ instancias. El
