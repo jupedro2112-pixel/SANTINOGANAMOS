@@ -5,7 +5,10 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-07** — hgcash desde el PANEL (#223: credenciales cifradas +
+> Última actualización: **2026-10-09** — equipos: comparación CANÓNICA del inicio del usuario
+> (`_teamNorm`), `_communityChannelResolved` con fuente del link, probador
+> `/api/admin/teams/resolve`, username de la sesión desde la base (#224; §5 Equipos, §9). Antes:
+> **2026-10-07** — hgcash desde el PANEL (#223: credenciales cifradas +
 > reenvío de avisos a otras páginas; §0, §0.2). Antes: **2026-10-02** — variables de entorno del deploy GANAMOS (§0.2) y
 > REEMBOLSO SEMANAL POR PLANILLA (#215): §0.1
 > (modelos RefundBatch/WeeklyRefund, endpoints, flujo, front, trampas), §4.4 reference
@@ -1141,7 +1144,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   (used|active|expired|cancelled), `bonusExpiresAt`, `cargaMonto`, `bonoMonto` y
   `summary`. Panel: `nbUseHours`, fila del lote con "N cargaron ($X) · N activos · N
   vencidos sin usar · ⏱ Nhs", detalle con resumen y textos por `outcome`.
-- **Equipos por inicio del usuario (#212–#214):** `Config['teams']` {general:{telegram,whatsapp}, list:[{prefix,name,telegram,whatsapp}]}; `resolveTeamForUsername` (ESTRICTA: el username empieza con el prefijo, gana el más largo) para todo lo que pasa con sesión; `resolveTeamLoose` (tolerante: menos que el prefijo o el nombre del equipo, sólo si apunta a UN equipo) únicamente para el cartel del login. **`_communityChannelUrl(team, teamsCfg, communityCfg?)` es la ÚNICA fuente del link de comunidad** (Telegram del equipo → general de Equipos → card Comunidad → `canalInformativoUrl` legacy): la usan `GET /api/config/community` (auth), y `GET /go/comunidad?u=<username>` (redirect público; la PWA le agrega `u` con el usuario logueado). `GET /api/config/team?username=&mode=forgot` (público, cartel del login) devuelve SÓLO WhatsApp — del equipo o el general — (`whatsappUrl`/`hasWhatsapp`/`whatsappIsTeam`); la comunidad NO se muestra en el login (#214) y nunca revela si la cuenta existe. `GET/POST /api/admin/teams` (admin general). PWA: la cache `communityCfgCache` va POR USUARIO (`u`) + copia en memoria (`chat.js`). El Soporte NO se divide por equipo.
+- **Equipos por inicio del usuario (#212–#214, #224):** `Config['teams']` {general:{telegram,whatsapp}, list:[{prefix,name,telegram,whatsapp}]}; `getTeamsConfig` agrega a cada equipo `key` = prefijo CANÓNICO (`_teamNorm`: sin acentos, minúsculas, sólo `[a-z0-9]`; descarta prefijos que quedan vacíos). `resolveTeamForUsername` (ESTRICTA: la forma canónica del username empieza con la `key`, gana la más larga — `MAR_juan`/`mar.juan`/`marjuan` → `mar`; `juan.mar` → nada) para todo lo que pasa con sesión; `resolveTeamLoose` (tolerante: menos que el prefijo o el nombre del equipo, sólo si apunta a UN equipo) únicamente para el cartel del login. **`_communityChannelResolved(team, teamsCfg, communityCfg?)` → `{url, source}` es la ÚNICA fuente del link de comunidad** (`source`: `equipo` → `general` de Equipos → `comunidad` = card Comunidad → `legacy` = `canalInformativoUrl` → `''`; `_communityChannelUrl` es el wrapper que devuelve sólo la url): la usan `GET /api/config/community` (auth; devuelve también `teamName` y `communitySource` y loguea `[teams] comunidad para <user>: equipo=… fuente=…`), y `GET /go/comunidad?u=<username>` (redirect público; la PWA le agrega `u` con el usuario logueado; loguea igual). `GET /api/admin/teams/resolve?username=` (admin general; card Equipos → "🔎 Probar con un usuario"): equipo detectado con la misma regla estricta, username de la base si existe, forma canónica, comunidad + fuente, WhatsApp del login + fuente, equipos sin Telegram propio. El `username` de `req.user` es el VIGENTE de la base (`authMiddleware`, #224), no el del token. `GET /api/config/team?username=&mode=forgot` (público, cartel del login) devuelve SÓLO WhatsApp — del equipo o el general — (`whatsappUrl`/`hasWhatsapp`/`whatsappIsTeam`); la comunidad NO se muestra en el login (#214) y nunca revela si la cuenta existe. `GET/POST /api/admin/teams` (admin general). PWA: la cache `communityCfgCache` va POR USUARIO (`u`) + copia en memoria (`chat.js`). El Soporte NO se divide por equipo.
 - **Recordatorios sin regalos (#209):** `recordatoriosService.tick` cada 30 min (server.js, después del motor de inactividad): `premio` (claim_pending que vence en ≤ N h, fireKey `premio|spinId`), `giro` (último giro entre 24 h y `giroMaxHoras` atrás, `canSpin` inyectado = test user | app + cargas mínimas, fireKey `giro|userId|lastSpinId`), `inactivo` (escalera por `lastLogin`, fireKey `inact|user|díaÚltimoLogin|paso` y repeticiones `|rep|n`). Horario silencioso y tope `maxPorDia` (premio no cuenta). Modelo `RecordatorioFire`. Endpoints `GET/POST /api/admin/recordatorios/config`. Textos con `{username}` `{premio}` `{vence}`.
 - **Ruleta — ventana rodante (#208):** `_rouletteSpinWindow(userId, spinsPerDay)` → {used, left, nextAt}; el giro se libera 24 h después del más viejo de los últimos N; `status.nextSpinAt`; "Reiniciar" borra los giros sin reclamar de las últimas 24 h.
 - **Referidos (#207):** en manual `/api/referrals/*` → 404, `/api/public/config` sin `referralPct`, seed sin `/sys_referral_pct` (la migración lo borra) y PWA/panel sin UI de referidos.
@@ -1398,6 +1401,11 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
 
 ## 9. Trampas / "no rompas esto"
 
+- **Equipos / comunidad (#224):** el inicio del usuario se compara en forma CANÓNICA
+  (`_teamNorm`); no volver a `startsWith` sobre texto crudo (un `_` o una mayúscula
+  distinta mandaba al cliente a la comunidad general). Un equipo sin Telegram en su fila
+  cae al general POR DISEÑO: antes de tocar código, probar con `/api/admin/teams/resolve`
+  (card Equipos → "🔎 Probar con un usuario") y leer `[teams] comunidad para …` en el log.
 - **MODO MANUAL (§0):** nunca hacer `require('./giroxService')` directo — siempre el
   selector `platformService`. Toda operación de plata NUEVA que dispare el server solo
   tiene que pasar una `reference` estable (nace `pending` en la bandeja); toda la que

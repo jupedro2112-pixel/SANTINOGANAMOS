@@ -3315,7 +3315,10 @@ const authMiddleware = async (req, res, next) => {
       return res.status(401).json({ error: 'Sesión expirada. Por favor, vuelve a iniciar sesión.' });
     }
     
-    req.user = decoded;
+    // El username de la sesión sale de la BASE, no del token (#224): el token lo trae
+    // de cuando se emitió (hasta 90 días) y cualquier resolución por usuario (equipo /
+    // comunidad por el inicio del nombre) tiene que mirar el nombre vigente.
+    req.user = (user.username && user.username !== decoded.username) ? { ...decoded, username: user.username } : decoded;
 
     // Lockdown del rol publisher_admin: sólo puede tocar las rutas listadas en
     // PUBLISHER_ADMIN_ALLOWED_PATHS. Cualquier otra ruta devuelve 403, así no
@@ -22317,8 +22320,15 @@ app.get('/api/config/community', authMiddleware, async (req, res) => {
     // si no, el general de Equipos; si tampoco, el de la card Comunidad.
     let tc = null, team = null;
     try { tc = await getTeamsConfig(); team = resolveTeamForUsername(req.user.username, tc); } catch (_) {}
+    const ch = await _communityChannelResolved(team, tc, c);
+    // #224: una línea por resolución (una por login / apertura del menú cada 30 s) para
+    // poder ver en el deploy a qué comunidad va cada usuario y por qué.
+    logger.info(`[teams] comunidad para ${req.user.username || '?'}: equipo=${team ? team.name + ' (' + team.prefix + ')' : 'ninguno'} fuente=${ch.source || 'sin link'}`);
     res.json({
-      channelUrl: await _communityChannelUrl(team, tc, c),
+      channelUrl: ch.url,
+      // Diagnóstico (#224): el equipo detectado y de dónde salió el link.
+      teamName: team ? team.name : null,
+      communitySource: ch.source,
       supportUrl: c.supportUrl || '',
       // Logo del chat de soporte de la PWA (cabecera del chat). Vacío = el
       // ícono default de VIPCARGAS que ya trae el HTML.
@@ -22349,7 +22359,10 @@ app.get('/go/comunidad', async (req, res) => {
   try {
     const u = String(req.query.u || '').trim().slice(0, 40);
     const tc = await getTeamsConfig();
-    url = await _communityChannelUrl(resolveTeamForUsername(u, tc), tc);
+    const team = resolveTeamForUsername(u, tc);
+    const ch = await _communityChannelResolved(team, tc);
+    url = ch.url;
+    logger.info(`[teams] /go/comunidad u=${u || '(sin u)'}: equipo=${team ? team.name + ' (' + team.prefix + ')' : 'ninguno'} fuente=${ch.source || 'sin link'}`);
   } catch (_) { /* DB caída: cae al inicio */ }
   res.redirect(302, /^https?:\/\//i.test(url) ? url : '/');
 });
@@ -22419,6 +22432,16 @@ const SOPORTE_WA_MENSAJE = 'Vengo de GANAMOS necesito ayuda';
 // Config['teams'] = { general:{telegram,whatsapp}, list:[{prefix,name,telegram,whatsapp}] }.
 // El Telegram del equipo (si está cargado) es el canal que ve ese equipo en la app.
 // ============================================================
+// #224 Forma CANÓNICA para comparar el inicio del usuario con el prefijo del equipo:
+// sin acentos, minúsculas y SÓLO letras/números (se van espacios, puntos, guiones,
+// guiones bajos, "@"…). Así "MAR_juan", "Mar.Juan", "mar-juan" y "marjuan" son todos
+// del equipo "mar" (y el prefijo "mar-" o "mar." también los agarra). Antes se
+// comparaba el texto crudo en minúsculas: un separador distinto entre lo que el
+// agente escribió en GANAMOS y lo cargado como prefijo mandaba al cliente al general
+// (= "todos caen en la misma comunidad").
+function _teamNorm(s) {
+  return String(s == null ? '' : s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+}
 async function getTeamsConfig() {
   const raw = (await getConfig('teams')) || {};
   const general = raw.general || {};
@@ -22427,18 +22450,23 @@ async function getTeamsConfig() {
     general: { telegram: general.telegram || '', whatsapp: general.whatsapp || '' },
     list: list.filter(t => t && t.prefix).map(t => ({
       prefix: String(t.prefix).toLowerCase().trim(),
+      key: _teamNorm(t.prefix),
       name: String(t.name || t.prefix).trim(),
       telegram: String(t.telegram || '').trim(),
       whatsapp: String(t.whatsapp || '').trim()
-    }))
+    })).filter(t => t.key)
   };
 }
-// Equipo del username o null. Gana el prefijo MÁS LARGO ("marte" le gana a "mar").
+// Equipo del username o null. Compara en forma canónica (`_teamNorm`) y gana el
+// prefijo MÁS LARGO ("marte" le gana a "mar").
 function resolveTeamForUsername(username, cfg) {
-  const u = String(username || '').toLowerCase().trim();
+  const u = _teamNorm(username);
   if (!u || !cfg || !Array.isArray(cfg.list)) return null;
   let best = null;
-  for (const t of cfg.list) if (t.prefix && u.startsWith(t.prefix) && (!best || t.prefix.length > best.prefix.length)) best = t;
+  for (const t of cfg.list) {
+    const key = t.key || _teamNorm(t.prefix);
+    if (key && u.startsWith(key) && (!best || key.length > (best.key || _teamNorm(best.prefix)).length)) best = t;
+  }
   return best;
 }
 // #213 Búsqueda TOLERANTE, sólo para el cartel del login (el cliente pone "lo que
@@ -22453,9 +22481,10 @@ function resolveTeamLoose(text, cfg) {
   const exact = resolveTeamForUsername(q, cfg);
   if (exact) return exact;
   if (q.length < 2) return null;
+  const qk = _teamNorm(q);
   const cands = cfg.list.filter(t => {
-    const nm = norm(t.name);
-    return t.prefix.startsWith(q) || nm.startsWith(q) || (nm.length >= 3 && q.startsWith(nm));
+    const nm = norm(t.name), nk = _teamNorm(t.name), pk = t.key || _teamNorm(t.prefix);
+    return t.prefix.startsWith(q) || pk.startsWith(qk) || nm.startsWith(q) || nk.startsWith(qk) || (nm.length >= 3 && q.startsWith(nm));
   });
   return cands.length === 1 ? cands[0] : null;
 }
@@ -22465,10 +22494,20 @@ function resolveTeamLoose(text, cfg) {
 // de comunidad nuevo tiene que salir de acá, nunca directo de
 // communityConfig (si no, un cliente termina en la comunidad de otro equipo).
 async function _communityChannelUrl(team, teamsCfg, communityCfg) {
-  const own = (team && team.telegram) || (teamsCfg && teamsCfg.general && teamsCfg.general.telegram) || '';
-  if (own) return own;
+  return (await _communityChannelResolved(team, teamsCfg, communityCfg)).url;
+}
+// Misma resolución, pero dice DE DÓNDE salió el link (#224, para el probador del panel y
+// los logs): 'equipo' | 'general' (Telegram general de Equipos) | 'comunidad' (card
+// Comunidad) | 'legacy' (canalInformativoUrl viejo) | '' (nada cargado).
+async function _communityChannelResolved(team, teamsCfg, communityCfg) {
+  if (team && team.telegram) return { url: team.telegram, source: 'equipo' };
+  const gen = (teamsCfg && teamsCfg.general && teamsCfg.general.telegram) || '';
+  if (gen) return { url: gen, source: 'general' };
   const c = communityCfg || (await getConfig('communityConfig')) || {};
-  return c.channelUrl || c.url || (await getConfig('canalInformativoUrl', '')) || '';
+  const card = c.channelUrl || c.url || '';
+  if (card) return { url: card, source: 'comunidad' };
+  const legacy = (await getConfig('canalInformativoUrl', '')) || '';
+  return { url: legacy, source: legacy ? 'legacy' : '' };
 }
 function buildWhatsappUrl(number, text) {
   const digits = String(number || '').replace(/\D/g, '');
@@ -22507,6 +22546,37 @@ app.get('/api/admin/teams', authMiddleware, adminMiddleware, async (req, res) =>
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el administrador principal puede ver los equipos' });
     res.json(await getTeamsConfig());
   } catch (error) { logger.error(`GET /api/admin/teams: ${error.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+// #224 PROBADOR: ¿a qué equipo va este usuario y a qué comunidad / WhatsApp lo manda la
+// app? Misma resolución ESTRICTA que usa la PWA logueada (`resolveTeamForUsername` +
+// `_communityChannelResolved`), así el admin puede verificar en producción sin tener
+// que entrar con la cuenta del cliente. Si el usuario existe en la base, también
+// compara con el username guardado (el que viaja en la sesión).
+app.get('/api/admin/teams/resolve', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el administrador principal puede probar los equipos' });
+    const q = String(req.query.username || '').trim().slice(0, 60);
+    if (!q) return res.status(400).json({ error: 'Falta el usuario a probar' });
+    const cfg = await getTeamsConfig();
+    let dbUsername = null;
+    try {
+      const u = await User.findOne({ username: { $regex: '^' + escapeRegex(q) + '$', $options: 'i' } }).select('username').lean();
+      if (u) dbUsername = u.username;
+    } catch (_) {}
+    const username = dbUsername || q;
+    const team = resolveTeamForUsername(username, cfg);
+    const ch = await _communityChannelResolved(team, cfg);
+    const teamWa = (team && team.whatsapp) || '';
+    res.json({
+      input: q, username, existsInDb: !!dbUsername, normalized: _teamNorm(username),
+      team: team ? { prefix: team.prefix, name: team.name, telegram: team.telegram, whatsapp: team.whatsapp } : null,
+      communityUrl: ch.url, communitySource: ch.source,
+      whatsapp: teamWa || cfg.general.whatsapp || '', whatsappSource: teamWa ? 'equipo' : (cfg.general.whatsapp ? 'general' : ''),
+      // Equipos sin Telegram propio: sus clientes caen al general (aviso para el panel).
+      teamsWithoutTelegram: cfg.list.filter(t => !t.telegram).map(t => t.name),
+      generalTelegram: cfg.general.telegram || ''
+    });
+  } catch (error) { logger.error(`GET /api/admin/teams/resolve: ${error.message}`); res.status(500).json({ error: 'Error del servidor' }); }
 });
 app.post('/api/admin/teams', authMiddleware, adminMiddleware, async (req, res) => {
   try {

@@ -785,6 +785,16 @@ document.addEventListener('change', function (ev) {
                             <button class="btn-secondary" onclick="addTeamRow()" style="margin-top:8px;">➕ Agregar equipo</button>
                             <button class="btn-primary" onclick="saveTeams()" style="margin-top:8px;margin-left:8px;">💾 Guardar equipos</button>
                             <div id="teamsMsg" style="font-size:12px;margin-top:8px;color:#aaa;"></div>
+                            <!-- #224 Probador: misma regla que usa la app logueada -->
+                            <div style="background:rgba(0,0,0,.18);border:1px solid rgba(255,255,255,.14);border-radius:8px;padding:10px;margin-top:14px;">
+                                <p style="margin:0 0 8px;font-size:12px;font-weight:700;color:#d4af37;">🔎 Probar con un usuario — ¿a qué equipo, comunidad y WhatsApp lo manda la app?</p>
+                                <p style="margin:0 0 8px;font-size:11.5px;color:#aaa;line-height:1.5;">Mayúsculas, acentos, puntos, guiones y guiones bajos no cuentan: <i>MAR_juan</i>, <i>mar.juan</i> y <i>marjuan</i> son del prefijo <b>mar</b>. Un equipo <b>sin Telegram</b> cargado manda a sus clientes a la comunidad general.</p>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;">
+                                    <div class="form-group" style="flex:1;min-width:180px;margin:0;"><label for="teamsTestUser">Usuario</label><input type="text" id="teamsTestUser" placeholder="MAR_juan" maxlength="60" onkeydown="if(event.key==='Enter'){event.preventDefault();probarEquipo();}"></div>
+                                    <button type="button" class="btn-secondary" onclick="probarEquipo()">🔎 Probar</button>
+                                </div>
+                                <div id="teamsTestResult" style="font-size:12px;margin-top:8px;color:#aaa;line-height:1.6;word-break:break-all;"></div>
+                            </div>
                         </div>
 
                         <!-- ROLLOVER GLOBAL de bonos (#184, solo admin general) -->

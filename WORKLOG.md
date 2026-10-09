@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-07** (última entrada: #223)
+> **Última actualización: 2026-10-09** (última entrada: #224)
 
 ---
 
@@ -24,6 +24,10 @@
 >    GENERAL en el panel → COMANDOS → card "👥 Equipos" (#212–#214). ⚠️ El **WhatsApp
 >    general** es obligatorio: sin él, "No recuerdo mi usuario" y los usuarios sin equipo
 >    ven "todavía no hay un WhatsApp cargado" (el 01/10 estaba vacío en el deploy).
+>    ⚠️ **Cada equipo tiene que tener SU Telegram cargado en su fila** (#224): un equipo
+>    sin Telegram manda a sus clientes a la comunidad GENERAL (= "todos caen en la misma").
+>    Verificalo con el probador "🔎 Probar con un usuario" de la misma card: dice qué equipo
+>    detecta y de dónde sale el link (equipo / general / card Comunidad).
 > 3. Encender el motor de recordatorios si se lo quiere activo: arranca APAGADO (panel →
 >    Inactivos → "Motor ENCENDIDO" + guardar, #209).
 > 4. Revisar en deploy que el ticker del login cargue (`/api/claims-feed`, ver #200).
@@ -49,6 +53,54 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-09 — Comunidad por equipo: detección del inicio del usuario más tolerante + probador en el panel
+
+### 224. "Todo deriva a la misma comunidad de Telegram": revisión completa del camino y endurecimiento
+- **Pedido del owner:** "todo está derivando a la misma comunidad de Telegram cuando en
+  realidad son de diferentes equipos; que detecte correctamente el inicio del nombre".
+- **Revisión (nada mandaba al cliente por fuera del equipo):** todas las salidas a la
+  comunidad pasan por `_communityChannelUrl` — `GET /api/config/community` (pill del header
+  + ítem del menú, `chat.js`), `/go/comunidad?u=` (fallback y clicks tempranos), la
+  mini-encuesta del casino (`ui.js`, usa el href del pill). El SW no cachea `/api/` ni
+  navegaciones; la cache de la PWA va por usuario (#213); el JWT lleva `username`. La card
+  de la ruleta `_communityRecommendCard` lee `VIP.state.communityLink`, que nadie setea →
+  no pinta botones (muerta, inofensiva). "Derivar a Comunidad" del panel es un cambio de
+  bandeja del chat, no un link. Conclusión: con la lógica anterior, el cliente caía al
+  general cuando (a) el inicio del usuario no coincidía LETRA POR LETRA con el prefijo
+  (separadores/mayúsculas/acentos distintos entre lo que escribió el agente en GANAMOS y lo
+  cargado como prefijo) o (b) la fila del equipo NO tenía Telegram cargado (cae al general
+  por diseño). Ninguna de las dos se podía ver desde el panel.
+- **(1) Comparación CANÓNICA del inicio (`_teamNorm`):** username y prefijo se comparan sin
+  acentos, en minúsculas y sólo con letras/números (se van espacios, `.`, `-`, `_`, `@`…).
+  `MAR_juan`, `Mar.Juan`, `mar-juan`, `marjuan` y `Márcelo` son del prefijo `mar`; el
+  prefijo cargado como `ARG-` agarra `arg_pepe` y `argpepe`. Sigue ganando el prefijo MÁS
+  LARGO (por largo canónico) y el equipo tiene que estar AL INICIO (`juan.mar` → nada).
+  `getTeamsConfig` agrega `key` (prefijo canónico) y descarta prefijos que normalizan a
+  vacío; `resolveTeamForUsername` calcula la key al vuelo si la config es vieja.
+  `resolveTeamLoose` (login) también acepta la forma canónica en sus candidatos.
+- **(2) El username de la sesión sale de la BASE:** `authMiddleware` pone en `req.user` el
+  `username` vigente del `User` (antes el del token, emitido hasta 90 días antes).
+- **(3) Fuente del link:** `_communityChannelResolved(team, teamsCfg, communityCfg?)` →
+  `{url, source}` con `source` ∈ `equipo | general | comunidad | legacy | ''`;
+  `_communityChannelUrl` es ahora un wrapper. `/api/config/community` devuelve además
+  `teamName` y `communitySource`, y loguea `[teams] comunidad para <user>: equipo=… fuente=…`
+  (una línea por login / apertura del menú); `/go/comunidad` loguea igual.
+- **(4) Probador en el panel (admin-sw v58):** `GET /api/admin/teams/resolve?username=`
+  (admin general) + bloque "🔎 Probar con un usuario" al pie de la card Equipos: muestra el
+  equipo detectado (misma regla ESTRICTA que la app), el usuario de la base si existe, la
+  forma canónica, la comunidad que abre la app y su fuente, el WhatsApp del login, y avisa
+  en naranja si el equipo detectado NO tiene Telegram (cae al general) + la lista de
+  equipos sin Telegram propio.
+- **Validado:** `node --check` (server.js, admin.js, admin-sw.js) ✅, `check-tdz` ✅, prueba
+  en frío con las funciones REALES extraídas de server.js (31 casos: separadores, acentos,
+  prefijo más largo, equipo al final, config vieja sin `key`, loose único/ambiguo, fuente
+  equipo → general → card → legacy → nada) ✅. **Back necesita redeploy.**
+- **Qué hacer en el deploy:** panel → COMANDOS → Equipos → probar con un usuario REAL de
+  cada equipo. Si dice "fuente: Telegram GENERAL" con equipo detectado → falta el Telegram
+  en la fila de ese equipo. Si dice "Ningún equipo coincide" → el prefijo cargado no es el
+  inicio real de los usuarios de ese equipo (corregirlo en la fila). En los logs:
+  `[teams] comunidad para …`.
 
 ## Sesión 2026-10-07 — hgcash desde el PANEL: credenciales cifradas + reenvío de avisos a otras páginas (réplica #320/#326 del gemelo)
 

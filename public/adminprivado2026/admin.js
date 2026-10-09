@@ -5827,6 +5827,31 @@ async function saveTeams() {
     }
 }
 window.addTeamRow = addTeamRow; window.saveTeams = saveTeams; window.loadTeams = loadTeams;
+// #224 Probador: a qué equipo / comunidad / WhatsApp va un usuario (misma regla que la app).
+async function probarEquipo() {
+    const inp = document.getElementById('teamsTestUser');
+    const out = document.getElementById('teamsTestResult');
+    if (!inp || !out) return;
+    const u = inp.value.trim();
+    if (!u) { out.style.color = '#ffaa44'; out.textContent = 'Escribí un usuario para probar.'; return; }
+    out.style.color = '#aaa'; out.textContent = 'Probando…';
+    try {
+        const r = await authFetch('/api/admin/teams/resolve?username=' + encodeURIComponent(u));
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error al probar');
+        const e = (x) => escapeHtml(String(x == null ? '' : x));
+        const fuente = { equipo: 'Telegram del EQUIPO', general: 'Telegram GENERAL de Equipos', comunidad: 'card Comunidad (no es por equipo)', legacy: 'canal viejo (no es por equipo)' }[j.communitySource] || 'SIN LINK cargado';
+        let html = '<div style="font-weight:800;color:' + (j.team ? '#28a745' : '#ffaa44') + ';">' +
+            (j.team ? '✅ Equipo: ' + e(j.team.name) + ' (prefijo "' + e(j.team.prefix) + '")' : '⚠️ Ningún equipo coincide con el inicio de "' + e(j.username) + '" → va al general') + '</div>' +
+            '<div>Usuario comparado: <b>' + e(j.username) + '</b>' + (j.existsInDb ? ' (existe en la base)' : ' (no está en la base: se compara el texto tal cual)') + ' · forma canónica: <code>' + e(j.normalized) + '</code></div>' +
+            '<div>Comunidad que abre la app: ' + (j.communityUrl ? '<a href="' + e(j.communityUrl) + '" target="_blank" rel="noopener">' + e(j.communityUrl) + '</a>' : '<i>ninguna</i>') + ' — <b>' + fuente + '</b></div>' +
+            '<div>WhatsApp del login: ' + (j.whatsapp ? '<b>' + e(j.whatsapp) + '</b> (' + (j.whatsappSource === 'equipo' ? 'del equipo' : 'general') + ')' : '<i>ninguno</i>') + '</div>';
+        if (j.team && j.communitySource !== 'equipo') html += '<div style="color:#ffaa44;margin-top:4px;">⚠️ El equipo <b>' + e(j.team.name) + '</b> no tiene Telegram cargado: sus clientes caen a la comunidad general. Cargalo en la fila del equipo y guardá.</div>';
+        if (Array.isArray(j.teamsWithoutTelegram) && j.teamsWithoutTelegram.length) html += '<div style="color:#aaa;margin-top:4px;">Equipos sin Telegram propio (caen al general): ' + j.teamsWithoutTelegram.map(e).join(', ') + '</div>';
+        out.style.color = '#ddd'; out.innerHTML = html;
+    } catch (err) { out.style.color = '#dc3545'; out.textContent = '❌ ' + (err.message || 'Error al probar'); }
+}
+window.probarEquipo = probarEquipo;
 
 async function loadCBUConfig() {
     try {

@@ -236,14 +236,20 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   da 404, la PWA no tiene menú/modal/cards de referidos y el panel los oculta. El
   sistema (referralRate.js con `/sys_referral_pct`, controlador, payouts) queda sólo
   para `PLATFORM_MODE=girox`. No agregar textos de referidos al cliente.
-- **EQUIPOS por inicio del usuario (#212–#214):** `Config['teams']` (panel → COMANDOS →
+- **EQUIPOS por inicio del usuario (#212–#214, #224):** `Config['teams']` (panel → COMANDOS →
   card Equipos): prefijo → WhatsApp y Telegram (comunidad) del equipo, + un general.
-  El link de comunidad sale SIEMPRE de `_communityChannelUrl` (equipo → general → card
-  Comunidad): lo usan `/api/config/community` y `/go/comunidad?u=<username>`. El cartel
-  del login (`/api/config/team`) da SÓLO WhatsApp (equipo o general), nunca la
-  comunidad (decisión del owner, #214). Nunca leer `communityConfig.channelUrl` directo para
-  mandar a un cliente a la comunidad: terminaría en la de otro equipo. Con sesión se usa
-  `resolveTeamForUsername` (estricta); `resolveTeamLoose` es sólo para el login.
+  El link de comunidad sale SIEMPRE de `_communityChannelResolved` / `_communityChannelUrl`
+  (equipo → general → card Comunidad): lo usan `/api/config/community` y
+  `/go/comunidad?u=<username>`. El cartel del login (`/api/config/team`) da SÓLO WhatsApp
+  (equipo o general), nunca la comunidad (decisión del owner, #214). Nunca leer
+  `communityConfig.channelUrl` directo para mandar a un cliente a la comunidad: terminaría
+  en la de otro equipo. Con sesión se usa `resolveTeamForUsername` (estricta);
+  `resolveTeamLoose` es sólo para el login. La comparación del inicio es CANÓNICA
+  (`_teamNorm`: sin acentos, minúsculas, sólo letras/números → `MAR_juan` es de `mar`);
+  no volver a comparar texto crudo. Un equipo SIN Telegram en su fila manda a sus clientes
+  al general: si "todos caen en la misma comunidad", probarlo con "🔎 Probar con un
+  usuario" en la card (`/api/admin/teams/resolve`) y mirar `[teams] comunidad para …` en el
+  log. `req.user.username` es el de la BASE (no el del token).
 - **Ruleta = ventana de 24 h REALES desde el último giro (#208):** `_rouletteSpinWindow`;
   no se renueva a las 00:00. `spinsPerDay` = giros por ventana.
 - **Mensajes automáticos al usuario** son editables desde la sección COMANDOS
