@@ -5,7 +5,9 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-09** — equipos: comparación CANÓNICA del inicio del usuario
+> Última actualización: **2026-10-11** — banco: Depositar/Asignar toman también un movimiento en
+> `shadow_matched` y un `claiming` viejo (`BANK_AGENT_CLAIMABLE_STATES`, `_bankAgentClaimFilter`,
+> #225; §5 bandeja, §9). Antes: **2026-10-09** — equipos: comparación CANÓNICA del inicio del usuario
 > (`_teamNorm`), `_communityChannelResolved` con fuente del link, probador
 > `/api/admin/teams/resolve`, username de la sesión desde la base (#224; §5 Equipos, §9). Antes:
 > **2026-10-07** — hgcash desde el PANEL (#223: credenciales cifradas +
@@ -988,7 +990,13 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   `vip-hg-*`, sin comprobante, sin mínimo, red anti-duplicado saltable con `force`) ·
   **manual anclado** (el modal Depositar manda `movementId`: monto exacto, claim
   atómico antes de acreditar, `chargeSource:'manual_link'`; sin movimiento, `origin`
-  otro_banco|sin_movimiento) · vinculado a una carga manual ya hecha (`/link`) ·
+  otro_banco|sin_movimiento). **Qué puede TOMAR un agente (#225):** el anclaje de Depositar
+  y la asignación usan `_bankAgentClaimFilter` = `BANK_AGENT_CLAIMABLE_STATES` (pending ·
+  no_match · needs_review · error · **shadow_matched** — en modo sombra, el de GANAMOS, el
+  match con comprobante deja el movimiento ahí y el agente lo registra con Depositar) o un
+  `claiming` de más de `BANK_STALE_CLAIM_MS` (10 min). Al acreditar, el comprobante del match
+  en sombra pasa a `manual_charged`. Si no se puede tomar → 409 con `_bankClaimFailText`
+  (según el estado real) + log `[bank] … no se pudo tomar: estado=…` · vinculado a una carga manual ya hecha (`/link`) ·
   "no corresponde" (admin, con motivo). `hgcashConsumeOnManualDeposit` además
   retro-vincula por TITULAR (`fromKey` vs `originHolder` del comprobante, 6 h).
   Salientes clasificados por externalID (`sweep-<id>` bajada / pago / unknown).
@@ -1493,6 +1501,10 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   HTML sin pasar por `renderIndexHtml`.
 - **Firebase config duplicada** (index.html + firebase-messaging-sw.js) y VAPID key en
   el inline: cambiar en ambos lados.
+- **Reclamo de movimientos por un agente (#225):** no volver a un `$in` suelto de estados
+  en Depositar/Asignar: usar `_bankAgentClaimFilter`. Sin `shadow_matched` ahí, en modo
+  sombra NINGUNA transferencia con comprobante verificado se puede anclar ("ya fue
+  acreditada" falso). La auto-carga (sin `assign`) sigue tomando sólo `pending`.
 - **Vínculos banco↔carga (#183):** una transferencia = UNA acreditación. Cualquier flujo
   nuevo que acredite plata que entró por hgcash tiene que dejar `BankMovement.transactionId`
   + `chargeSource` y `Transaction.metadata.movementId` (o `origin:'otro_banco'`), o el cierre

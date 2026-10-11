@@ -2026,6 +2026,35 @@ function _statusAccredited(status, cfg) {
 // no confundir nombres cortos. Lo setea el webhook en `BankMovement.fromKey`.
 const BANK_IDENTITY_MIN_NAME = 8;
 const BANK_IDENTITY_STATES = ['auto_charged', 'manual_charged', 'shadow_matched', 'needs_review', 'duplicate'];
+// #225 Estados desde los que un AGENTE puede TOMAR una transferencia para acreditarla
+// (Depositar con transferencia elegida y "Asignar" de la bandeja). Incluye
+// `shadow_matched`: en modo sombra (el de GANAMOS) el match con el comprobante NO
+// carga, deja el movimiento en ese estado y le dice al agente "registralo con
+// Depositar" — y Depositar lo rechazaba con "ya fue acreditada" porque este filtro no
+// lo incluía (todas las transferencias con comprobante verificado quedaban
+// inasignables). Un `claiming` VIEJO (proceso caído entre el reclamo y la carga, más
+// de BANK_STALE_CLAIM_MS sin tocarse) también se puede tomar: si no, quedaba
+// bloqueado para siempre. `updatedAt` lo mantiene Mongoose (timestamps) en cada update.
+const BANK_AGENT_CLAIMABLE_STATES = ['pending', 'no_match', 'needs_review', 'error', 'shadow_matched'];
+const BANK_STALE_CLAIM_MS = 10 * 60 * 1000;
+function _bankAgentClaimFilter(movementId) {
+  return {
+    movementId,
+    $or: [
+      { matchStatus: { $in: BANK_AGENT_CLAIMABLE_STATES } },
+      { matchStatus: 'claiming', updatedAt: { $lt: new Date(Date.now() - BANK_STALE_CLAIM_MS) } }
+    ]
+  };
+}
+// Texto para el agente cuando NO se pudo tomar la transferencia, según cómo quedó.
+function _bankClaimFailText(mv) {
+  const st = mv && mv.matchStatus;
+  if (['auto_charged', 'manual_charged', 'duplicate'].includes(st)) return `Esa transferencia ya fue acreditada${mv.matchedUsername ? ' a @' + mv.matchedUsername : ''}. Refrescá la bandeja.`;
+  if (st === 'claiming') return 'Otro proceso está tomando esa transferencia en este momento. Esperá un minuto y refrescá la bandeja.';
+  if (st === 'ignored') return 'Esa transferencia fue marcada como "no corresponde". Un admin la puede reabrir desde la bandeja.';
+  if (!mv) return 'La transferencia elegida no existe. Refrescá la bandeja.';
+  return `Esa transferencia no se puede tomar ahora (estado ${st || '?'}). Refrescá la bandeja.`;
+}
 function _bankFromKey(fromName) {
   const k = _normName(fromName);
   return k.length >= BANK_IDENTITY_MIN_NAME ? k : null;
@@ -2427,11 +2456,14 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
 
   // 1) Reclamar el movimiento (pending → claiming). Una asignación manual también
   //    puede tomar un movimiento frenado (needs_review / error / no_match).
+  //    #225: la asignación acepta también 'shadow_matched' y un 'claiming' viejo.
   const movClaim = await BankMovement.findOneAndUpdate(
-    { movementId: movement.movementId, matchStatus: { $in: assign ? ['pending', 'no_match', 'needs_review', 'error'] : ['pending'] } },
+    assign ? _bankAgentClaimFilter(movement.movementId) : { movementId: movement.movementId, matchStatus: 'pending' },
     { $set: { matchStatus: 'claiming' } }, { new: true }
   );
   if (!movClaim) return { ok: false, reason: 'claimed' }; // ya lo tomó otro proceso / ya no está pendiente
+  // Comprobante que había quedado atado por el match en sombra (la asignación no trae comprobante).
+  const _shadowCompId = assign && !compId ? (movClaim.matchedComprobanteId || null) : null;
 
   // 2) Reclamar el comprobante (no cargado/tomado todavía).
   if (compId) {
@@ -2628,11 +2660,12 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
     const txId = uuidv4();
     await BankMovement.updateOne({ movementId: movement.movementId }, {
       $set: Object.assign(
-        { matchStatus: assign ? 'manual_charged' : 'auto_charged', matchedUserId: user.id, matchedUsername: user.username, matchedComprobanteId: compId, chargedAt: new Date(), transactionId: txId, chargeSource: assign ? 'assigned' : 'auto', chargeError: null },
+        { matchStatus: assign ? 'manual_charged' : 'auto_charged', matchedUserId: user.id, matchedUsername: user.username, matchedComprobanteId: compId || _shadowCompId, chargedAt: new Date(), transactionId: txId, chargeSource: assign ? 'assigned' : 'auto', chargeError: null },
         assign ? { assignedBy: agentLabel, assignedAt: new Date() } : {}
       )
     });
     if (compId) await Comprobante.updateOne({ id: compId }, { $set: { bankMatchStatus: 'auto_charged', matchedMovementId: movement.movementId, autoCharged: true } });
+    else if (_shadowCompId) await Comprobante.updateOne({ id: _shadowCompId }, { $set: { bankMatchStatus: 'manual_charged', matchedMovementId: movement.movementId, autoCharged: true } }).catch(() => {});
     charged = true; // ya acreditó: cualquier error posterior NO debe disparar reintento
 
     try { await recordUserActivity(user.id, 'deposit', Number(amount)); } catch (_) {}
@@ -9064,11 +9097,16 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
       const mv = await BankMovement.findOne({ movementId: _bankMovementId }).lean();
       if (!mv || mv.direction !== 'Inbound') return res.status(400).json({ error: 'La transferencia elegida no existe.' });
       if (!_amountsEqual(mv.amount, amount)) return res.status(400).json({ error: `El monto ($${Number(amount).toLocaleString('es-AR')}) no coincide con la transferencia elegida ($${Number(mv.amount).toLocaleString('es-AR')}).` });
-      _bankClaimed = await BankMovement.findOneAndUpdate(
-        { movementId: _bankMovementId, matchStatus: { $in: ['pending', 'no_match', 'needs_review', 'error'] } },
-        { $set: { matchStatus: 'claiming' } }, { new: false }
-      );
-      if (!_bankClaimed) return res.status(409).json({ error: 'Esa transferencia ya fue acreditada (o la está tomando otro proceso). Refrescá la bandeja.' });
+      // #225: acepta también 'shadow_matched' (match en sombra) y un 'claiming' viejo.
+      _bankClaimed = await BankMovement.findOneAndUpdate(_bankAgentClaimFilter(_bankMovementId), { $set: { matchStatus: 'claiming' } }, { new: false });
+      if (!_bankClaimed) {
+        const _now = await BankMovement.findOne({ movementId: _bankMovementId }).select('matchStatus matchedUsername updatedAt').lean();
+        logger.warn(`[bank] ${req.user.username} quiso anclar la carga de $${amount} a ${user.username} con el movimiento ${_bankMovementId} y no se pudo tomar: estado=${_now ? _now.matchStatus : 'inexistente'} matched=${(_now && _now.matchedUsername) || '-'}`);
+        return res.status(409).json({ error: _bankClaimFailText(_now) });
+      }
+      if (_bankClaimed.matchedUsername && String(_bankClaimed.matchedUsername).toLowerCase() !== String(user.username).toLowerCase()) {
+        logger.warn(`[bank] movimiento ${_bankMovementId} estaba matcheado a @${_bankClaimed.matchedUsername} y ${req.user.username} lo ancla a @${user.username}`);
+      }
     }
     const _bankRelease = (toStatus, extra) => _bankReleaseClaim(_bankMovementId, _bankClaimed, toStatus, extra);
 
@@ -9142,6 +9180,11 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
             matchStatus: 'manual_charged', matchedUserId: user.id, matchedUsername: user.username, chargedAt: new Date(),
             transactionId: _depTxId, chargeSource: 'manual_link', assignedBy: req.user.username || null, assignedAt: new Date(), chargeError: null
           } });
+          // #225 si venía de un match en sombra con comprobante, ese comprobante queda
+          // cerrado (igual que la carga manual legacy): no se vuelve a matchear.
+          if (_bankClaimed.matchedComprobanteId) {
+            await Comprobante.updateOne({ id: _bankClaimed.matchedComprobanteId }, { $set: { bankMatchStatus: 'manual_charged', matchedMovementId: _bankMovementId, autoCharged: true } }).catch(() => {});
+          }
         } catch (linkErr) { logger.warn(`[bank] no se pudo vincular la carga manual al movimiento ${_bankMovementId}: ${linkErr.message}`); }
         _emitHgcashUpdate('cargado', _bankMovementId);
       } else {
@@ -17069,8 +17112,10 @@ const BANK_TRAY_OPEN_STATES = ['pending', 'no_match', 'needs_review', 'error', '
 async function _bankReleaseClaim(movementId, prev, toStatus, extra) {
   if (!movementId || !prev) return;
   try {
+    // #225 si lo tomado era un 'claiming' viejo, vuelve a 'pending' (nunca a 'claiming').
+    const back = toStatus || ((prev.matchStatus && prev.matchStatus !== 'claiming') ? prev.matchStatus : 'pending');
     await BankMovement.updateOne({ movementId, matchStatus: 'claiming' },
-      { $set: Object.assign({ matchStatus: toStatus || prev.matchStatus || 'pending' }, extra || {}) });
+      { $set: Object.assign({ matchStatus: back }, extra || {}) });
   } catch (_) {}
   _emitHgcashUpdate('liberado', movementId);
 }
@@ -17282,7 +17327,8 @@ app.post('/api/admin/bank/movements/:movementId/reopen', authMiddleware, adminMi
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo el administrador principal' });
     const movementId = String(req.params.movementId);
     const upd = await BankMovement.findOneAndUpdate(
-      { movementId, direction: 'Inbound', matchStatus: { $in: ['ignored', 'error', 'needs_review', 'no_match', 'shadow_matched'] } },
+      // #225 'claiming' también: destraba un reclamo que quedó colgado (sólo admin general).
+      { movementId, direction: 'Inbound', matchStatus: { $in: ['ignored', 'error', 'needs_review', 'no_match', 'shadow_matched', 'claiming'] } },
       { $set: { matchStatus: 'pending', resolution: null, resolutionNote: null, resolvedBy: null, resolvedAt: null, chargeError: null } },
       { new: true }
     );

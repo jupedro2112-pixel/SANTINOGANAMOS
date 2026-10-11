@@ -14093,7 +14093,8 @@ function _bankRowHtml(m) {
     let acciones = '';
     if (open && _bankPerms.canAssign) acciones += '<button class="btn btn-sm btn-primary" onclick="openBankAssign(\'' + escapeHtml(m.movementId) + '\')">👤 Asignar</button> ';
     if (open && _bankPerms.isAdmin) acciones += '<button class="btn btn-sm btn-secondary" onclick="bankResolve(\'' + escapeHtml(m.movementId) + '\')" title="Marcar que NO corresponde acreditar">🚫</button> ';
-    if (isIn && !open && _bankPerms.isAdmin && ['ignored', 'error'].includes(m.matchStatus)) acciones += '<button class="btn btn-sm btn-secondary" onclick="bankReopen(\'' + escapeHtml(m.movementId) + '\')">↩️ Reabrir</button>';
+    // #225 'claiming' (Tomando…) también se puede reabrir: destraba un reclamo colgado.
+    if (isIn && !open && _bankPerms.isAdmin && ['ignored', 'error', 'claiming'].includes(m.matchStatus)) acciones += '<button class="btn btn-sm btn-secondary" onclick="bankReopen(\'' + escapeHtml(m.movementId) + '\')" title="Vuelve a pendiente">↩️ Reabrir</button>';
     if (m.matchedUserId) acciones += ' <button class="btn btn-sm btn-secondary" onclick="bankOpenChat(\'' + escapeHtml(m.matchedUserId) + '\',\'' + escapeHtml(m.matchedUsername || '') + '\')" title="Abrir chat">💬</button>';
     return '<tr data-mid="' + escapeHtml(m.movementId) + '"' + (open ? ' style="background:rgba(212,130,10,.08);"' : '') + '>' +
         '<td style="white-space:nowrap;">' + escapeHtml(hora) + '</td>' +

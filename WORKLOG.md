@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-09** (última entrada: #224)
+> **Última actualización: 2026-10-11** (última entrada: #225)
 
 ---
 
@@ -53,6 +53,48 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-11 — Banco: "Esa transferencia ya fue acreditada" al anclar una carga a una transferencia con comprobante verificado
+
+### 225. Depositar / Asignar no podían tomar un movimiento en "Match (sombra)" (todas las transferencias con comprobante OK quedaban inasignables)
+- **Pedido del owner:** captura del panel con el toast rojo "Esa transferencia ya fue
+  acreditada (o la está tomando otro proceso). Refrescá la bandeja." al Depositar eligiendo
+  una transferencia de la bandeja; "es un error que sigue pasando". Logs de las 2 instancias
+  de EB del 2026-10-11 (BundleLogs): el banco corre en **modo sombra** (decenas de
+  `[hgcash] shadow match user=… movement=…`), sin ninguna línea del 409 (no se logueaba).
+- **Causa (código, no datos):** en modo sombra el match comprobante↔transferencia NO carga:
+  deja el `BankMovement` en `matchStatus:'shadow_matched'`, le avisa al cliente
+  (`/sys_comprobante_ok`) y le dice al agente en interno "cargale ese monto en GANAMOS y
+  registralo acá con Depositar". El modal Depositar lista la bandeja de pendientes (que
+  incluye `shadow_matched`) y, si hay UNA transferencia por ese monto, la propone sola.
+  Pero el candado de `/api/admin/deposit` sólo tomaba
+  `['pending','no_match','needs_review','error']` → `findOneAndUpdate` no matcheaba → 409
+  con un texto que decía "ya fue acreditada" aunque no lo estaba. "👤 Asignar" de la
+  bandeja tenía el MISMO filtro en `hgcashAutoCarga({assign})` ("Otro proceso tomó esta
+  transferencia"). Resultado: justamente las transferencias YA verificadas contra el
+  comprobante eran las que no se podían anclar; el agente terminaba cargando "sin
+  movimiento" y el cierre diario las marcaba como diferencia.
+- **Fix (server.js):** `BANK_AGENT_CLAIMABLE_STATES` = pending · no_match · needs_review ·
+  error · **shadow_matched**, y `_bankAgentClaimFilter(movementId)` que además acepta un
+  `claiming` VIEJO (más de `BANK_STALE_CLAIM_MS` = 10 min sin tocarse: proceso caído entre
+  el reclamo y la carga; antes quedaba trabado para siempre). Lo usan el anclaje de
+  Depositar y la asignación de la bandeja. `_bankReleaseClaim` nunca devuelve a
+  `claiming` (un reclamo viejo liberado vuelve a `pending`). Al acreditar, el comprobante
+  que había quedado atado por el match en sombra (`matchedComprobanteId`) pasa a
+  `bankMatchStatus:'manual_charged'` y el movimiento conserva ese vínculo (la asignación
+  lo pisaba con null). Si NO se puede tomar, el 409 ahora dice la verdad según el estado
+  real (`_bankClaimFailText`: "ya fue acreditada a @usuario" / "otro proceso la está
+  tomando, esperá un minuto" / "marcada como no corresponde, un admin la puede reabrir") y
+  queda en el log `[bank] <agente> quiso anclar … estado=…`. Si el movimiento estaba
+  matcheado a OTRO usuario y el agente lo ancla a uno distinto, se loguea (no se bloquea:
+  el agente manda). `/reopen` (admin general) también destraba un `claiming`.
+- **Panel (admin-sw v59):** en la bandeja, "↩️ Reabrir" aparece también para un movimiento
+  en "Procesando" (`claiming`), para destrabarlo a mano.
+- **Validado:** `node --check` ✅, `check-tdz` ✅, prueba en frío del filtro de reclamo y de
+  los textos del 409 ✅. No se puede probar contra Mongo acá. **Back necesita redeploy.**
+- **Probar en deploy:** transferencia con comprobante verificado (fila "Match (sombra)") →
+  Depositar al cliente con ese monto → la transferencia se propone sola → Depositar →
+  OK, la fila pasa a "Cargada manual (manual anclada)". Lo mismo con "👤 Asignar".
 
 ## Sesión 2026-10-09 — Comunidad por equipo: detección del inicio del usuario más tolerante + probador en el panel
 

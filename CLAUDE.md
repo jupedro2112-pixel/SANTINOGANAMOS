@@ -275,7 +275,10 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   candado por coelsa). Si no, el cierre diario (`src/services/bankCloseService.js`,
   Telegram 00:05 ART) lo marca. Mismos nombres de modelos/endpoints/funciones del panel
   que el gemelo: no renombrar. El cruce con el cajero queda `sin_datos` hasta que 1girox
-  informe el saldo del agente.
+  informe el saldo del agente. **Lo que un agente puede TOMAR de la bandeja (Depositar
+  anclado / Asignar) sale de `_bankAgentClaimFilter` (#225):** incluye `shadow_matched`
+  (en modo sombra el match con comprobante deja el movimiento ahí y el agente lo registra
+  con Depositar) y un `claiming` viejo (>10 min). No volver a un `$in` suelto de estados.
 - **hgcash: token/secreto/reenvío pueden venir del PANEL (#223):** `Config['hgcashCredentials']`
   (cifrado con `JWT_SECRET`) y `Config['hgcashFanout']` mandan sobre SSM. Leer SIEMPRE con
   `hgcashPay.getToken()` / `_hgcashWebhookSecrets()` / `_getHgcashFanout()`, nunca
