@@ -99,7 +99,7 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   guardan CIFRADOS (AES-256-GCM con clave derivada de `JWT_SECRET`) en
   `Config['hgcashCredentials']`; `_loadHgcashCredentials` (8 s tras el boot y cada 60 s)
   los pone en memoria (`hgcashPay.setTokenOverride`, `_hgcashPanelSecret`). Prioridad
-  panel > SSM; el webhook acepta la firma con cualquiera de los dos secretos
+  panel > SSM; el webhook acepta SOLO el secreto del panel si hay uno (#226; si no, el de SSM)
   (`_hgcashWebhookSecrets()`). El POST prueba el token con `GET /accounts` antes de guardar
   y limpia `Config['hgcash'].accountId`. **Siempre `hgcashPay.getToken()` /
   `_hgcashWebhookSecrets()`, nunca `process.env.HGCASH_*` directo.** Si cambia
@@ -109,6 +109,10 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   vale `HGCASH_FANOUT_URL`); anti-círculo por `X-Forwarded-By` y nunca a la URL propia;
   `_hgcashFanoutStats` muestra el último resultado por destino. Endpoints
   `GET/POST/DELETE /api/admin/hgcash/credentials` y `…/fanout` (admin general).
+- **Webhook hgcash — secreto exclusivo (#226, 2026-10-13):** si hay secreto cargado en el panel,
+  `_hgcashWebhookSecrets()` devuelve SOLO ese: el `HGCASH_WEBHOOK_SECRET` de SSM deja de valer y
+  los avisos de la cuenta hgcash vieja se rechazan. Sin secreto en el panel vale el de SSM. ⚠️ Si
+  las dos cuentas comparten usuario/secreto de hgcash esto no alcanza (no hay filtro por CBU destino).
 - **Comprobante verificado con el banco (#216):** cuando un comprobante leído por la IA
   coincide con una transferencia confirmada por hgcash (`hgcashAutoCarga`), el cliente
   recibe **`/sys_comprobante_ok`** ("en 1 minuto tenés tu carga"; `_hgComprobanteOkMessage`)
