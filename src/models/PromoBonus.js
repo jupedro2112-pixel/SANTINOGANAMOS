@@ -22,6 +22,9 @@ const promoBonusSchema = new mongoose.Schema({
   // % extra sobre la carga del usuario (ej: 50, 100). 0 si es un regalo
   // de monto fijo (ver montoFijoARS).
   percent: { type: Number, required: true, min: 0 },
+  // #CAP tope propio del % (copiado del lote al activar): null = tope global.
+  capARS:       { type: Number, default: null },
+  capExcessPct: { type: Number, default: null },
 
   // Regalo de monto fijo en pesos (ej: 5000). Si es > 0, el bono no es
   // un % sobre la carga sino un regalo directo que el agente acredita.

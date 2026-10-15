@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-11** (última entrada: #226)
+> **Última actualización: 2026-10-15** (última entrada: #226)
 
 ---
 
@@ -53,6 +53,27 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-15
+
+### 227. Tope PROPIO por lote: "100% hasta $X y el resto al Y%" configurable en cada lote (réplica #189 de AUTOREEMBOLSOSjygactivo)
+- **Owner:** que un lote con bono % se pueda limitar ESE bono: hasta cierto monto el % completo y
+  el resto a otro %, en la carga automática por banco y en la manual, marcando el bono usado.
+- **Antes:** el % de lote usaba sólo el tope GLOBAL del bono de primera carga / instalar la app
+  (réplica #172). Ahora cada lote puede traer el suyo; vacío = global.
+- **Modelos:** `NotifBatch.capARS` / `capExcessPct` y `PromoBonus.capARS` / `capExcessPct` (null =
+  global; `capARS` 0 = sin tope; `capExcessPct` 0 = el excedente no recibe bono).
+- **Backend (plataforma GANAMOS):** `_loteCfgFor(src, globalCfg)` devuelve el tope efectivo con
+  la forma de config que usa ESTE repo; lo usan los hooks de carga (banco automático y manual) en
+  `_loteBonusAmount` / `_loteCapTxt`, el texto al cliente y el `capTxt` del cartel del agente. El
+  claim del lote devuelve `capARS/capExcessPct`; al activar el bono se copian del lote;
+  `POST /api/admin/notif-batches` los valida (0–100M / 0–200) sólo para % (si mandan sólo el %
+  excedente, el tope se fija al global de hoy). Marcar usado / contar usos: sin cambios.
+- **Panel (admin-sw v60 → v61):** bloque "💰 Tope de ESTE bono" (ids `nbCapARS` / `nbCapExcess`, ejemplo en vivo `nbCapHint`) debajo del monto; el historial de lotes muestra "tope $X +Y% resto" / "sin tope".
+- **Validado:** `node --check` OK (server.js, admin.js, admin-sw, modelos); HTML del panel
+  balanceado. Sin runtime. Redeploy (back + panel). **PROBAR:** lote 100% automático con tope
+  $20.000 y 10% resto → carga de $30.000 = $21.000 de bono (auto y manual), bono usado; lote sin
+  tope propio → sigue el global.
 
 ## Sesión 2026-10-13
 

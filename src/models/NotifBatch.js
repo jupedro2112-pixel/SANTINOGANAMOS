@@ -57,6 +57,10 @@ const notifBatchSchema = new mongoose.Schema({
   // cliente para USAR el bono DESPUÉS de canjearlo (default 24). Vencido ese plazo el
   // PromoBonus queda 'expired' aunque el lote siga vigente para canjear.
   useHours: { type: Number, default: 24, min: 1 },
+  // #CAP TOPE PROPIO del % de ESTE lote (sólo % automático): el % completo aplica hasta `capARS`
+  // y el excedente de la carga va al `capExcessPct`. null = tope global; capARS 0 = sin tope.
+  capARS: { type: Number, default: null },
+  capExcessPct: { type: Number, default: null },
   sentAt: { type: Date, default: Date.now, index: true },
   expiresAt: { type: Date, required: true, index: true },
   title: { type: String, default: '', trim: true, maxlength: 100 },

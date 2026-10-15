@@ -7428,6 +7428,7 @@ function nbFormChanged() {
     show('nbCodeWrap', mode === 'code');
     show('nbUseHoursWrap', mode === 'code' && gift === 'percent'); // #198 horas para usar el bono tras canjear (solo código + %)
     show('nbRolloverWrap', gift === 'fixed' && window._platformMode !== 'manual'); // #196 GANAMOS sin rollover
+    show('nbCapWrap', gift === 'percent'); nbCapHint(); // #CAP tope propio del lote
     const lbl = document.getElementById('nbAmountLabel');
     if (lbl) lbl.textContent = gift === 'fixed' ? 'Monto ($ fichas)' : 'Monto (%)';
     show('nbListWrap', aud === 'list');
@@ -7435,6 +7436,22 @@ function nbFormChanged() {
     show('nbAllWrap', aud === 'all');
     show('nbPublicWrap', aud === 'public');
 }
+
+// #CAP ejemplo en vivo del tope propio del lote
+function nbCapHint() {
+    const h = document.getElementById('nbCapHint'); if (!h) return;
+    const pctN = Number(document.getElementById('nbAmount')?.value) || 0;
+    const capV = document.getElementById('nbCapARS')?.value ?? '';
+    const exV = document.getElementById('nbCapExcess')?.value ?? '';
+    if (capV === '' && exV === '') h.textContent = 'Sin tope propio: rige el tope global del bono por instalar la app.';
+    else if (Number(capV) === 0) h.textContent = 'Sin tope: el ' + (pctN || 'X') + '% se aplica sobre TODA la carga.';
+    else {
+        const cap = Number(capV) || 0, ex = exV === '' ? null : Number(exV), ej = cap * 2;
+        const bono = Math.round(cap * pctN / 100 + (ex == null ? 0 : (ej - cap) * ex / 100));
+        h.textContent = 'Ej.: carga de $' + ej.toLocaleString('es-AR') + ' → ' + (pctN || 'X') + '% hasta $' + cap.toLocaleString('es-AR') + (ex == null ? ' + el % excedente global sobre el resto' : ' + ' + ex + '% sobre los $' + (ej - cap).toLocaleString('es-AR') + ' restantes = $' + bono.toLocaleString('es-AR') + ' de bono') + '.';
+    }
+}
+window.nbCapHint = nbCapHint;
 
 function nbGenCode() {
     // Mismo alfabeto sin confundibles que el server.
@@ -7456,6 +7473,9 @@ function _nbCollectBody() {
         amount: Number(document.getElementById('nbAmount')?.value || 0),
         validHours: Number(document.getElementById('nbValidHours')?.value || 24),
         useHours: Number(document.getElementById('nbUseHours')?.value) || 24, // #198
+        // #CAP tope propio del lote (vacío = global)
+        capARS: gift === 'percent' && (document.getElementById('nbCapARS')?.value ?? '') !== '' ? Math.round(Number(document.getElementById('nbCapARS').value)) : null,
+        capExcessPct: gift === 'percent' && (document.getElementById('nbCapExcess')?.value ?? '') !== '' ? Math.round(Number(document.getElementById('nbCapExcess').value)) : null,
         title: document.getElementById('nbTitle')?.value.trim() || '',
         message: document.getElementById('nbMessage')?.value.trim() || '',
         audienceType: aud
@@ -7600,7 +7620,7 @@ async function loadNotifBatches() {
 function _nbBatchRowHtml(b) {
     const vigente = new Date(b.expiresAt).getTime() > Date.now();
     const gift = b.giftType === 'percent'
-        ? ('+' + b.amount + '%')
+        ? ('+' + b.amount + '%' + (b.capARS != null ? (Number(b.capARS) === 0 ? ' · sin tope' : ' · tope $' + Number(b.capARS).toLocaleString('es-AR') + (b.capExcessPct != null ? ' +' + b.capExcessPct + '% resto' : '')) : ''))
         : ('$' + Number(b.amount).toLocaleString('es-AR') + (b.rolloverX > 0 ? ' x' + b.rolloverX : ''));
     const modo = b.mode === 'code' ? ('🔑 ' + escapeHtml(b.code || '')) : ('⏰ ' + b.validHours + ' hs');
     let aud;
