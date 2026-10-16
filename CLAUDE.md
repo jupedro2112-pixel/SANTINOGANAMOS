@@ -293,6 +293,11 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   acoplada a `USERS_LIST_FIELDS` del backend (columna nueva ⇒ sumar campo al select).
   Detalle completo de trampas en `docs/ARCHITECTURE.md` §9.
 
+- **Lotes y Cronograma (#228):** el POST `/api/admin/notif-batches` es un wrapper de
+  `_createNotifBatchFromBody(body, user)`; cualquier validación/efecto nuevo del lote va en esa
+  función (así lo heredan las campañas programadas). Las rutas del cronograma son
+  `/api/admin/cronograma*` porque `/api/admin/campaigns` YA es de publicistas: no reusar ese path.
+
 ## Flujo de trabajo del asistente
 
 1. Leer `WORKLOG.md` al iniciar.

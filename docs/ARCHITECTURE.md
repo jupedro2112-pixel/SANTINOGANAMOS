@@ -1534,3 +1534,19 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
 - **`checkUsernameAvailability` (PWA)**: existe pero no se dispara — mejora pendiente.
 - **vercel.json es un artefacto** de un deploy anterior; el deploy real es AWS EB.
 - **Env DB_PASSWORD ya no se usa** (sección Base de Datos eliminada 2026-07-09).
+
+## Cronograma de campañas programadas (#228, réplica del #190 de AUTOREEMBOLSOSjygactivo)
+
+- **Modelo `ScheduledCampaign`**: `payload` = body exacto del POST de lotes, `parts[]` (tandas con
+  `runAt`/`status`/`usernames`/`batchId`), `paused/cancelled`. Estado de la campaña derivado al leer.
+- **`_createNotifBatchFromBody(body, user)`**: el cuerpo del `POST /api/admin/notif-batches` (stub de
+  `res` → `{http, body}`). El endpoint y el programador llaman a la misma función: toda validación o
+  efecto nuevo del lote va AHÍ.
+- **Motor `_schedTick`** (setInterval 60 s en cada instancia): claim posicional
+  `parts.$.status scheduled→sending`, crea el lote, marca sent/error; tanda colgada >15 min → error.
+  Tandas: audiencia resuelta una vez y repartida sin repetir; cada tanda = lote `list`.
+- **Rutas** `/api/admin/cronograma*` (+ `/api/admin/cronograma-report?month=`). `/api/admin/campaigns`
+  es de publicistas: no reusar.
+- **Rangos de audiencia**: `_notifInactiveRange` sobre la audiencia "inactivos"; campos `audienceDaysMax/dateFrom/dateTo/audienceLabel` en NotifBatch.
+- **Panel**: sección 📅 Cronograma (calendario, lista con acciones, edición, comparativo semanal) +
+  bloque "📅 Cuándo sale" en el formulario del lote.

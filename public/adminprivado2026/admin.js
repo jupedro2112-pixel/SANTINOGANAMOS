@@ -4972,6 +4972,7 @@ function switchSection(section) {
     if (section === 'datos') loadDatos();
     if (section === 'datos2') loadDatos2();
     if (section === 'notifications') loadNotificationsPanel();
+    if (section === 'cronograma') loadCronograma(); // #190
     if (section === 'referrals') loadAdminReferralSummary();
     if (section === 'roulette') loadRouletteAdmin();
     if (section === 'automations') loadAutomations();
@@ -7435,6 +7436,7 @@ function nbFormChanged() {
     show('nbInactiveWrap', aud === 'inactive');
     show('nbAllWrap', aud === 'all');
     show('nbPublicWrap', aud === 'public');
+    try { updateGiftBatchScheduleUI(); } catch (_) {} // #190
 }
 
 // #CAP ejemplo en vivo del tope propio del lote
@@ -7490,6 +7492,11 @@ function _nbCollectBody() {
         body.audienceDays = Number(document.getElementById('nbAudienceDays')?.value || 0);
         const lim = document.getElementById('nbAudienceLimit')?.value;
         if (lim) body.audienceLimit = Number(lim);
+        // #190 rangos: "hasta Y días" o "entre fechas" (con fechas, los días se ignoran)
+        const dmax = (document.getElementById('nbAudienceDaysMax')?.value || '').trim();
+        const df = (document.getElementById('nbDateFrom')?.value || '').trim(), dt = (document.getElementById('nbDateTo')?.value || '').trim();
+        if (dmax) body.audienceDaysMax = Number(dmax);
+        if (df || dt) { body.dateFrom = df || null; body.dateTo = dt || null; }
     }
     if (aud === 'public') {
         const mc = document.getElementById('nbMaxClaims')?.value;
@@ -7575,18 +7582,29 @@ async function nbSendBatch() {
     } else {
         lines.push('％ Este regalo lo aplicás VOS en la próxima carga de cada uno (cartel verde en su chat).');
     }
+    // #190 programar / tandas
+    const _schedParts = _giftBatchScheduleParts();
+    if (_schedParts === false) return;
+    if (_schedParts) lines.push('', '📅 PROGRAMADA: ' + (_schedParts.length > 1 ? _schedParts.length + ' tandas sin repetir usuarios: ' + _schedParts.map((p, i) => (i + 1) + ') ' + p.runAt.replace('T', ' ')).join(' · ') : 'sale el ' + _schedParts[0].runAt.replace('T', ' ')) + ' (hora Argentina). La audiencia se recalcula al enviar. NO se manda nada ahora.');
     if (!confirm(lines.join('\n'))) return;
     if (btn) btn.disabled = true;
     if (status) status.textContent = '⏳ Enviando…';
     try {
-        const r = await authFetch('/api/admin/notif-batches', { method: 'POST', body: JSON.stringify(body) });
+        // #190: programada → va al cronograma con el MISMO body como payload
+        const r = await authFetch(_schedParts ? '/api/admin/cronograma' : '/api/admin/notif-batches', { method: 'POST', body: JSON.stringify(_schedParts ? { name: body.name, payload: body, parts: _schedParts } : body) });
         const j = await r.json();
         if (!r.ok || !j.success) {
             showToast(escapeHtml(j.error || 'No se pudo enviar el lote'), 'error');
             if (status) status.textContent = '';
             return;
         }
-        if (j.isPublic) {
+        if (j.scheduled) {
+            showToast('Campaña programada', 'success');
+            if (status) status.innerHTML = '📅 ' + escHtml(j.message || 'Campaña programada') + ' <a href="#" onclick="switchSection(\'cronograma\');return false" style="color:#a5b4fc">ver cronograma</a>';
+            const w = document.getElementById('giftBatchWhen'); if (w) w.value = 'now';
+            const ra = document.getElementById('giftBatchRunAt'); if (ra) ra.value = '';
+            updateGiftBatchScheduleUI();
+        } else if (j.isPublic) {
             if (status) status.textContent = '✅ Código público creado: ' + j.code;
             prompt('📣 Código PÚBLICO listo — copialo y publicalo en Telegram/redes:', j.code);
         } else {
@@ -7625,7 +7643,7 @@ function _nbBatchRowHtml(b) {
     const modo = b.mode === 'code' ? ('🔑 ' + escapeHtml(b.code || '')) : ('⏰ ' + b.validHours + ' hs');
     let aud;
     if (b.isPublic) aud = '📣 público (' + (b.claimed || 0) + (b.maxClaims ? ' de ' + b.maxClaims : '') + ' canjes)';
-    else if (b.audienceType === 'inactive') aud = '😴 inactivos ' + (b.audienceDays || '?') + 'd' + (b.audienceLimit ? ' (cupo ' + b.audienceLimit + ')' : '');
+    else if (b.audienceType === 'inactive') aud = '😴 ' + (b.audienceLabel || ('inactivos ' + (b.audienceDays || '?') + 'd')) + (b.audienceLimit ? ' (cupo ' + b.audienceLimit + ')' : '');
     else if (b.audienceType === 'all') aud = '🌍 todos';
     else aud = '📋 lista';
     const fecha = new Date(b.sentAt).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -15084,3 +15102,282 @@ window.wrfAddTierRow = wrfAddTierRow; window.wrfSaveTiers = wrfSaveTiers; window
 window.wrfPreview = wrfPreview; window.wrfPublish = wrfPublish; window.wrfMarkDelivered = wrfMarkDelivered;
 window.wrfOpenBatch = wrfOpenBatch; window.wrfDetailFilter = wrfDetailFilter; window.wrfCloseDetail = wrfCloseDetail;
 window.wrfCancelBatch = wrfCancelBatch; window.loadWeeklyRefundBanner = loadWeeklyRefundBanner; window.wrfRefreshAll = wrfRefreshAll;
+
+// ============================================================================
+// #190 CRONOGRAMA — campañas programadas, calendario mensual, tandas y comparativo
+// ============================================================================
+// Programar desde el formulario de lote ("📅 Cuándo sale") o desde la sección 📅 Cronograma.
+// El payload que viaja es EL MISMO del lote; el server lo dispara a la hora (hora Argentina).
+let _cronMonth = null;           // 'YYYY-MM'
+let _cronData = { campaigns: [], today: '' };
+let _cronEditId = null;
+let _cronDayFilter = null;
+const CRON_STATUS = {
+    scheduled: { t: 'Programada', c: '#60a5fa' }, sending: { t: 'Enviando', c: '#f59e0b' }, sent: { t: 'Enviada', c: '#22c55e' },
+    paused: { t: 'Pausada', c: '#9ca3af' }, error: { t: 'Error', c: '#ef4444' }, cancelled: { t: 'Cancelada', c: '#6b7280' }
+};
+function _cronArtIso(d) { return new Date(new Date(d).getTime() - 3 * 3600 * 1000).toISOString(); }
+function _cronArtKey(d) { return _cronArtIso(d).slice(0, 10); }
+function _cronArtHM(d) { return _cronArtIso(d).slice(11, 16); }
+// Date → 'YYYY-MM-DDTHH:mm' en hora Argentina (para <input type=datetime-local>)
+function _cronArtLocalInput(d) { return _cronArtIso(d).slice(0, 16); }
+function _cronFmt(d) { const k = _cronArtKey(d); return k.slice(8, 10) + '/' + k.slice(5, 7) + ' ' + _cronArtHM(d); }
+function _cronBadge(st) { const s = CRON_STATUS[st] || { t: st, c: '#888' }; return '<span style="background:' + s.c + ';color:#fff;border-radius:4px;padding:1px 6px;font-size:.72rem;font-weight:600">' + s.t + '</span>'; }
+function _cronGiftTxt(g) {
+    if (!g) return '';
+    const base = g.giftType === 'percent' ? ('+' + g.amount + '%' + (g.applyMode === 'auto' ? ' auto' : ' c/agente') + (g.capARS != null ? (Number(g.capARS) === 0 ? ' sin tope' : ' tope $' + Number(g.capARS).toLocaleString('es-AR')) : '')) : ('$' + Number(g.amount || 0).toLocaleString('es-AR') + ' fichas');
+    return base + ' · ' + (g.mode === 'code' ? 'código' : 'por tiempo ' + g.validHours + 'h');
+}
+
+// ── Formulario de lote: programar / tandas ──
+function updateGiftBatchScheduleUI() {
+    const when = (document.getElementById('giftBatchWhen') || {}).value || 'now';
+    const aud = (document.querySelector('input[name="nbAudience"]:checked') || {}).value || 'list';
+    const sched = when === 'schedule';
+    const runW = document.getElementById('giftBatchRunAtWrap');
+    const partsW = document.getElementById('giftBatchPartsWrap');
+    const timesW = document.getElementById('giftBatchPartsTimes');
+    const btn = document.getElementById('nbSendBtn');
+    const hint = document.getElementById('giftBatchScheduleHint');
+    if (runW) runW.style.display = sched ? '' : 'none';
+    if (partsW) partsW.style.display = (sched && aud !== 'public') ? '' : 'none';
+    if (btn) btn.textContent = sched ? '📅 Programar' : '🚀 Enviar lote';
+    const runAtEl = document.getElementById('giftBatchRunAt');
+    if (sched && runAtEl && !runAtEl.value) {
+        const d = new Date(Date.now() + 3600 * 1000); d.setMinutes(0, 0, 0);
+        runAtEl.value = _cronArtLocalInput(d);
+    }
+    const n = (sched && aud !== 'public') ? (Number((document.getElementById('giftBatchParts') || {}).value) || 1) : 1;
+    if (timesW) {
+        if (n > 1) {
+            const base = runAtEl && runAtEl.value ? new Date(runAtEl.value + ':00-03:00') : new Date(Date.now() + 3600 * 1000);
+            const prev = Array.from(timesW.querySelectorAll('input')).map((i) => i.value);
+            let html = '';
+            for (let i = 0; i < n; i++) {
+                const def = prev[i] || _cronArtLocalInput(new Date(base.getTime() + i * 5 * 3600 * 1000));
+                html += '<div><label class="form-label" style="display:block;margin-bottom:.2rem;font-size:.75rem">Tanda ' + (i + 1) + '/' + n + '</label><input type="datetime-local" id="giftBatchPartAt_' + i + '" class="form-input" style="width:200px" value="' + def + '" /></div>';
+            }
+            timesW.innerHTML = html; timesW.style.display = 'flex';
+        } else { timesW.innerHTML = ''; timesW.style.display = 'none'; }
+    }
+    if (hint) hint.textContent = !sched ? '' : (n > 1
+        ? 'La audiencia se resuelve al salir la PRIMERA tanda y se reparte en ' + n + ' partes iguales SIN repetir usuarios (el cupo limita el total). Cada tanda sale a su hora como un lote propio; en Cronograma ves cuál salió y cuál falta.'
+        : 'Se guarda como campaña programada y sale sola a esa hora (hora Argentina). La audiencia se calcula al momento del envío. Podés editarla, pausarla, duplicarla o borrarla desde 📅 Cronograma.');
+}
+// null = ahora; [] con error → showToast y devuelve false; si no, array de 'YYYY-MM-DDTHH:mm'
+function _giftBatchScheduleParts() {
+    const when = (document.getElementById('giftBatchWhen') || {}).value || 'now';
+    if (when !== 'schedule') return null;
+    const aud = (document.querySelector('input[name="nbAudience"]:checked') || {}).value || 'list';
+    const n = aud === 'public' ? 1 : (Number((document.getElementById('giftBatchParts') || {}).value) || 1);
+    const vals = [];
+    if (n > 1) { for (let i = 0; i < n; i++) vals.push(((document.getElementById('giftBatchPartAt_' + i) || {}).value || '').trim()); }
+    else vals.push(((document.getElementById('giftBatchRunAt') || {}).value || '').trim());
+    for (let i = 0; i < vals.length; i++) {
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(vals[i])) { showToast('Poné fecha y hora de la ' + (n > 1 ? 'tanda ' + (i + 1) : 'campaña'), 'error'); return false; }
+        if (new Date(vals[i] + ':00-03:00').getTime() < Date.now() - 60000) { showToast((n > 1 ? 'La tanda ' + (i + 1) : 'La fecha') + ' está en el pasado (hora Argentina)', 'error'); return false; }
+    }
+    return vals.map((v) => ({ runAt: v }));
+}
+
+// ── Sección Cronograma ──
+function cronMonthShift(d) {
+    const now = _cronArtKey(new Date()).slice(0, 7);
+    if (d === 0 || !_cronMonth) _cronMonth = now;
+    if (d !== 0) {
+        let [y, m] = _cronMonth.split('-').map(Number); m += d;
+        if (m < 1) { m = 12; y--; } if (m > 12) { m = 1; y++; }
+        _cronMonth = y + '-' + String(m).padStart(2, '0');
+    }
+    _cronDayFilter = null;
+    loadCronograma();
+}
+async function loadCronograma() {
+    if (!_cronMonth) _cronMonth = _cronArtKey(new Date()).slice(0, 7);
+    const lbl = document.getElementById('cronMonthLabel');
+    if (lbl) { const [y, m] = _cronMonth.split('-').map(Number); lbl.textContent = new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString('es-AR', { month: 'long', year: 'numeric', timeZone: 'UTC' }).replace(/^./, (c) => c.toUpperCase()); }
+    try {
+        const r = await authFetch('/api/admin/cronograma?month=' + _cronMonth);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'error');
+        _cronData = j;
+        _cronRenderCalendar(); _cronRenderList();
+    } catch (e) {
+        const l = document.getElementById('cronList'); if (l) l.innerHTML = '<span style="color:#f87171">No se pudo cargar el cronograma</span>';
+    }
+    loadCronReport();
+}
+function _cronRenderCalendar() {
+    const el = document.getElementById('cronCalendar'); if (!el) return;
+    const [y, m] = _cronMonth.split('-').map(Number);
+    const first = new Date(Date.UTC(y, m - 1, 1));
+    const daysIn = new Date(Date.UTC(y, m, 0)).getUTCDate();
+    const offset = (first.getUTCDay() + 6) % 7; // lunes = 0
+    const byDay = {};
+    for (const c of _cronData.campaigns || []) for (const p of c.parts || []) { const k = _cronArtKey(p.runAt); if (k.slice(0, 7) !== _cronMonth) continue; (byDay[k] = byDay[k] || []).push({ c, p }); }
+    let html = ['Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb', 'Dom'].map((d) => '<div class="cron-dow">' + d + '</div>').join('');
+    for (let i = 0; i < offset; i++) html += '<div class="cron-day off"></div>';
+    for (let d = 1; d <= daysIn; d++) {
+        const k = _cronMonth + '-' + String(d).padStart(2, '0');
+        const items = (byDay[k] || []).sort((a, b) => new Date(a.p.runAt) - new Date(b.p.runAt));
+        const isToday = k === _cronData.today;
+        let chips = '';
+        items.slice(0, 3).forEach(({ c, p }) => {
+            const st = c.cancelled ? 'cancelled' : (c.paused && p.status === 'scheduled' ? 'paused' : p.status);
+            const col = (CRON_STATUS[st] || {}).c || '#888';
+            chips += '<span class="cron-chip" style="background:' + col + (st === 'cancelled' ? ';opacity:.5' : '') + '" title="' + escHtml(c.name) + ' — ' + _cronArtHM(p.runAt) + (c.partsTotal > 1 ? ' (tanda ' + (p.idx + 1) + '/' + c.partsTotal + ')' : '') + '">' + _cronArtHM(p.runAt) + ' ' + escHtml(c.name || 'Campaña') + (c.partsTotal > 1 ? ' ' + (p.idx + 1) + '/' + c.partsTotal : '') + '</span>';
+        });
+        if (items.length > 3) chips += '<span style="color:#a5b4fc">+' + (items.length - 3) + ' más</span>';
+        html += '<div class="cron-day' + (isToday ? ' today' : '') + (_cronDayFilter === k ? ' cron-best' : '') + '" onclick="cronPickDay(\'' + k + '\')"><div class="n">' + d + (items.length ? ' <span style="color:#a5b4fc;font-weight:400">(' + items.length + ')</span>' : '') + '</div>' + chips + '</div>';
+    }
+    el.innerHTML = html;
+}
+function cronPickDay(k) { _cronDayFilter = (_cronDayFilter === k) ? null : k; _cronRenderCalendar(); _cronRenderList(); }
+function _cronRenderList() {
+    const el = document.getElementById('cronList'); if (!el) return;
+    let rows = (_cronData.campaigns || []).slice();
+    if (_cronDayFilter) rows = rows.filter((c) => (c.parts || []).some((p) => _cronArtKey(p.runAt) === _cronDayFilter));
+    rows.sort((a, b) => new Date(a.runAt) - new Date(b.runAt));
+    if (!rows.length) { el.innerHTML = '<span style="color:#888">' + (_cronDayFilter ? 'Nada programado el ' + _cronDayFilter.slice(8, 10) + '/' + _cronDayFilter.slice(5, 7) + '. ' : 'No hay campañas en este mes. ') + 'Armá una desde "➕ Nueva campaña programada".</span>'; return; }
+    el.innerHTML = (_cronDayFilter ? '<div style="color:#a5b4fc;font-size:.78rem;margin-bottom:.3rem">Filtrando el día ' + _cronDayFilter.slice(8, 10) + '/' + _cronDayFilter.slice(5, 7) + ' · <a href="#" onclick="cronPickDay(\'' + _cronDayFilter + '\');return false" style="color:#a5b4fc">ver todo el mes</a></div>' : '') + rows.map((c) => {
+        const parts = (c.parts || []).map((p) => {
+            const st = c.cancelled && p.status === 'scheduled' ? 'cancelled' : (c.paused && p.status === 'scheduled' ? 'paused' : p.status);
+            const ic = st === 'sent' ? '✅' : st === 'sending' ? '⏳' : st === 'error' ? '❌' : st === 'paused' ? '⏸️' : st === 'cancelled' ? '🚫' : '🕒';
+            return '<span title="' + escHtml(p.error || '') + '" style="white-space:nowrap">' + ic + ' ' + (c.partsTotal > 1 ? (p.idx + 1) + '/' + c.partsTotal + ' ' : '') + _cronFmt(p.runAt) + (p.count != null ? ' (' + p.count + ')' : '') + (p.batchId ? ' <a href="#" style="color:#a5b4fc" onclick="cronGoBatch(\'' + p.batchId + '\');return false">ver lote</a>' : '') + (p.error ? ' <span style="color:#f87171">' + escHtml(String(p.error).slice(0, 80)) + '</span>' : '') + '</span>';
+        }).join(' · ');
+        const pend = (c.parts || []).some((p) => p.status === 'scheduled' || p.status === 'error' || p.status === 'paused');
+        const acts = [];
+        if (!c.cancelled && pend) acts.push('<button class="btn btn-secondary" onclick="cronOpenEdit(\'' + c.id + '\')">✏️ Editar</button>');
+        if (!c.cancelled && pend) acts.push(c.paused ? '<button class="btn btn-secondary" onclick="cronAction(\'' + c.id + '\',\'resume\')">▶ Reanudar</button>' : '<button class="btn btn-secondary" onclick="cronAction(\'' + c.id + '\',\'pause\')">⏸ Pausar</button>');
+        if (!c.cancelled && pend) acts.push('<button class="btn btn-secondary" onclick="cronAction(\'' + c.id + '\',\'run-now\', true)">🚀 Enviar ahora</button>');
+        acts.push('<button class="btn btn-secondary" onclick="cronDuplicate(\'' + c.id + '\')">📄 Duplicar</button>');
+        if (!c.cancelled) acts.push('<button class="btn btn-secondary" style="color:#f87171" onclick="cronDelete(\'' + c.id + '\')">🗑️</button>');
+        return '<div class="cron-row">' +
+            '<div style="min-width:220px;flex:1"><div>' + _cronBadge(c.status) + ' <strong>' + escHtml(c.name || 'Campaña') + '</strong>' + (c.partsTotal > 1 ? ' <span style="color:#a5b4fc">' + c.partsSent + '/' + c.partsTotal + ' tandas</span>' : '') + '</div>' +
+            '<div style="color:#8fd3a8;font-size:.78rem;margin-top:2px">' + escHtml(c.audienceLabel || c.gift.audienceType || '') + (c.estimatedCount != null ? ' · ~' + Number(c.estimatedCount).toLocaleString('es-AR') + ' destinatarios' : '') + ' · ' + escHtml(_cronGiftTxt(c.gift)) + '</div>' +
+            (c.gift.message ? '<div style="color:#cbd5e1;font-size:.76rem;margin-top:2px;white-space:pre-wrap">' + escHtml((c.gift.title ? c.gift.title + ': ' : '') + c.gift.message).slice(0, 220) + '</div>' : '') +
+            '<div style="font-size:.76rem;margin-top:3px;color:#cbd5e1">' + parts + '</div>' +
+            (c.notes ? '<div style="font-size:.74rem;color:#a5b4fc;margin-top:2px">📝 ' + escHtml(c.notes) + '</div>' : '') +
+            '<div style="font-size:.7rem;color:#666;margin-top:2px">por ' + escHtml(c.createdBy || '') + '</div></div>' +
+            '<div class="acts">' + acts.join('') + '</div></div>';
+    }).join('');
+}
+function cronGoBatch(batchId) {
+    switchSection('notifications');
+    setTimeout(() => {
+        if (typeof toggleNotifBatchDetail === 'function') {
+            const box = document.getElementById('notifBatchDetail_' + batchId);
+            if (box) { box.scrollIntoView({ behavior: 'smooth', block: 'center' }); if (box.style.display === 'none') toggleNotifBatchDetail(batchId); }
+            else showToast('El lote no está en el historial visible (cambiá el período del historial)', 'info');
+        } else if (typeof nbShowDetail === 'function') nbShowDetail(batchId);
+    }, 600);
+}
+function cronNewCampaign() {
+    switchSection('notifications');
+    setTimeout(() => {
+        const w = document.getElementById('giftBatchWhen'); if (w) { w.value = 'schedule'; updateGiftBatchScheduleUI(); }
+        const f = document.getElementById('giftBatchScheduleWrap'); if (f) f.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }, 400);
+}
+async function cronAction(id, action, ask) {
+    if (ask && !confirm('¿Mandar AHORA la próxima tanda pendiente de esta campaña?')) return;
+    try {
+        const r = await authFetch('/api/admin/cronograma/' + id + '/' + action, { method: 'POST', body: '{}' });
+        const j = await r.json();
+        if (!r.ok || !j.success) { showToast(j.error || 'No se pudo', 'error'); return; }
+        showToast(action === 'pause' ? 'Campaña pausada' : action === 'resume' ? 'Campaña reanudada' : 'Sale en el próximo minuto', 'success');
+        loadCronograma();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+async function cronDuplicate(id) {
+    const c = (_cronData.campaigns || []).find((x) => x.id === id);
+    const def = c ? _cronArtLocalInput(new Date(new Date(c.runAt).getTime() + 7 * 86400000)).replace('T', ' ') : '';
+    const v = prompt('¿Para cuándo la copia? (AAAA-MM-DD HH:mm, hora Argentina)' + (c && c.partsTotal > 1 ? '\nLas demás tandas van cada 5 h después de esa hora; las editás luego.' : ''), def);
+    if (v == null) return;
+    const s = v.trim().replace(' ', 'T');
+    if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(s)) { showToast('Formato: AAAA-MM-DD HH:mm', 'error'); return; }
+    try {
+        const r = await authFetch('/api/admin/cronograma/' + id + '/duplicate', { method: 'POST', body: JSON.stringify({ runAt: s }) });
+        const j = await r.json();
+        if (!r.ok || !j.success) { showToast(j.error || 'No se pudo duplicar', 'error'); return; }
+        showToast('Campaña duplicada', 'success');
+        _cronMonth = s.slice(0, 7); loadCronograma();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+async function cronDelete(id) {
+    const c = (_cronData.campaigns || []).find((x) => x.id === id);
+    const started = c && (c.parts || []).some((p) => p.status === 'sent' || p.status === 'sending');
+    if (!confirm(started ? '¿Cancelar las tandas que faltan? Las que ya salieron quedan en el historial.' : '¿Eliminar la campaña "' + ((c && c.name) || '') + '"? No se envía nada.')) return;
+    try {
+        const r = await authFetch('/api/admin/cronograma/' + id, { method: 'DELETE' });
+        const j = await r.json();
+        if (!r.ok || !j.success) { showToast(j.error || 'No se pudo', 'error'); return; }
+        showToast(j.deleted ? 'Campaña eliminada' : 'Tandas pendientes canceladas', 'success');
+        if (_cronEditId === id) cronCloseEdit();
+        loadCronograma();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+async function cronOpenEdit(id) {
+    try {
+        const r = await authFetch('/api/admin/cronograma/' + id);
+        const c = await r.json();
+        if (!r.ok) { showToast(c.error || 'No se pudo abrir', 'error'); return; }
+        _cronEditId = id;
+        const set = (i, v) => { const e = document.getElementById(i); if (e) e.value = v || ''; };
+        set('cronEditNameInput', c.name); set('cronEditTitle', (c.payload || {}).title); set('cronEditMessage', (c.payload || {}).message); set('cronEditNotes', c.notes);
+        const n = document.getElementById('cronEditName'); if (n) n.textContent = '— ' + (c.name || '');
+        const pw = document.getElementById('cronEditParts');
+        if (pw) pw.innerHTML = (c.parts || []).map((p) => {
+            const locked = p.status === 'sent' || p.status === 'sending';
+            return '<div><label class="form-label" style="display:block;margin-bottom:.2rem;font-size:.75rem">' + (c.partsTotal > 1 ? 'Tanda ' + (p.idx + 1) + '/' + c.partsTotal : 'Fecha y hora') + ' ' + _cronBadge(p.status) + '</label><input type="datetime-local" id="cronEditPart_' + p.idx + '" class="form-input" style="width:200px" value="' + _cronArtLocalInput(p.runAt) + '"' + (locked ? ' disabled' : '') + ' /></div>';
+        }).join('');
+        const card = document.getElementById('cronEditCard'); if (card) { card.style.display = ''; card.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+        const st = document.getElementById('cronEditStatus'); if (st) st.textContent = '';
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+function cronCloseEdit() { _cronEditId = null; const card = document.getElementById('cronEditCard'); if (card) card.style.display = 'none'; }
+async function cronSaveEdit() {
+    if (!_cronEditId) return;
+    const c = (_cronData.campaigns || []).find((x) => x.id === _cronEditId);
+    const parts = [];
+    for (const p of (c && c.parts) || []) {
+        const el = document.getElementById('cronEditPart_' + p.idx);
+        if (!el || el.disabled) continue;
+        if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(el.value)) { showToast('Fecha/hora inválida en la tanda ' + (p.idx + 1), 'error'); return; }
+        parts.push({ idx: p.idx, runAt: el.value });
+    }
+    const v = (i) => ((document.getElementById(i) || {}).value || '');
+    const st = document.getElementById('cronEditStatus'); if (st) st.textContent = 'Guardando…';
+    try {
+        const r = await authFetch('/api/admin/cronograma/' + _cronEditId, { method: 'PUT', body: JSON.stringify({ name: v('cronEditNameInput').trim(), title: v('cronEditTitle').trim(), message: v('cronEditMessage').trim(), notes: v('cronEditNotes').trim(), parts }) });
+        const j = await r.json();
+        if (!r.ok || !j.success) { showToast(j.error || 'No se pudo guardar', 'error'); if (st) st.textContent = ''; return; }
+        showToast('Campaña actualizada', 'success'); if (st) st.textContent = '✅ guardado';
+        loadCronograma();
+    } catch (e) { showToast('Error de conexión', 'error'); if (st) st.textContent = ''; }
+}
+async function loadCronReport() {
+    const el = document.getElementById('cronReport'); if (!el) return;
+    try {
+        const r = await authFetch('/api/admin/cronograma-report?month=' + (_cronMonth || ''));
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'error');
+        const pct = (n) => (Number(n) || 0).toLocaleString('es-AR', { maximumFractionDigits: 1 }) + '%';
+        const num = (n) => Number(n || 0).toLocaleString('es-AR');
+        let html = '<table class="cron-tbl"><thead><tr><th>Semana</th><th>Campañas</th><th>Avisados</th><th>Les llegó</th><th>Cargaron (48 h)</th><th>Conversión</th><th>$ cargado</th><th>Bonos usados</th><th>Costo</th></tr></thead><tbody>';
+        for (const w of j.weeks || []) html += '<tr class="' + (j.bestWeek === w.week && w.campaigns ? 'cron-best' : '') + '"><td>' + escHtml(w.label) + (j.bestWeek === w.week && w.campaigns ? ' 🏆' : '') + '</td><td>' + num(w.campaigns) + '</td><td>' + num(w.recipients) + '</td><td>' + num(w.delivered) + '</td><td>' + num(w.depositors48h) + '</td><td><strong>' + pct(w.conv) + '</strong></td><td>' + fmtARS(w.deposits48h) + '</td><td>' + num(w.bonusUsed) + '</td><td>' + fmtARS(w.cost) + '</td></tr>';
+        const t = j.totals || {};
+        html += '<tr style="font-weight:700;border-top:2px solid rgba(255,255,255,0.2)"><td>Mes completo</td><td>' + num(t.campaigns) + '</td><td>' + num(t.recipients) + '</td><td></td><td>' + num(t.depositors48h) + '</td><td>' + pct(t.conv) + '</td><td>' + fmtARS(t.deposits48h) + '</td><td></td><td>' + fmtARS(t.cost) + (t.roi != null ? ' <span style="color:#8fd3a8;font-weight:400">(x' + t.roi + ')</span>' : '') + '</td></tr></tbody></table>';
+        html += '<div style="margin-top:.8rem"><strong>🧭 Resumen y recomendaciones</strong><ul style="margin:.3rem 0 0 1rem;padding:0;font-size:.82rem;line-height:1.5">' + (j.recommendations || []).map((x) => '<li>' + escHtml(x.text) + '</li>').join('') + '</ul></div>';
+        if ((j.campaigns || []).length) {
+            html += '<details style="margin-top:.8rem"><summary style="cursor:pointer;color:#a5b4fc;font-size:.85rem">Ver campaña por campaña (' + j.campaigns.length + ')</summary><div style="overflow:auto"><table class="cron-tbl" style="margin-top:.4rem"><thead><tr><th>Día / hora</th><th>Campaña</th><th>Audiencia</th><th>Regalo</th><th>Avisados</th><th>Canjearon</th><th>Usaron bono</th><th>Cargaron 48 h</th><th>Conv.</th><th>$ cargado</th><th>Costo</th><th>x</th></tr></thead><tbody>';
+            const best = j.campaigns.filter((c) => c.recipients >= 30).sort((a, b) => b.conv - a.conv)[0];
+            for (const c of j.campaigns) html += '<tr class="' + (best && best.batchId === c.batchId ? 'cron-best' : '') + '"><td>' + c.day.slice(8, 10) + '/' + c.day.slice(5, 7) + ' ' + String(c.hour).padStart(2, '0') + 'h</td><td>' + escHtml(c.campaignName || c.name || c.batchId.slice(0, 8)) + (c.scheduled ? ' 📅' : '') + '</td><td>' + escHtml(c.audienceLabel || c.audienceType) + '</td><td>' + (c.giftType === 'percent' ? '+' + c.amount + '%' + (c.applyMode === 'auto' ? ' auto' : '') : '$' + num(c.amount)) + '</td><td>' + num(c.recipients) + '</td><td>' + num(c.claimed) + '</td><td>' + num(c.bonusUsed + c.credited) + '</td><td>' + num(c.depositors48h) + '</td><td><strong>' + pct(c.conv) + '</strong></td><td>' + fmtARS(c.deposits48h) + '</td><td>' + fmtARS(c.cost) + '</td><td>' + (c.roi != null ? 'x' + c.roi : '—') + '</td></tr>';
+            html += '</tbody></table></div></details>';
+        }
+        el.innerHTML = html;
+    } catch (e) { el.innerHTML = '<span style="color:#f87171">No se pudo calcular el comparativo</span>'; }
+}
+window.updateGiftBatchScheduleUI = updateGiftBatchScheduleUI; window.cronMonthShift = cronMonthShift; window.loadCronograma = loadCronograma; window.cronPickDay = cronPickDay;
+window.cronGoBatch = cronGoBatch; window.cronNewCampaign = cronNewCampaign; window.cronAction = cronAction; window.cronDuplicate = cronDuplicate; window.cronDelete = cronDelete;
+window.cronOpenEdit = cronOpenEdit; window.cronCloseEdit = cronCloseEdit; window.cronSaveEdit = cronSaveEdit; window.loadCronReport = loadCronReport;
