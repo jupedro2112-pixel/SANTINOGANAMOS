@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-16** (última entrada: #229)
+> **Última actualización: 2026-10-19** (última entrada: #230)
 
 ---
 
@@ -53,6 +53,54 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-19
+
+### 230. Reembolso semanal: PROGRAMAR el primer aviso y repartir a los clientes en TANDAS (cada cliente con su plazo completo) + "Soltar la próxima tanda ahora"
+- **Pedido (captura de Telegram de un encargado):** "al darle publicar notifica a los 202 usuarios de
+  una y explota toda la app, y como no hay API es más lento. ¿Hay forma de agregar lo de programar y
+  mandar por tandas?" Owner: que se corrija y que **no se pierda ningún cliente**.
+- **Por qué pasaba:** al publicar, los 202 `WeeklyRefund` nacían disponibles con el MISMO `expiresAt`
+  (publicación + 48 h) y el motor de avisos les escribía a todos en un minuto → todos reclamaban a la
+  vez y los agentes (que cargan a mano en GANAMOS) quedaban tapados. Repartir sólo los AVISOS no
+  alcanzaba: un cliente de una tanda tardía habría perdido horas (o todo) de su plazo.
+- **Diseño (sobre el #215, sin tocar la mecánica del reclamo ni la reference):**
+  - `WeeklyRefund.part` + **`availableAt`**: cada cliente queda en una tanda con su hora. Hasta
+    `availableAt` NO se le avisa, NO ve el reembolso en la app (`/status` lo filtra) y NO puede reclamar
+    (`/claim` → 409 `notYet` "te avisamos el dd/mm hh:mm"). **Su `expiresAt` = `availableAt` + horas del
+    comando** → cada tanda tiene su plazo COMPLETO. Filas sin `availableAt` (anteriores) = disponibles
+    (`_wrfAvailable(now)` = `availableAt null | ≤ now`).
+  - `RefundBatch.publishAt` (null = al publicar), `parts` (1–20), `partGapMinutes` (5 min–7 días),
+    `partsPlan[]` (index, count, total, availableAt, expiresAt, releasedBy); `expiresAt` del lote = el de
+    la ÚLTIMA tanda. Reparto round-robin (`_wrfPlanParts`): tandas parejas y mezcladas por equipo.
+    Fecha en el pasado = ahora. Hora Argentina (`_wrfParseAt`, mismo criterio que el cronograma).
+  - **Motor de avisos:** sólo reclama filas ya disponibles; el lote cierra los avisos (`notifyDone`)
+    recién cuando no queda ninguna fila en tanda futura. Una instancia caída no pierde tandas: el tick
+    de 60 s las levanta cuando llega su hora.
+  - **`POST /api/admin/weekly-refund/batches/:id/release-next`** (admin general): la tanda que sigue
+    sale YA (`availableAt` = ahora, `expiresAt` = ahora + horas) y se avisa en el acto; `partsPlan`
+    guarda quién la soltó. Para cuando los agentes terminan antes.
+  - `POST …/preview` y `POST …/batches` aceptan `publishAt`, `parts`, `partGapMinutes` y devuelven
+    `schedule` (plan por tanda). `GET …/batches` suma `publishAt/parts/partGapMinutes/partsPlan`,
+    `programados` (clientes en tandas por salir) y `nextPartAt`. `_wrfAdmin` expone `part`,
+    `availableAt`, `scheduled`; `_wrfPublic` `availableAt`.
+- **Panel (admin-sw v64):** en "Subir la planilla", bloque "📅 CUÁNDO SE AVISA Y EN CUÁNTAS TANDAS"
+  (primer aviso ahora / programar fecha-hora AR · dividir en 1–20 tandas · cada N horas/minutos) con
+  explicación en vivo; la vista previa muestra la tabla de tandas (clientes, se avisa, vence) y el botón
+  pasa a "📅 Programar"; cada semana cargada muestra "N tandas cada X · primer aviso …", "ver tandas",
+  chip "📅 En tandas por salir" y el botón **▶️ Soltar la próxima tanda** (admin general); en el detalle
+  el estado "📅 Programado (tanda N) · se avisa …"; el cartel del chat dice que el cliente está en una
+  tanda y cuándo se le avisa. La PWA no cambia (sólo deja de ver lo que todavía no salió).
+- **Validado:** `node --check` (server, modelos, admin.js, admin-sw) ✅, `check-tdz` ✅,
+  `test-weekly-refund` ✅, **`test-weekly-refund-flow` ✅ (50 chequeos: 16 nuevos — plan de tandas, 400
+  sin separación, programado no avisa ni se ve ni se reclama, listado con programados, tanda 1 avisada y
+  reclamable con la 2 sin tocar, soltar la próxima con plazo nuevo, 403/400, fecha pasada = ahora)**,
+  `test-ganamos-adapter` ✅, HTML del panel 785/785 divs e ids únicos. Sin server local. **Back necesita
+  redeploy.**
+- **Probar en deploy:** subir una planilla de prueba con 4 usuarios en 2 tandas cada 5 min programada a
+  +3 min → nadie recibe nada hasta la hora; a los 3 min reciben 2 (y sólo esos ven la barra verde); a los
+  8 min los otros 2 con su plazo entero; "Soltar la próxima tanda" en una semana con tandas futuras.
+  Para la semana real de 202: p. ej. 4 tandas cada 2 h (≈50 por tanda).
 
 ## Sesión 2026-10-16
 

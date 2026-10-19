@@ -37,6 +37,10 @@ const schema = new mongoose.Schema({
   amount:        { type: Number, required: true },
   status:        { type: String, enum: ['claim_pending', 'claimed', 'delivered', 'expired', 'rejected', 'cancelled'], default: 'claim_pending', index: true },
   expiresAt:     { type: Date, required: true },
+  // #230 Tanda a la que pertenece y desde cuándo está disponible (aviso + reclamo). null =
+  // disponible desde que se publicó (filas anteriores al #230). `expiresAt` = availableAt + horas.
+  part:          { type: Number, default: 1 },
+  availableAt:   { type: Date, default: null },
   claimedAt:     { type: Date, default: null },
   deliveredAt:   { type: Date, default: null },
   deliveredBy:   { type: String, default: null },
@@ -54,5 +58,6 @@ schema.index({ usernameLower: 1, status: 1 });
 schema.index({ status: 1, expiresAt: 1 });
 schema.index({ batchId: 1, status: 1 });
 schema.index({ batchId: 1, notifyState: 1 });
+schema.index({ status: 1, availableAt: 1 });
 
 module.exports = mongoose.models['WeeklyRefund'] || mongoose.model('WeeklyRefund', schema);

@@ -22461,7 +22461,18 @@ app.post('/api/admin/bonus-strategy/activate', authMiddleware, adminMiddleware, 
 // usuario + `RefundBatch.activeKey` único (una semana no se sube dos veces).
 // NO tiene nada que ver con los reembolsos por netwin de 1girox (/api/refunds/*), que
 // siguen cerrados en modo manual.
+// #230 PROGRAMAR + TANDAS (encargado, 2026-10-19): avisar a 200 clientes de golpe hacía
+// que todos reclamaran a la vez y los agentes (que cargan a MANO) no dieran abasto. Al
+// publicar se puede elegir cuándo sale el primer aviso (`publishAt`, hora AR) y dividir a
+// los clientes en N tandas separadas por X minutos. Cada cliente queda en una tanda con
+// su `availableAt`: hasta esa hora NO se le avisa, NO lo ve en la app y NO puede reclamar;
+// su plazo (`expiresAt`) arranca recién ahí → ningún cliente pierde horas por estar en
+// una tanda tardía. "Soltar la próxima tanda ahora" adelanta la siguiente si los agentes
+// ya terminaron. Filas sin `availableAt` (anteriores al #230) = disponibles desde siempre.
 const WRF_CLAIM_HOURS_DEFAULT = 48;
+const WRF_MAX_PARTS = 20;
+const WRF_MIN_GAP_MIN = 5;
+const WRF_MAX_GAP_MIN = 7 * 24 * 60;
 let _wrfClaimHoursCache = { v: null, at: 0 };
 async function getRefundClaimHours() {
   if (_wrfClaimHoursCache.v != null && Date.now() - _wrfClaimHoursCache.at < 30000) return _wrfClaimHoursCache.v;
@@ -22484,6 +22495,28 @@ function _wrfFmtVence(d) {
   try { return new Date(d).toLocaleString('es-AR', { timeZone: 'America/Argentina/Buenos_Aires', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }); } catch (_) { return ''; }
 }
 function _wrfReference(periodKey, usernameLower) { return `vip-wrf-${periodKey}-${usernameLower}`.slice(0, 100); }
+// 'YYYY-MM-DDTHH:mm' (hora Argentina) o ISO → Date; vacío/inválido → null.
+function _wrfParseAt(v) {
+  const t = String(v || '').trim();
+  if (!t) return null;
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(t)) { const d = new Date(t + ':00-03:00'); return isNaN(d) ? null : d; }
+  const d = new Date(t); return isNaN(d) ? null : d;
+}
+// Filtro "ya disponible": sin availableAt (filas viejas) o con availableAt pasado.
+const _wrfAvailable = (now) => ({ $or: [{ availableAt: null }, { availableAt: { $lte: now || new Date() } }] });
+const _wrfIsFuture = (it) => !!(it && it.availableAt && new Date(it.availableAt).getTime() > Date.now());
+// Plan de tandas: cuántos clientes y a qué hora sale cada una (reparto round-robin).
+function _wrfPlanParts(n, { parts, gapMinutes, publishAt, claimHours }) {
+  const P = Math.max(1, Math.min(WRF_MAX_PARTS, Math.floor(Number(parts) || 1)));
+  const gap = P > 1 ? Math.max(WRF_MIN_GAP_MIN, Math.min(WRF_MAX_GAP_MIN, Math.floor(Number(gapMinutes) || 0))) : 0;
+  const start = publishAt instanceof Date && !isNaN(publishAt) && publishAt.getTime() > Date.now() ? publishAt : new Date();
+  const plan = [];
+  for (let i = 0; i < P; i++) {
+    const availableAt = new Date(start.getTime() + i * gap * 60000);
+    plan.push({ index: i + 1, count: Math.floor(n / P) + (i < n % P ? 1 : 0), total: 0, availableAt, expiresAt: new Date(availableAt.getTime() + claimHours * 3600 * 1000) });
+  }
+  return { parts: P, gapMinutes: gap, start, plan };
+}
 function _wrfVars(it, extra) {
   return Object.assign({
     username: it.username, monto: _wrfMoney(it.amount), semana: it.label, cargado: _wrfMoney(it.depositos),
@@ -22508,7 +22541,7 @@ function _wrfPublic(it) {
     id: it.id, label: it.label, depositos: it.depositos, retiros: it.retiros, neto: it.neto, count: it.count,
     tierName: it.tierName, pct: it.pct, falta: it.falta, nextTierName: it.nextTierName, amount: it.amount,
     status: it.status, expiresAt: exp, msLeft: it.status === 'claim_pending' && exp ? Math.max(0, exp.getTime() - Date.now()) : 0,
-    claimedAt: it.claimedAt || null, deliveredAt: it.deliveredAt || null
+    availableAt: it.availableAt || null, claimedAt: it.claimedAt || null, deliveredAt: it.deliveredAt || null
   };
 }
 // Forma del panel.
@@ -22518,7 +22551,7 @@ function _wrfAdmin(it) {
     team: it.team || null, depositos: it.depositos, retiros: it.retiros, neto: it.neto, count: it.count, tierName: it.tierName,
     pct: it.pct, falta: it.falta, nextTierName: it.nextTierName, amount: it.amount, status: it.status, expiresAt: it.expiresAt,
     claimedAt: it.claimedAt, deliveredAt: it.deliveredAt, deliveredBy: it.deliveredBy, rejectedNote: it.rejectedNote,
-    platformTaskId: it.platformTaskId, notifyState: it.notifyState
+    platformTaskId: it.platformTaskId, notifyState: it.notifyState, part: it.part || 1, availableAt: it.availableAt || null, scheduled: _wrfIsFuture(it)
   };
 }
 
@@ -22566,7 +22599,8 @@ app.get('/api/weekly-refund/status', authMiddleware, async (req, res) => {
   try {
     const uLower = String(req.user.username || '').trim().toLowerCase();
     await _wrfExpireStale({ usernameLower: uLower });
-    const items = await WeeklyRefund.find({ usernameLower: uLower, status: { $ne: 'cancelled' } }).sort({ createdAt: -1 }).limit(8).lean();
+    // #230: lo que está en una tanda futura no se muestra todavía (ni se puede reclamar).
+    const items = await WeeklyRefund.find({ $and: [{ usernameLower: uLower, status: { $ne: 'cancelled' } }, _wrfAvailable(new Date())] }).sort({ createdAt: -1 }).limit(8).lean();
     res.json({
       enabled: true,
       pending: items.filter((i) => i.status === 'claim_pending').map(_wrfPublic),
@@ -22589,9 +22623,10 @@ app.post('/api/weekly-refund/claim', authMiddleware, async (req, res) => {
     const id = req.body && req.body.id ? String(req.body.id) : null;
     const q = { usernameLower: uLower, status: 'claim_pending' };
     if (id) q.id = id;
-    const it = await WeeklyRefund.findOne(q).sort({ createdAt: -1 }).lean();
+    const it = await WeeklyRefund.findOne({ $and: [q, _wrfAvailable(new Date())] }).sort({ createdAt: -1 }).lean();
     if (!it) {
       const last = id ? await WeeklyRefund.findOne({ id, usernameLower: uLower }).lean() : null;
+      if (last && last.status === 'claim_pending' && _wrfIsFuture(last)) return res.status(409).json({ error: `Tu reembolso todavía no está habilitado: te avisamos el ${_wrfFmtVence(last.availableAt)} y desde ahí lo podés reclamar.`, notYet: true });
       if (last && last.status === 'expired') return res.status(410).json({ error: 'Este reembolso venció: el plazo para reclamarlo ya pasó.', expired: true, item: _wrfPublic(last) });
       if (last && ['claimed', 'delivered'].includes(last.status)) return res.status(409).json({ error: 'Este reembolso ya fue reclamado.', item: _wrfPublic(last) });
       return res.status(404).json({ error: 'No tenés ningún reembolso para reclamar.' });
@@ -22713,9 +22748,12 @@ app.post('/api/admin/weekly-refund/preview', authMiddleware, adminMiddleware, as
     const text = String((req.body && req.body.text) || '');
     if (!text.trim()) return res.status(400).json({ error: 'Pegá las filas de la planilla o elegí el archivo.' });
     const c = await _wrfCompute(text);
+    const claimHours = await getRefundClaimHours();
+    const pb = req.body || {};
+    const sched = _wrfPlanParts(c.calc.items.length, { parts: pb.parts, gapMinutes: pb.partGapMinutes, publishAt: _wrfParseAt(pb.publishAt), claimHours });
     res.json({
       stats: c.parsed.stats, tiers: c.tiers, totals: { ...c.calc.totals, sinCuenta: c.sinCuenta }, teams: c.teams,
-      claimHours: await getRefundClaimHours(),
+      claimHours, schedule: { parts: sched.parts, gapMinutes: sched.gapMinutes, start: sched.start, plan: sched.plan },
       items: c.calc.items.slice(0, 3000).map((i) => ({ username: i.username, team: i.team, depositos: i.depositos, retiros: i.retiros, neto: i.neto, count: i.count, tierName: i.tierName, pct: i.pct, amount: i.amount, falta: i.falta, hasAccount: !!i.userId })),
       truncated: c.calc.items.length > 3000,
       sinBeneficio: c.calc.sinBeneficio.slice(0, 30).map((s) => ({ username: s.username, neto: s.neto, falta: s.falta }))
@@ -22742,19 +22780,34 @@ app.post('/api/admin/weekly-refund/batches', authMiddleware, adminMiddleware, as
     const ya = new Set((await WeeklyRefund.find({ periodKey, status: { $in: ['claimed', 'delivered'] } }, { usernameLower: 1 }).lean()).map((x) => x.usernameLower));
     const claimHours = await getRefundClaimHours();
     const now = new Date();
-    const expiresAt = new Date(now.getTime() + claimHours * 3600 * 1000);
+    // #230 programar + tandas (hora Argentina). Fecha en el pasado = ahora; sin tandas = una sola.
+    if (b.publishAt && !_wrfParseAt(b.publishAt)) return res.status(400).json({ error: 'La fecha y hora para avisar no es válida.' });
+    const partsReq = Math.floor(Number(b.parts) || 1);
+    if (partsReq < 1 || partsReq > WRF_MAX_PARTS) return res.status(400).json({ error: `Las tandas van de 1 a ${WRF_MAX_PARTS}.` });
+    if (partsReq > 1) {
+      const g = Math.floor(Number(b.partGapMinutes) || 0);
+      if (g < WRF_MIN_GAP_MIN || g > WRF_MAX_GAP_MIN) return res.status(400).json({ error: `Indicá cada cuánto sale cada tanda (entre ${WRF_MIN_GAP_MIN} minutos y 7 días).` });
+    }
+    const pending = c.calc.items.filter((i) => !ya.has(i.usernameLower));
+    const sched = _wrfPlanParts(pending.length, { parts: partsReq, gapMinutes: b.partGapMinutes, publishAt: _wrfParseAt(b.publishAt), claimHours });
+    const expiresAt = sched.plan[sched.plan.length - 1].expiresAt; // vence la última tanda
     const label = `${_wrfDM(fromDate)} al ${_wrfDM(toDate)}`;
     const batchId = uuidv4();
-    const docs = c.calc.items.filter((i) => !ya.has(i.usernameLower)).map((i) => ({
-      id: uuidv4(), batchId, periodKey, label, username: i.username, usernameLower: i.usernameLower, userId: i.userId || null, team: i.team,
-      depositos: i.depositos, retiros: i.retiros, neto: i.neto, count: i.count, tierName: i.tierName, pct: i.pct, falta: i.falta,
-      nextTierName: i.nextTierName || null, amount: i.amount, status: 'claim_pending', expiresAt, createdAt: now
-    }));
+    const docs = pending.map((i, idx) => {
+      const pl = sched.plan[idx % sched.parts];
+      pl.total += i.amount;
+      return {
+        id: uuidv4(), batchId, periodKey, label, username: i.username, usernameLower: i.usernameLower, userId: i.userId || null, team: i.team,
+        depositos: i.depositos, retiros: i.retiros, neto: i.neto, count: i.count, tierName: i.tierName, pct: i.pct, falta: i.falta,
+        nextTierName: i.nextTierName || null, amount: i.amount, status: 'claim_pending', expiresAt: pl.expiresAt, part: pl.index, availableAt: pl.availableAt, createdAt: now
+      };
+    });
     if (!docs.length) return res.status(400).json({ error: 'Todos los usuarios de la planilla ya reclamaron esta semana en una carga anterior.' });
     const notify = b.notify !== false;
     try {
       await RefundBatch.create({
         id: batchId, periodKey, activeKey: periodKey, fromDate, toDate, label, status: 'active', claimHours, expiresAt, tiers: c.tiers,
+        publishAt: sched.start.getTime() > now.getTime() ? sched.start : null, parts: sched.parts, partGapMinutes: sched.gapMinutes, partsPlan: sched.plan,
         totals: {
           filas: c.parsed.rows.length, usuarios: c.calc.totals.usuarios, conBeneficio: docs.length, sinBeneficio: c.calc.totals.sinBeneficio,
           sinCuenta: docs.filter((d) => !d.userId).length, yaReclamados: c.calc.items.length - docs.length,
@@ -22776,10 +22829,11 @@ app.post('/api/admin/weekly-refund/batches', authMiddleware, adminMiddleware, as
       logger.error(`[weekly-refund] alta del lote ${label}: ${err.message}`);
       return res.status(500).json({ error: 'No se pudo guardar la carga. No quedó nada publicado: probá de nuevo.' });
     }
-    logger.info(`[weekly-refund] ${req.user.username} publicó la semana ${label}: ${docs.length} reembolsos por ${_wrfMoney(docs.reduce((s, d) => s + d.amount, 0))} (vence ${expiresAt.toISOString()})`);
+    logger.info(`[weekly-refund] ${req.user.username} publicó la semana ${label}: ${docs.length} reembolsos por ${_wrfMoney(docs.reduce((s, d) => s + d.amount, 0))} en ${sched.parts} tanda(s)${sched.parts > 1 ? ` cada ${sched.gapMinutes} min` : ''} desde ${sched.start.toISOString()} (vence la última ${expiresAt.toISOString()})`);
     if (notify) setImmediate(() => { _processWeeklyRefundNotifyQueue().catch(() => {}); });
     notifyAdmins('weekly_refund', { event: 'batch', batchId });
-    res.json({ success: true, batchId, label, reembolsos: docs.length, total: docs.reduce((s, d) => s + d.amount, 0), sinCuenta: docs.filter((d) => !d.userId).length, yaReclamados: c.calc.items.length - docs.length, claimHours, expiresAt, notify });
+    res.json({ success: true, batchId, label, reembolsos: docs.length, total: docs.reduce((s, d) => s + d.amount, 0), sinCuenta: docs.filter((d) => !d.userId).length, yaReclamados: c.calc.items.length - docs.length, claimHours, expiresAt, notify,
+      schedule: { parts: sched.parts, gapMinutes: sched.gapMinutes, start: sched.start, plan: sched.plan, scheduled: sched.start.getTime() > now.getTime() } });
   } catch (e) { logger.error(`POST weekly-refund/batches: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
 });
 
@@ -22795,10 +22849,20 @@ app.get('/api/admin/weekly-refund/batches', authMiddleware, adminMiddleware, asy
     const by = {};
     for (const a of agg) { (by[a._id.b] = by[a._id.b] || {})[a._id.s] = { n: a.n, total: a.total }; }
     const porEntregar = await WeeklyRefund.countDocuments({ status: 'claimed' });
+    const now = new Date();
+    // #230: cuántos siguen en una tanda futura (todavía sin avisar) y cuándo sale la próxima.
+    const programados = {};
+    for (const b of batches) {
+      if (b.status !== 'active' || !(b.parts > 1 || b.publishAt)) continue;
+      programados[b.id] = await WeeklyRefund.countDocuments({ batchId: b.id, status: 'claim_pending', availableAt: { $gt: now } });
+    }
     res.json({ canUpload: req.user.role === 'admin', porEntregar, batches: batches.map((b) => ({
       id: b.id, label: b.label, fromDate: b.fromDate, toDate: b.toDate, status: b.status, claimHours: b.claimHours, expiresAt: b.expiresAt,
       totals: b.totals || {}, tiers: b.tiers || [], notify: b.notify, notifyDone: b.notifyDone, createdBy: b.createdBy, createdAt: b.createdAt,
-      cancelledBy: b.cancelledBy, cancelledAt: b.cancelledAt, counts: by[b.id] || {}
+      cancelledBy: b.cancelledBy, cancelledAt: b.cancelledAt, counts: by[b.id] || {},
+      publishAt: b.publishAt || null, parts: b.parts || 1, partGapMinutes: b.partGapMinutes || 0, partsPlan: b.partsPlan || [],
+      programados: programados[b.id] || 0,
+      nextPartAt: (b.partsPlan || []).map((p) => p.availableAt).filter((d) => d && new Date(d).getTime() > now.getTime()).sort((x, y) => new Date(x) - new Date(y))[0] || null
     })) });
   } catch (e) { logger.error(`GET weekly-refund/batches: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
 });
@@ -22852,6 +22916,28 @@ app.post('/api/admin/weekly-refund/items/:id/delivered', authMiddleware, adminMi
   } catch (e) { logger.error(`POST weekly-refund/delivered: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
 });
 
+// #230 "Soltar la próxima tanda ahora": los agentes terminaron antes → la tanda que sigue
+// sale ya (su plazo arranca ahora). Sólo admin general.
+app.post('/api/admin/weekly-refund/batches/:id/release-next', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!_wrfOnlyAdmin(req, res)) return;
+    const b = await RefundBatch.findOne({ id: String(req.params.id), status: 'active' }).lean();
+    if (!b) return res.status(404).json({ error: 'Esa carga no existe o está anulada.' });
+    const now = new Date();
+    const next = await WeeklyRefund.findOne({ batchId: b.id, status: 'claim_pending', availableAt: { $gt: now } }).sort({ availableAt: 1 }).lean();
+    if (!next) return res.status(400).json({ error: 'No queda ninguna tanda por salir: todos los clientes ya fueron avisados.' });
+    const expiresAt = new Date(now.getTime() + (b.claimHours || WRF_CLAIM_HOURS_DEFAULT) * 3600 * 1000);
+    const r = await WeeklyRefund.updateMany({ batchId: b.id, status: 'claim_pending', part: next.part, availableAt: { $gt: now } }, { $set: { availableAt: now, expiresAt } });
+    const plan = (b.partsPlan || []).map((p) => (p.index === next.part ? { ...p, availableAt: now, expiresAt, releasedBy: req.user.username } : p));
+    await RefundBatch.updateOne({ id: b.id }, { $set: { partsPlan: plan, notifyDone: false } });
+    logger.info(`[weekly-refund] ${req.user.username} SOLTÓ la tanda ${next.part} de la semana ${b.label}: ${r.modifiedCount || 0} clientes avisados ahora`);
+    if (b.notify) setImmediate(() => { _processWeeklyRefundNotifyQueue().catch(() => {}); });
+    notifyAdmins('weekly_refund', { event: 'batch', batchId: b.id });
+    const quedan = await WeeklyRefund.countDocuments({ batchId: b.id, status: 'claim_pending', availableAt: { $gt: now } });
+    res.json({ success: true, part: next.part, liberados: r.modifiedCount || 0, quedan, expiresAt });
+  } catch (e) { logger.error(`POST weekly-refund/release-next: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+
 // Anular una semana: lo que seguía por reclamar se cancela; lo ya reclamado/entregado queda.
 app.post('/api/admin/weekly-refund/batches/:id/cancel', authMiddleware, adminMiddleware, async (req, res) => {
   try {
@@ -22870,6 +22956,8 @@ app.post('/api/admin/weekly-refund/batches/:id/cancel', authMiddleware, adminMid
 // Motor del AVISO al cliente (chat + push) de un lote recién publicado. Reanudable y
 // multi-instancia: cada destinatario se reclama con un findOneAndUpdate atómico
 // (notifyState null → sending); un `sending` colgado más de 10 min se re-reclama.
+// #230: sólo avisa a los clientes cuya tanda ya está disponible (`availableAt` pasado); el
+// lote cierra los avisos (`notifyDone`) recién cuando no queda ninguna tanda futura.
 let _wrfNotifyRunning = false;
 async function _processWeeklyRefundNotifyQueue() {
   if (_wrfNotifyRunning) return;
@@ -22884,9 +22972,13 @@ async function _processWeeklyRefundNotifyQueue() {
         if (Date.now() - startedAt > 40000) return; // el próximo tick sigue
         const stale = new Date(Date.now() - 10 * 60 * 1000);
         const it = await WeeklyRefund.findOneAndUpdate(
-          { batchId: b.id, status: 'claim_pending', $or: [{ notifyState: null }, { notifyState: 'sending', notifyAt: { $lt: stale } }] },
+          { $and: [{ batchId: b.id, status: 'claim_pending' }, _wrfAvailable(new Date()), { $or: [{ notifyState: null }, { notifyState: 'sending', notifyAt: { $lt: stale } }] }] },
           { $set: { notifyState: 'sending', notifyAt: new Date() } }, { new: true }).lean();
-        if (!it) { await RefundBatch.updateOne({ id: b.id }, { $set: { notifyDone: true } }); break; }
+        if (!it) {
+          const futuros = await WeeklyRefund.countDocuments({ batchId: b.id, status: 'claim_pending', availableAt: { $gt: new Date() } });
+          if (!futuros) await RefundBatch.updateOne({ id: b.id }, { $set: { notifyDone: true } });
+          break;
+        }
         let state = 'sent';
         try {
           const user = await User.findOne({ usernameLower: it.usernameLower, role: 'user' }).select('id username fcmToken fcmTokens isBlocked').lean();

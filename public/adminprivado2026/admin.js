@@ -14740,7 +14740,8 @@ const _wrfStatusBadge = (it) => {
     };
     const [label, color] = map[it.status] || [it.status, '#aaa'];
     let extra = '';
-    if (it.status === 'claim_pending' && it.expiresAt) extra = `vence ${formatDateTime(it.expiresAt)}`;
+    if (it.status === 'claim_pending' && it.scheduled) return `<span style="color:#a5b4fc;font-weight:900;font-size:11px;white-space:nowrap;">📅 Programado (tanda ${it.part || 1})</span><div style="color:#888;font-size:10px;">se avisa ${formatDateTime(it.availableAt)}</div>`;
+    if (it.status === 'claim_pending' && it.expiresAt) extra = `${it.part > 1 ? 'tanda ' + it.part + ' · ' : ''}vence ${formatDateTime(it.expiresAt)}`;
     if (it.status === 'claimed' && it.claimedAt) extra = `reclamó ${formatDateTime(it.claimedAt)}`;
     if (it.status === 'delivered') extra = `${escapeHtml(it.deliveredBy || '')} · ${formatDateTime(it.deliveredAt)}`;
     if (it.status === 'rejected' && it.rejectedNote) extra = escapeHtml(it.rejectedNote);
@@ -14812,6 +14813,7 @@ async function wrfLoadConfig() {
         if (c) { c.innerHTML = ''; (_wrfCfg.tiers || []).forEach((t) => wrfAddTierRow(t)); }
         const h = document.getElementById('wrfClaimHoursTxt');
         if (h) h.textContent = String(_wrfCfg.claimHours);
+        updateWrfScheduleUI();
         const res = document.getElementById('wrfTiersSummary');
         if (res) res.innerHTML = (_wrfCfg.tiers || []).map((t) => `<b style="color:#ffd479;">${escapeHtml(t.name)}</b> desde ${_wrfM(t.min)} → <b style="color:#7dffb0;">${t.pct}%</b>`).join(' &nbsp;·&nbsp; ');
     } catch (e) { console.error('weekly-refund config:', e); }
@@ -14865,10 +14867,46 @@ function _wrfForm() {
         text: (document.getElementById('wrfText') || {}).value || '',
         fromDate: (document.getElementById('wrfFrom') || {}).value || '',
         toDate: (document.getElementById('wrfTo') || {}).value || '',
-        notify: !!((document.getElementById('wrfNotify') || {}).checked)
+        notify: !!((document.getElementById('wrfNotify') || {}).checked),
+        ..._wrfScheduleForm()
     };
 }
-const _wrfSig = (f) => `${f.fromDate}|${f.toDate}|${f.text.length}|${f.text.slice(0, 200)}|${f.text.slice(-200)}`;
+const _wrfSig = (f) => `${f.fromDate}|${f.toDate}|${f.text.length}|${f.text.slice(0, 200)}|${f.text.slice(-200)}|${f.publishAt || ''}|${f.parts}|${f.partGapMinutes}`;
+// #230 Programar + tandas (hora Argentina). publishAt '' = ahora.
+function _wrfScheduleForm() {
+    const when = (document.getElementById('wrfWhen') || {}).value || 'now';
+    const parts = Number((document.getElementById('wrfParts') || {}).value) || 1;
+    const gapRaw = Number((document.getElementById('wrfGap') || {}).value) || 0;
+    const unit = Number((document.getElementById('wrfGapUnit') || {}).value) || 60;
+    return { publishAt: when === 'schedule' ? (((document.getElementById('wrfPublishAt') || {}).value || '').trim()) : '', parts, partGapMinutes: parts > 1 ? Math.round(gapRaw * unit) : 0 };
+}
+function updateWrfScheduleUI() {
+    const f = _wrfScheduleForm();
+    const when = (document.getElementById('wrfWhen') || {}).value || 'now';
+    const pw = document.getElementById('wrfPublishAtWrap'); if (pw) pw.style.display = when === 'schedule' ? '' : 'none';
+    const gw = document.getElementById('wrfGapWrap'); if (gw) gw.style.display = f.parts > 1 ? '' : 'none';
+    const pa = document.getElementById('wrfPublishAt');
+    if (when === 'schedule' && pa && !pa.value) { const d = new Date(Date.now() + 3600 * 1000); d.setMinutes(0, 0, 0); pa.value = _cronArtLocalInput(d); }
+    const hint = document.getElementById('wrfScheduleHint');
+    if (!hint) return;
+    const hrs = (_wrfCfg && _wrfCfg.claimHours) || 48;
+    const start = when === 'schedule' && f.publishAt ? new Date(f.publishAt + ':00-03:00') : null;
+    const startTxt = start && !isNaN(start) ? `el ${formatDateTime(start)}` : 'al publicar';
+    if (f.parts > 1) {
+        const gapTxt = f.partGapMinutes >= 60 && f.partGapMinutes % 60 === 0 ? `${f.partGapMinutes / 60} h` : `${f.partGapMinutes} min`;
+        const base = start && !isNaN(start) ? start.getTime() : Date.now();
+        const last = new Date(base + (f.parts - 1) * f.partGapMinutes * 60000);
+        hint.innerHTML = `Los clientes se reparten en <b>${f.parts} tandas</b>: la primera recibe el aviso ${startTxt}, y después una cada <b>${gapTxt}</b> (la última ${formatDateTime(last)}). <b>Cada cliente tiene sus ${hrs} h completas desde que le llega SU aviso</b>: nadie pierde plazo por estar en una tanda tardía. Hasta que le toque, no ve el reembolso en la app. Si los agentes terminan antes, en la semana cargada hay un botón para <b>soltar la próxima tanda ya</b>.${f.partGapMinutes < 5 ? ' <span style="color:#ff9f43;">⚠️ La separación mínima es de 5 minutos.</span>' : ''}`;
+    } else {
+        hint.innerHTML = start && !isNaN(start) ? `Se avisa a todos los clientes juntos ${startTxt} (hora Argentina). Hasta entonces no lo ven en la app; su plazo de ${hrs} h arranca con el aviso.` : 'Se avisa a todos los clientes al publicar. Si son muchos y los agentes cargan a mano, conviene dividir en tandas.';
+    }
+}
+function _wrfPlanHtml(sch, claimHours) {
+    if (!sch || !sch.plan || !sch.plan.length) return '';
+    const rows = sch.plan.map((p) => `<tr style="border-bottom:1px solid rgba(255,255,255,0.06);"><td style="padding:5px 8px;font-weight:800;">Tanda ${p.index}</td><td style="padding:5px 8px;">${p.count} cliente${p.count === 1 ? '' : 's'}${p.total ? ` · ${_wrfM(p.total)}` : ''}</td><td style="padding:5px 8px;">${formatDateTime(p.availableAt)}</td><td style="padding:5px 8px;color:#888;">${formatDateTime(p.expiresAt)}</td>${p.releasedBy ? `<td style="padding:5px 8px;color:#7dffb0;font-size:10.5px;">soltada por ${escapeHtml(p.releasedBy)}</td>` : '<td></td>'}</tr>`).join('');
+    return `<div style="margin-top:8px;"><div style="font-weight:900;color:#a5b4fc;font-size:12px;margin-bottom:4px;">📅 ${sch.parts > 1 ? sch.parts + ' tandas' : 'Una sola tanda'}${sch.gapMinutes ? ` · cada ${sch.gapMinutes >= 60 && sch.gapMinutes % 60 === 0 ? sch.gapMinutes / 60 + ' h' : sch.gapMinutes + ' min'}` : ''} · ${claimHours} h para reclamar desde cada aviso</div>
+        <table style="border-collapse:collapse;font-size:12px;"><thead><tr style="color:#d4af37;font-size:11px;text-align:left;"><th style="padding:4px 8px;">Tanda</th><th style="padding:4px 8px;">Clientes</th><th style="padding:4px 8px;">Se avisa</th><th style="padding:4px 8px;">Vence</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>`;
+}
 
 async function wrfPreview() {
     const out = document.getElementById('wrfPreview');
@@ -14876,7 +14914,7 @@ async function wrfPreview() {
     if (!f.text.trim()) { showToast('Elegí el archivo o pegá las filas de la planilla', 'error'); return; }
     if (out) out.innerHTML = '<div style="color:#aaa;padding:14px;text-align:center;">⏳ Calculando…</div>';
     try {
-        const r = await authFetch('/api/admin/weekly-refund/preview', { method: 'POST', body: JSON.stringify({ text: f.text }) });
+        const r = await authFetch('/api/admin/weekly-refund/preview', { method: 'POST', body: JSON.stringify({ text: f.text, publishAt: f.publishAt, parts: f.parts, partGapMinutes: f.partGapMinutes }) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || 'Error');
         _wrfPreviewSig = _wrfSig(f);
@@ -14911,7 +14949,8 @@ async function wrfPreview() {
             ${teams ? `<div style="font-weight:800;color:#d4af37;font-size:12px;margin:8px 0 4px;">📊 Resumen por equipo</div><div style="overflow-x:auto;margin-bottom:10px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:#d4af37;font-size:11px;text-align:left;border-bottom:1px solid rgba(212,175,55,0.3);"><th ${th}>Equipo</th><th ${th}>Usuarios</th><th ${th}>Cargado</th><th ${th}>Retirado</th><th ${th}>Neto</th><th ${th}>Regalado</th></tr></thead><tbody>${teams}</tbody></table></div>` : ''}
             <div style="font-weight:800;color:#d4af37;font-size:12px;margin:8px 0 4px;">🧑‍🤝‍🧑 Usuarios con reembolso${(j.items || []).length > 400 ? ` (primeros 400 de ${t.conBeneficio})` : ''}</div>
             <div style="overflow:auto;max-height:420px;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr style="color:#d4af37;font-size:11px;text-align:left;border-bottom:1px solid rgba(212,175,55,0.3);"><th ${th}>Usuario</th><th ${th}>Equipo</th><th ${th}>Cargado</th><th ${th}>Retirado</th><th ${th}>Neto</th><th ${th}>Rango</th><th ${th}>Reembolso</th></tr></thead><tbody>${rows || '<tr><td colspan="7" style="padding:14px;color:#aaa;text-align:center;">Ningún usuario llega al primer rango.</td></tr>'}</tbody></table></div>
-            ${t.conBeneficio ? `<button class="btn-primary" onclick="wrfPublish()" style="margin-top:12px;background:#1f8f4a;">✅ Publicar ${t.conBeneficio} reembolsos (${_wrfM(t.totalBeneficio)})</button>` : ''}`;
+            ${_wrfPlanHtml(j.schedule, j.claimHours)}
+            ${t.conBeneficio ? `<button class="btn-primary" onclick="wrfPublish()" style="margin-top:12px;background:#1f8f4a;">${j.schedule && (j.schedule.parts > 1 || (f.publishAt && new Date(j.schedule.start).getTime() > Date.now())) ? '📅 Programar' : '✅ Publicar'} ${t.conBeneficio} reembolsos (${_wrfM(t.totalBeneficio)})</button>` : ''}`;
     } catch (e) {
         _wrfPreviewSig = null;
         if (out) out.innerHTML = `<div style="color:#ff8080;padding:12px;">❌ ${escapeHtml(e.message || 'Error de conexión')}</div>`;
@@ -14923,14 +14962,19 @@ async function wrfPublish() {
     if (!f.fromDate || !f.toDate) { showToast('Indicá la semana (desde / hasta)', 'error'); return; }
     if (_wrfPreviewSig !== _wrfSig(f)) { showToast('Cambiaste la planilla o las fechas: tocá "Vista previa" de nuevo antes de publicar.', 'error'); return; }
     const dm = (v) => v.split('-').reverse().slice(0, 2).join('/');
-    if (!confirm(`¿Publicar los reembolsos de la semana ${dm(f.fromDate)} al ${dm(f.toDate)}?\n\n${f.notify ? 'Se le AVISA a cada cliente por chat y notificación, y' : 'NO se avisa a los clientes, pero'} les aparece en la app para reclamar.\n\nUna vez publicada, esa semana no se puede volver a subir (salvo que la anules).`)) return;
+    if (f.parts > 1 && f.partGapMinutes < 5) { showToast('La separación entre tandas tiene que ser de al menos 5 minutos.', 'error'); return; }
+    if (f.publishAt && !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(f.publishAt)) { showToast('Poné la fecha y hora del primer aviso.', 'error'); return; }
+    const schedTxt = f.publishAt ? `El primer aviso sale el ${formatDateTime(new Date(f.publishAt + ':00-03:00'))} (hora Argentina).` : 'El primer aviso sale ahora.';
+    const partsTxt = f.parts > 1 ? ` Los clientes se reparten en ${f.parts} tandas, una cada ${f.partGapMinutes >= 60 && f.partGapMinutes % 60 === 0 ? f.partGapMinutes / 60 + ' h' : f.partGapMinutes + ' min'}; cada uno tiene su plazo completo desde SU aviso.` : '';
+    if (!confirm(`¿Publicar los reembolsos de la semana ${dm(f.fromDate)} al ${dm(f.toDate)}?\n\n${f.notify ? 'Se le AVISA a cada cliente por chat y notificación, y' : 'NO se avisa a los clientes, pero'} les aparece en la app para reclamar.\n${schedTxt}${partsTxt}\n\nUna vez publicada, esa semana no se puede volver a subir (salvo que la anules).`)) return;
     try {
         const r = await authFetch('/api/admin/weekly-refund/batches', { method: 'POST', body: JSON.stringify(f) });
         const j = await r.json();
         if (!r.ok) throw new Error(j.error || 'Error al publicar');
-        showToast(`✅ Semana ${j.label} publicada: ${j.reembolsos} reembolsos por ${_wrfM(j.total)}`, 'success');
+        const sch = j.schedule || {};
+        showToast(`✅ Semana ${j.label} ${sch.scheduled || sch.parts > 1 ? 'programada' : 'publicada'}: ${j.reembolsos} reembolsos por ${_wrfM(j.total)}`, 'success');
         const out = document.getElementById('wrfPreview');
-        if (out) out.innerHTML = `<div style="color:#7dffb0;padding:12px;font-weight:800;">✅ Publicada la semana ${escapeHtml(j.label)}: ${j.reembolsos} reembolsos por ${_wrfM(j.total)}.${j.sinCuenta ? ` ${j.sinCuenta} usuario(s) todavía sin cuenta en la web.` : ''}${j.yaReclamados ? ` ${j.yaReclamados} ya habían reclamado esta semana en una carga anterior (no se repiten).` : ''}${j.notify ? ' Se están enviando los avisos.' : ''}</div>`;
+        if (out) out.innerHTML = `<div style="color:#7dffb0;padding:12px;font-weight:800;">✅ ${sch.scheduled || sch.parts > 1 ? 'Programada' : 'Publicada'} la semana ${escapeHtml(j.label)}: ${j.reembolsos} reembolsos por ${_wrfM(j.total)}.${j.sinCuenta ? ` ${j.sinCuenta} usuario(s) todavía sin cuenta en la web.` : ''}${j.yaReclamados ? ` ${j.yaReclamados} ya habían reclamado esta semana en una carga anterior (no se repiten).` : ''}${j.notify ? (sch.scheduled ? ` El primer aviso sale el ${formatDateTime(sch.start)}.` : ' Se están enviando los avisos.') : ''}${_wrfPlanHtml(sch, j.claimHours)}</div>`;
         const ta = document.getElementById('wrfText'); if (ta) ta.value = '';
         const fi = document.getElementById('wrfFile'); if (fi) fi.value = '';
         _wrfPreviewSig = null;
@@ -15014,15 +15058,17 @@ async function wrfLoadBatches() {
             return `<div style="border:1px solid rgba(255,255,255,0.14);border-radius:10px;padding:11px;margin-bottom:9px;background:rgba(0,0,0,0.18);${b.status === 'cancelled' ? 'opacity:.6;' : ''}">
                 <div style="display:flex;justify-content:space-between;gap:8px;flex-wrap:wrap;align-items:center;">
                     <div><b style="color:#ffd479;font-size:13.5px;">📅 Semana ${escapeHtml(b.label)}</b> &nbsp; ${estado}
-                        <div style="color:#888;font-size:10.5px;">Subida por ${escapeHtml(b.createdBy || '?')} el ${formatDateTime(b.createdAt)} · ${b.claimHours} h para reclamar${b.notify ? (b.notifyDone ? ' · avisos enviados' : ' · ⏳ enviando avisos…') : ' · sin avisos'}</div></div>
+                        <div style="color:#888;font-size:10.5px;">Subida por ${escapeHtml(b.createdBy || '?')} el ${formatDateTime(b.createdAt)} · ${b.claimHours} h para reclamar desde cada aviso${b.notify ? (b.notifyDone ? ' · avisos enviados' : (b.programados ? ` · 📅 ${b.programados} cliente(s) en tandas por salir${b.nextPartAt ? ', la próxima ' + formatDateTime(b.nextPartAt) : ''}` : ' · ⏳ enviando avisos…')) : ' · sin avisos'}</div>
+                        ${b.parts > 1 || b.publishAt ? `<div style="color:#a5b4fc;font-size:10.5px;">📅 ${b.parts > 1 ? b.parts + ' tandas cada ' + (b.partGapMinutes >= 60 && b.partGapMinutes % 60 === 0 ? b.partGapMinutes / 60 + ' h' : b.partGapMinutes + ' min') : 'Programada'}${b.publishAt ? ' · primer aviso ' + formatDateTime(b.publishAt) : ''} <a href="#" onclick="wrfTogglePlan('${escapeHtml(b.id)}');return false;" style="color:#a5b4fc;">ver tandas</a></div><div id="wrfPlan_${escapeHtml(b.id)}" style="display:none;">${_wrfPlanHtml({ parts: b.parts, gapMinutes: b.partGapMinutes, plan: b.partsPlan }, b.claimHours)}</div>` : ''}</div>
                     <div style="white-space:nowrap;">
                         <button class="btn-secondary" onclick="wrfOpenBatch('${escapeHtml(b.id)}')" style="padding:6px 11px;font-size:12px;">👥 Ver detalle</button>
+                        ${b.status === 'active' && b.programados && _wrfIsAdmin() ? `<button onclick="wrfReleaseNext('${escapeHtml(b.id)}','${escapeHtml(b.label)}')" style="padding:6px 10px;font-size:12px;margin-left:6px;background:#1e3a8a;color:#c7d2fe;border:1px solid rgba(96,165,250,0.4);border-radius:8px;cursor:pointer;font-weight:800;" title="La tanda que sigue sale ya (su plazo arranca ahora)">▶️ Soltar la próxima tanda</button>` : ''}
                         ${b.status === 'active' && _wrfIsAdmin() ? `<button onclick="wrfCancelBatch('${escapeHtml(b.id)}','${escapeHtml(b.label)}')" style="padding:6px 10px;font-size:12px;margin-left:6px;background:#3a1a1a;color:#ff6666;border:1px solid rgba(255,80,80,0.3);border-radius:8px;cursor:pointer;font-weight:800;">🚫 Anular</button>` : ''}
                     </div>
                 </div>
                 <div style="margin-top:7px;">
                     ${chip('Reembolsos', (b.totals && b.totals.conBeneficio) || 0, '#fff')}${chip('Total', _wrfM((b.totals && b.totals.totalBeneficio) || 0), '#7dffb0')}
-                    ${chip('Por reclamar', n('claim_pending'), '#ffd479')}${chip('Reclamados sin entregar', n('claimed'), '#7dffb0')}
+                    ${chip('Por reclamar', n('claim_pending') - (b.programados || 0), '#ffd479')}${b.programados ? chip('📅 En tandas por salir', b.programados, '#a5b4fc') : ''}${chip('Reclamados sin entregar', n('claimed'), '#7dffb0')}
                     ${chip('Entregados', `${n('delivered')} (${_wrfM(tot('delivered'))})`, '#25d366')}${chip('Vencidos', n('expired'), '#888')}
                     ${n('rejected') ? chip('Rechazados', n('rejected'), '#ff6b6b') : ''}${n('cancelled') ? chip('Anulados', n('cancelled'), '#888') : ''}
                     ${b.totals && b.totals.sinCuenta ? chip('Sin cuenta al subir', b.totals.sinCuenta, '#ff9f43') : ''}
@@ -15061,6 +15107,17 @@ async function wrfOpenBatch(id, silent) {
 function wrfDetailFilter(st) { _wrfDetailStatus = st; if (_wrfDetailBatch) wrfOpenBatch(_wrfDetailBatch, true); }
 function wrfCloseDetail() { _wrfDetailBatch = null; const el = document.getElementById('wrfDetail'); if (el) el.innerHTML = ''; }
 
+function wrfTogglePlan(id) { const el = document.getElementById('wrfPlan_' + id); if (el) el.style.display = el.style.display === 'none' ? '' : 'none'; }
+async function wrfReleaseNext(id, label) {
+    if (!confirm(`¿Soltar AHORA la próxima tanda de la semana ${label}?\n\nEsos clientes reciben el aviso ya y su plazo para reclamar arranca en este momento.`)) return;
+    try {
+        const r = await authFetch(`/api/admin/weekly-refund/batches/${encodeURIComponent(id)}/release-next`, { method: 'POST', body: JSON.stringify({}) });
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'No se pudo');
+        showToast(`▶️ Tanda ${j.part} soltada: ${j.liberados} cliente(s) avisados ahora${j.quedan ? `, quedan ${j.quedan} en tandas posteriores` : ' (era la última)'}.`, 'success');
+        wrfRefreshAll();
+    } catch (e) { showToast(e.message || 'Error', 'error'); }
+}
 async function wrfCancelBatch(id, label) {
     if (!confirm(`¿ANULAR la semana ${label}?\n\nLos reembolsos que todavía NO se reclamaron dejan de estar disponibles para los clientes.\nLos que ya se reclamaron o entregaron quedan como están.\n\nDespués vas a poder volver a subir esa semana.`)) return;
     try {
@@ -15094,6 +15151,9 @@ async function loadWeeklyRefundBanner(userId) {
                     ${j.canSettle ? `<button onclick="wrfMarkDelivered('${escapeHtml(it.id)}')" style="background:#fff;color:#0b4f2b;border:none;border-radius:7px;padding:8px 13px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">✅ Marcar como entregado</button>` : ''}
                 </div>`;
             }
+            if (it.scheduled) return `<div style="padding:7px 14px;border-bottom:1px solid rgba(0,0,0,0.30);background:rgba(96,165,250,0.10);font-size:11.5px;color:#c7d2fe;">
+                📅 Tiene un reembolso de <b>${_wrfM(it.amount)}</b> en la tanda ${it.part || 1} (${det}). Se le avisa el ${formatDateTime(it.availableAt)}; hasta entonces NO lo ve en la app ni lo puede reclamar.
+            </div>`;
             return `<div style="padding:7px 14px;border-bottom:1px solid rgba(0,0,0,0.30);background:rgba(212,175,55,0.10);font-size:11.5px;color:#ffe9a8;">
                 ⏳ Tiene un reembolso de <b>${_wrfM(it.amount)}</b> SIN RECLAMAR (${det}). Lo tiene que reclamar él desde la app (barra "REEMBOLSO SEMANAL" arriba del chat) antes del ${formatDateTime(it.expiresAt)}.
             </div>`;
@@ -15106,6 +15166,7 @@ window.wrfAddTierRow = wrfAddTierRow; window.wrfSaveTiers = wrfSaveTiers; window
 window.wrfPreview = wrfPreview; window.wrfPublish = wrfPublish; window.wrfMarkDelivered = wrfMarkDelivered;
 window.wrfOpenBatch = wrfOpenBatch; window.wrfDetailFilter = wrfDetailFilter; window.wrfCloseDetail = wrfCloseDetail;
 window.wrfCancelBatch = wrfCancelBatch; window.loadWeeklyRefundBanner = loadWeeklyRefundBanner; window.wrfRefreshAll = wrfRefreshAll;
+window.updateWrfScheduleUI = updateWrfScheduleUI; window.wrfTogglePlan = wrfTogglePlan; window.wrfReleaseNext = wrfReleaseNext;
 
 // ============================================================================
 // #190 CRONOGRAMA — campañas programadas, calendario mensual, tandas y comparativo

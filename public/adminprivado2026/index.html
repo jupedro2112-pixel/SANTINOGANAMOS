@@ -2262,7 +2262,7 @@ document.addEventListener('change', function (ev) {
                     <button class="refresh-btn" onclick="loadWeeklyRefundAdmin()" title="Refrescar">🔄</button>
                 </div>
                 <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">Cada semana se sube la planilla de movimientos y el sistema calcula el reembolso de cada cliente: <strong style="color:#ffd479;">neto = lo que cargó − lo que retiró</strong>, y según ese neto le toca un porcentaje. El cliente recibe el aviso, entra a la app y toca <strong style="color:#7dffb0;">RECLAMAR</strong> (tiene <span id="wrfClaimHoursTxt">48</span> horas — se cambia en COMANDOS → <code>/sys_refund_claim_hours</code>). Ahí te aparece acá abajo y en su chat: se lo cargás en GANAMOS y tocás <strong style="color:#7dffb0;">Marcar como entregado</strong> — le llega el aviso automático.<br>
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">Cada semana se sube la planilla de movimientos y el sistema calcula el reembolso de cada cliente: <strong style="color:#ffd479;">neto = lo que cargó − lo que retiró</strong>, y según ese neto le toca un porcentaje. El cliente recibe el aviso, entra a la app y toca <strong style="color:#7dffb0;">RECLAMAR</strong> (tiene <span id="wrfClaimHoursTxt">48</span> horas <b>desde que le llega SU aviso</b> — se cambia en COMANDOS → <code>/sys_refund_claim_hours</code>). Para que no reclamen los 200 a la vez, al subir la planilla podés <b style="color:#a5b4fc;">programar el primer aviso y repartirlos en tandas</b>: cada tanda se entera a su hora y tiene su plazo completo. Ahí te aparece acá abajo y en su chat: se lo cargás en GANAMOS y tocás <strong style="color:#7dffb0;">Marcar como entregado</strong> — le llega el aviso automático.<br>
                     Rangos vigentes: <span id="wrfTiersSummary" style="color:#ccc;">—</span></p>
                 </div>
 
@@ -2280,6 +2280,20 @@ document.addEventListener('change', function (ev) {
                     <div class="form-group" style="margin:0 0 10px;"><label for="wrfText">…o pegá acá las filas copiadas de la planilla</label>
                         <textarea id="wrfText" rows="6" placeholder="Type	User	Amount	fecha&#10;deposit	bigoscar072	50000	23/11&#10;withdraw	bigoscar072	10000	24/11" style="width:100%;font-family:monospace;font-size:12px;"></textarea></div>
                     <label style="display:flex;align-items:center;gap:7px;color:#ccc;font-size:12px;margin-bottom:10px;cursor:pointer;"><input type="checkbox" id="wrfNotify" checked> Avisarle a cada cliente por chat y notificación que tiene un reembolso para reclamar</label>
+                    <!-- #230 Programar el aviso y repartirlo en tandas (los agentes cargan a mano: 200 reclamos juntos los tapan). -->
+                    <div style="border:1px solid rgba(96,165,250,0.35);border-radius:9px;padding:10px;margin-bottom:10px;background:rgba(96,165,250,0.06);">
+                        <div style="font-weight:900;color:#a5b4fc;font-size:12.5px;margin-bottom:6px;">📅 CUÁNDO SE AVISA Y EN CUÁNTAS TANDAS</div>
+                        <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+                            <div class="form-group" style="margin:0;"><label for="wrfWhen">Primer aviso</label>
+                                <select id="wrfWhen" onchange="updateWrfScheduleUI()" style="min-width:200px;"><option value="now">🚀 Ahora (al publicar)</option><option value="schedule">📅 Programar fecha y hora</option></select></div>
+                            <div class="form-group" id="wrfPublishAtWrap" style="margin:0;display:none;"><label for="wrfPublishAt">Fecha y hora (Argentina)</label><input type="datetime-local" id="wrfPublishAt" onchange="updateWrfScheduleUI()"></div>
+                            <div class="form-group" style="margin:0;"><label for="wrfParts" title="Reparte a los clientes en N tandas iguales; cada tanda recibe el aviso a su hora y su plazo para reclamar arranca recién ahí">Dividir en tandas</label>
+                                <select id="wrfParts" onchange="updateWrfScheduleUI()" style="min-width:130px;"><option value="1">1 (todos juntos)</option><option value="2">2 tandas</option><option value="3">3 tandas</option><option value="4">4 tandas</option><option value="5">5 tandas</option><option value="6">6 tandas</option><option value="8">8 tandas</option><option value="10">10 tandas</option><option value="12">12 tandas</option><option value="15">15 tandas</option><option value="20">20 tandas</option></select></div>
+                            <div class="form-group" id="wrfGapWrap" style="margin:0;display:none;"><label for="wrfGap">Cada</label>
+                                <div style="display:flex;gap:6px;align-items:center;"><input type="number" id="wrfGap" value="1" min="1" step="1" style="width:80px;" onchange="updateWrfScheduleUI()" oninput="updateWrfScheduleUI()"><select id="wrfGapUnit" onchange="updateWrfScheduleUI()"><option value="60" selected>horas</option><option value="1">minutos</option></select></div></div>
+                        </div>
+                        <div id="wrfScheduleHint" style="color:#a5b4fc;font-size:11.5px;margin-top:7px;line-height:1.5;">Se avisa a todos los clientes al publicar.</div>
+                    </div>
                     <button class="btn-secondary" onclick="wrfPreview()">👁 Vista previa (calcular sin publicar)</button>
                     <div id="wrfPreview"></div>
                 </div>

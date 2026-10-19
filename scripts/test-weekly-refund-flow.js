@@ -28,11 +28,14 @@ function match(doc, q) {
   for (const k of Object.keys(q || {})) {
     const v = q[k];
     if (k === '$or') { if (!v.some((s) => match(doc, s))) return false; continue; }
+    if (k === '$and') { if (!v.every((s) => match(doc, s))) return false; continue; }
     const dv = doc[k];
     if (v && typeof v === 'object' && !(v instanceof Date)) {
       if ('$in' in v && !v.$in.includes(dv)) return false;
       if ('$ne' in v && dv === v.$ne) return false;
       if ('$lt' in v && !(dv != null && dv < v.$lt)) return false;
+      if ('$lte' in v && !(dv != null && dv <= v.$lte)) return false;
+      if ('$gt' in v && !(dv != null && dv > v.$gt)) return false;
       if ('$regex' in v && !new RegExp(v.$regex).test(String(dv))) return false;
     } else if (v === null) { if (dv != null) return false; } else if (dv !== v) return false;
   }
@@ -226,6 +229,62 @@ const sheet = ['Type\tUser\tAmount\tfecha', 'deposit\tbigoscar072\t80000\t23/11'
   r = await call('POST /api/admin/weekly-refund/preview', { user: admin, body: { text: sheet } });
   ok(r.body.totals.conBeneficio === 4 && r.body.items.find((i) => i.username === 'luxcaro990').amount === 300, 'la vista previa usa los rangos nuevos');
   commands['/sys_refund_claim_hours'] = '72';
+
+  // ---------- #230 programar + tandas ----------
+  // Limpieza: anulamos la semana resubida y usamos otra semana con 3 clientes (rango único → 4 con beneficio).
+  const prevBatch = RefundBatch.rows.find((x) => x.status === 'active');
+  await call('POST /api/admin/weekly-refund/batches/:id/cancel', { user: admin, params: { id: prevBatch.id } });
+  User.rows.push({ id: 'u3', username: 'luxcaro990', usernameLower: 'luxcaro990', role: 'user' }, { id: 'u4', username: 'cirnuevo1', usernameLower: 'cirnuevo1', role: 'user' });
+  sent.length = 0; pushes.length = 0;
+  const inOneHour = new Date(Date.now() + 3600 * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  const ar = new Date(inOneHour.getTime() - 3 * 3600 * 1000); // hora AR de "dentro de 1 h"
+  const publishAt = `${ar.getUTCFullYear()}-${pad(ar.getUTCMonth() + 1)}-${pad(ar.getUTCDate())}T${pad(ar.getUTCHours())}:${pad(ar.getUTCMinutes())}`;
+  r = await call('POST /api/admin/weekly-refund/preview', { user: admin, body: { text: sheet, parts: 2, partGapMinutes: 30, publishAt } });
+  ok(r.code === 200 && r.body.schedule.parts === 2 && r.body.schedule.gapMinutes === 30 && r.body.schedule.plan.length === 2 && r.body.schedule.plan[0].count === 2 && r.body.schedule.plan[1].count === 2
+     && Math.abs(new Date(r.body.schedule.plan[0].availableAt).getTime() - inOneHour.getTime()) < 61000
+     && new Date(r.body.schedule.plan[1].availableAt).getTime() - new Date(r.body.schedule.plan[0].availableAt).getTime() === 30 * 60000, 'preview: plan de 2 tandas cada 30 min desde dentro de 1 h (hora AR)');
+  r = await call('POST /api/admin/weekly-refund/batches', { user: admin, body: { text: sheet, fromDate: '2026-11-30', toDate: '2026-12-06', parts: 3, partGapMinutes: 2 } });
+  ok(r.code === 400, 'publicar en tandas sin separación válida → 400');
+  r = await call('POST /api/admin/weekly-refund/batches', { user: admin, body: { text: sheet, fromDate: '2026-11-30', toDate: '2026-12-06', parts: 2, partGapMinutes: 60, publishAt } });
+  ok(r.code === 200 && r.body.schedule.scheduled === true && r.body.schedule.parts === 2 && r.body.reembolsos === 4, 'publicar programado en 2 tandas cada 60 min');
+  const b2 = r.body.batchId;
+  const rows2 = WeeklyRefund.rows.filter((x) => x.batchId === b2);
+  const t1 = rows2.filter((x) => x.part === 1), t2 = rows2.filter((x) => x.part === 2);
+  const hrs = RefundBatch.rows.find((x) => x.id === b2).claimHours; // el comando se cachea 30 s: vale el que congeló el lote
+  ok(t1.length === 2 && t2.length === 2 && t2[0].availableAt - t1[0].availableAt === 3600000 && t1[0].expiresAt - t1[0].availableAt === hrs * 3600000 && t2[0].expiresAt - t2[0].availableAt === hrs * 3600000, `cada cliente en su tanda, con ${hrs} h desde que SU tanda sale`);
+  ok(RefundBatch.rows.find((x) => x.id === b2).expiresAt.getTime() === t2[0].expiresAt.getTime(), 'el lote vence con la última tanda');
+  await new Promise((x) => setTimeout(x, 300));
+  ok(sent.length === 0 && pushes.length === 0 && RefundBatch.rows.find((x) => x.id === b2).notifyDone === false, 'programado: todavía no se avisa a nadie y el lote no cierra los avisos');
+  const who = t1[0].username;
+  const uid1 = User.rows.find((x) => x.usernameLower === t1[0].usernameLower).id;
+  r = await call('GET /api/weekly-refund/status', { user: { userId: uid1, username: who } });
+  ok(r.body.pending.length === 0 && !r.body.items.some((i) => i.label === '30/11 al 06/12'), 'cliente de una tanda futura: no ve el reembolso todavía');
+  r = await call('POST /api/weekly-refund/claim', { user: { userId: uid1, username: who }, body: { id: t1[0].id } });
+  ok(r.code === 409 && r.body.notYet === true, 'reclamar antes de la tanda → 409 "todavía no está habilitado"');
+  r = await call('GET /api/admin/weekly-refund/batches', { user: admin });
+  const bb = r.body.batches.find((x) => x.id === b2);
+  ok(bb.parts === 2 && bb.programados === 4 && bb.nextPartAt && bb.partsPlan.length === 2, 'listado: 2 tandas, 4 programados, próxima tanda informada');
+  // llega la hora de la tanda 1
+  t1.forEach((x) => { x.availableAt = new Date(Date.now() - 1000); });
+  await _processWeeklyRefundNotifyQueue();
+  ok(sent.length === 2 && t1.every((x) => x.notifyState === 'sent') && t2.every((x) => x.notifyState == null) && RefundBatch.rows.find((x) => x.id === b2).notifyDone === false, 'tanda 1 avisada; tanda 2 sin avisar; el lote sigue abierto a avisos');
+  r = await call('GET /api/weekly-refund/status', { user: { userId: uid1, username: who } });
+  ok(r.body.pending.length === 1, 'cliente de la tanda 1: ya ve su reembolso');
+  r = await call('POST /api/weekly-refund/claim', { user: { userId: uid1, username: who }, body: { id: t1[0].id } });
+  ok(r.code === 200 && r.body.item.status === 'claimed', 'cliente de la tanda 1 reclama OK');
+  // soltar la tanda 2 ahora
+  r = await call('POST /api/admin/weekly-refund/batches/:id/release-next', { user: cargas, params: { id: b2 } });
+  ok(r.code === 403, 'soltar tanda: sólo admin general');
+  const before2 = sent.length;
+  r = await call('POST /api/admin/weekly-refund/batches/:id/release-next', { user: admin, params: { id: b2 } });
+  await new Promise((x) => setTimeout(x, 300));
+  ok(r.code === 200 && r.body.part === 2 && r.body.liberados === 2 && r.body.quedan === 0 && t2.every((x) => x.availableAt <= new Date() && x.expiresAt - x.availableAt === hrs * 3600000), 'soltar la próxima tanda: sale ya y su plazo arranca ahora');
+  ok(sent.length === before2 + 2 && RefundBatch.rows.find((x) => x.id === b2).notifyDone === true && RefundBatch.rows.find((x) => x.id === b2).partsPlan[1].releasedBy === 'ignite1000', 'la tanda soltada se avisa y el lote cierra los avisos');
+  r = await call('POST /api/admin/weekly-refund/batches/:id/release-next', { user: admin, params: { id: b2 } });
+  ok(r.code === 400, 'sin tandas pendientes → 400');
+  r = await call('POST /api/admin/weekly-refund/batches', { user: admin, body: { text: sheet, fromDate: '2026-12-07', toDate: '2026-12-13', publishAt: '2020-01-01T10:00' } });
+  ok(r.code === 200 && r.body.schedule.scheduled === false && WeeklyRefund.rows.filter((x) => x.batchId === r.body.batchId).every((x) => x.part === 1 && x.availableAt <= new Date()), 'fecha en el pasado = sale ahora, una sola tanda');
   console.log(fail ? `\n❌ FALLARON ${fail}` : '\n✅ FLUJO COMPLETO OK');
   process.exit(fail ? 1 : 0);
 })().catch((e) => { console.error('EXCEPCIÓN', e); process.exit(1); });

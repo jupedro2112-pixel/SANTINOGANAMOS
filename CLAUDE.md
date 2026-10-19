@@ -156,7 +156,10 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   RECLAMA en la app dentro de `/sys_refund_claim_hours` (default 48 h) → `creditGift` con
   reference `vip-wrf-<semana>-<usuario>` (PlatformTask pendiente) → el agente lo carga en
   GANAMOS y toca "Marcar como entregado" → `/sys_refund_delivered`. Modelos `RefundBatch`
-  + `WeeklyRefund`. Detalle en ARCHITECTURE §0.1. Tras tocarlo correr
+  + `WeeklyRefund`. **#230 (2026-10-19): al publicar se puede programar el primer aviso y repartir a
+  los clientes en TANDAS** (`WeeklyRefund.availableAt`/`part`, `RefundBatch.partsPlan`): hasta su hora el
+  cliente no ve ni puede reclamar, y su plazo arranca recién ahí (toda lectura al cliente pasa por
+  `_wrfAvailable`); "Soltar la próxima tanda" = `release-next`. Detalle en ARCHITECTURE §0.1. Tras tocarlo correr
   `node scripts/test-weekly-refund.js` y `node scripts/test-weekly-refund-flow.js` (este
   ejecuta el bloque REAL de server.js contra una base falsa: no mover sus comentarios-marca).
   Los comandos `/sys_refund_*` son los ÚNICOS que pueden decir "reembolso".

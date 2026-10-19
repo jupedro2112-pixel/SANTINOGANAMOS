@@ -5,7 +5,9 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-11** — banco: Depositar/Asignar toman también un movimiento en
+> Última actualización: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
+> clientes en TANDAS con plazo propio (`WeeklyRefund.availableAt`, `RefundBatch.partsPlan`,
+> `release-next`, #230; §0.1, §7, §9). Antes: **2026-10-11** — banco: Depositar/Asignar toman también un movimiento en
 > `shadow_matched` y un `claiming` viejo (`BANK_AGENT_CLAIMABLE_STATES`, `_bankAgentClaimFilter`,
 > #225; §5 bandeja, §9). Antes: **2026-10-09** — equipos: comparación CANÓNICA del inicio del usuario
 > (`_teamNorm`), `_communityChannelResolved` con fuente del link, probador
@@ -202,24 +204,36 @@ mano por WhatsApp, calculado con una planilla semanal y un Apps Script: ahora vi
   o Tipo/Usuario/Monto; sin encabezado = columnas A,B,C) y montos `50000`, `50.000`,
   `50.000,50`, `$ 5.384`.
 - **Modelos:** `RefundBatch` (una semana: `periodKey` = fecha "desde", `activeKey` ÚNICO =
-  periodKey mientras está activa → no se sube dos veces; `claimHours`/`expiresAt`
-  congelados al subir, `tiers` usados, `totals`, `notify`/`notifyDone`) y `WeeklyRefund`
+  periodKey mientras está activa → no se sube dos veces; `claimHours` congelado al subir,
+  `expiresAt` = vence la ÚLTIMA tanda, `tiers` usados, `totals`, `notify`/`notifyDone`; **#230:**
+  `publishAt` (null = al publicar), `parts` (1–20), `partGapMinutes` (5 min–7 días), `partsPlan[]`
+  {index, count, total, availableAt, expiresAt, releasedBy}) y `WeeklyRefund`
   (un cliente en un lote: cargado/retirado/neto/rango/%/monto, `status` claim_pending →
   claimed → delivered | expired | rejected | cancelled, `reference`, `platformTaskId`,
-  `notifyState`). Índice único `(batchId, usernameLower)`. Se identifica al cliente por
+  `notifyState`; **#230:** `part` y **`availableAt`** = desde cuándo se le avisa / lo ve / lo puede
+  reclamar; su `expiresAt` = `availableAt` + horas → cada tanda tiene el plazo completo; `null` =
+  disponible desde siempre, filas anteriores al #230). Índice único `(batchId, usernameLower)`. Se identifica al cliente por
   `usernameLower` (planilla = GANAMOS = web): si la cuenta todavía no existe, el reembolso
   le aparece cuando el agente se la crea con ese usuario.
 - **Flujo (bloque "#215 REEMBOLSO SEMANAL POR ARCHIVO" de server.js, antes de
   COMUNIDAD; test en frío `scripts/test-weekly-refund-flow.js`):**
-  1. `POST /api/admin/weekly-refund/preview {text}` (admin general) calcula sin guardar:
-     totales, resumen por equipo (`resolveTeamForUsername`), usuarios sin cuenta, filas
-     descartadas. `POST …/batches {text, fromDate, toDate, notify}` publica: crea el lote
-     + los WeeklyRefund `claim_pending` con `expiresAt = ahora + /sys_refund_claim_hours`
-     (default 48). Quien ya reclamó/cobró esa semana en una carga anulada no vuelve a entrar.
-  2. `_processWeeklyRefundNotifyQueue` (cada 60 s + `setImmediate` al publicar) avisa a
-     cada cliente con cuenta: `/sys_refund_available` por chat + push. Claim atómico por
-     destinatario (`notifyState` null → sending → sent | no_account | error).
-  3. Cliente: `GET /api/weekly-refund/status` y `POST /api/weekly-refund/claim {id}`.
+  1. `POST /api/admin/weekly-refund/preview {text, publishAt?, parts?, partGapMinutes?}` (admin
+     general) calcula sin guardar: totales, resumen por equipo (`resolveTeamForUsername`), usuarios
+     sin cuenta, filas descartadas y el `schedule` (plan por tanda). `POST …/batches {text, fromDate,
+     toDate, notify, publishAt?, parts?, partGapMinutes?}` publica: crea el lote + los WeeklyRefund
+     `claim_pending`, cada uno en su tanda (reparto round-robin, `_wrfPlanParts`) con
+     `availableAt` = `publishAt` (o ahora; fecha pasada = ahora; hora AR, `_wrfParseAt`) + (tanda−1)
+     × separación, y `expiresAt = availableAt + /sys_refund_claim_hours` (default 48). Quien ya
+     reclamó/cobró esa semana en una carga anulada no vuelve a entrar.
+  2. `_processWeeklyRefundNotifyQueue` (cada 60 s + `setImmediate` al publicar o soltar una tanda)
+     avisa a cada cliente con cuenta **cuya tanda ya está disponible** (`_wrfAvailable(now)`):
+     `/sys_refund_available` por chat + push. Claim atómico por destinatario (`notifyState` null →
+     sending → sent | no_account | error). `notifyDone` recién cuando no queda fila en tanda futura.
+  2b. **#230 `POST …/batches/:id/release-next`** (admin general): la tanda que sigue sale YA
+     (`availableAt` = ahora, `expiresAt` = ahora + horas, `partsPlan[].releasedBy`). `GET …/batches`
+     devuelve además `publishAt/parts/partGapMinutes/partsPlan`, `programados` y `nextPartAt`.
+  3. Cliente: `GET /api/weekly-refund/status` (sólo lo ya disponible) y
+     `POST /api/weekly-refund/claim {id}` (tanda futura → 409 `notYet`).
      Reclamar = reserva atómica `claim_pending → claimed` + `girox.creditGift` con
      reference **`vip-wrf-<periodKey>-<usernameLower>`** y `flow:'weekly_refund'` → en
      manual, PlatformTask pendiente. Mensaje `/sys_refund_claimed`, nota admin-only
@@ -1374,7 +1388,7 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
 | `_runFcmPrune` | 24 h | activo | flag anti-overlap en memoria |
 | `_runDailyCloseTick` (cierre diario del banco, #183) | 5 min (corre 1×/día desde las 00:05 ART) | activo | claim `Config['dailyclose_last']` + DailyClose único por dateKey |
 | `_processNotifBatchQueue` (lotes con regalo) | 45 s (+ setImmediate al crear un lote) | activo | claim atómico por recipient (`findOneAndUpdate` posicional a 'sending'; un 'sending' colgado >10 min se re-reclama solo) + reference `vip-nbatch-*` — reanudable tras deploy y multi-instancia safe |
-| `_processWeeklyRefundNotifyQueue` (avisos del reembolso semanal, #215) | 60 s (+ setImmediate al publicar una semana) | activo | claim atómico por destinatario (`WeeklyRefund.notifyState` null → sending; un `sending` colgado >10 min se re-reclama) |
+| `_processWeeklyRefundNotifyQueue` (avisos del reembolso semanal, #215/#230) | 60 s (+ setImmediate al publicar una semana o soltar una tanda) | activo (sólo filas con `availableAt` pasado o null; las tandas futuras esperan su hora) | claim atómico por destinatario (`WeeklyRefund.notifyState` null → sending; un `sending` colgado >10 min se re-reclama) |
 | `fbAdsWebhook.startWorker` | 5 min | activo | nextRetryAt |
 | Limpieza mensajes >3d | 6 h | activo (red de seguridad del TTL) | deleteMany |
 
@@ -1418,6 +1432,11 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   distinta mandaba al cliente a la comunidad general). Un equipo sin Telegram en su fila
   cae al general POR DISEÑO: antes de tocar código, probar con `/api/admin/teams/resolve`
   (card Equipos → "🔎 Probar con un usuario") y leer `[teams] comunidad para …` en el log.
+- **Reembolso semanal en tandas (#230):** toda lectura de `WeeklyRefund` que le muestre algo al
+  CLIENTE o le avise tiene que pasar por `_wrfAvailable(now)` (`availableAt` null o pasado); si
+  se agrega un camino nuevo sin ese filtro, un cliente de una tanda futura ve/reclama antes de
+  tiempo y rompe el reparto. El `expiresAt` de cada fila sale de SU `availableAt`, no del lote:
+  no "unificar" los vencimientos. El test en frío `scripts/test-weekly-refund-flow.js` cubre esto.
 - **MODO MANUAL (§0):** nunca hacer `require('./giroxService')` directo — siempre el
   selector `platformService`. Toda operación de plata NUEVA que dispare el server solo
   tiene que pasar una `reference` estable (nace `pending` en la bandeja); toda la que

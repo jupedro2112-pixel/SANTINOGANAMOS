@@ -21,7 +21,14 @@ const schema = new mongoose.Schema({
   label:     { type: String, required: true },              // "23/11 al 29/11"
   status:    { type: String, enum: ['active', 'cancelled'], default: 'active', index: true },
   claimHours: { type: Number, required: true },
-  expiresAt: { type: Date, required: true },
+  expiresAt: { type: Date, required: true },         // vence la ÚLTIMA tanda (#230)
+  // #230 Programar + tandas: el aviso (y el plazo de cada cliente) arranca en `availableAt`
+  // de su tanda, no al publicar. `publishAt` = cuándo sale la primera (null = al publicar),
+  // `parts` = cantidad de tandas, `partGapMinutes` = separación, `partsPlan` = el plan.
+  publishAt: { type: Date, default: null },
+  parts:     { type: Number, default: 1 },
+  partGapMinutes: { type: Number, default: 0 },
+  partsPlan: { type: [{ _id: false, index: Number, count: Number, total: Number, availableAt: Date, expiresAt: Date, releasedBy: String }], default: [] },
   tiers:     { type: [{ _id: false, name: String, min: Number, pct: Number }], default: [] },
   totals: {
     filas: { type: Number, default: 0 },
