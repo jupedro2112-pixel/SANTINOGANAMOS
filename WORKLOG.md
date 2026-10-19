@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-16** (última entrada: #226)
+> **Última actualización: 2026-10-16** (última entrada: #229)
 
 ---
 
