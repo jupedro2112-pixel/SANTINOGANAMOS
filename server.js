@@ -490,7 +490,8 @@ const BONUS_ROLLOVER_OPTIONS = bonusRollover.BONUS_ROLLOVER_OPTIONS;
 // #196 GANAMOS NO tiene rollover de bonos ni reembolsos: en modo manual el rollover
 // global queda APAGADO y fijo en x0 (no depende de Config['bonusRolloverGlobal']),
 // `applyGlobalRollover` devuelve 0 y `_rolloverNoteText` nunca agrega la nota.
-const PLATFORM_NO_ROLLOVER = !!girox.MANUAL_MODE;
+// #231 desde FEATURES del selector: girox true, manual/mijoker false (mijoker tampoco tiene rollover).
+const PLATFORM_NO_ROLLOVER = girox.FEATURES ? !girox.FEATURES.rollover : !!girox.MANUAL_MODE;
 async function getGlobalBonusRollover() {
   if (PLATFORM_NO_ROLLOVER) return bonusRollover.resolveGlobalRollover({ enabled: false, x: 0 }, [0]);
   let raw = null;
@@ -588,13 +589,17 @@ girox.setKeyResolver(async (username) => {
 // nace pendiente (nota al agente en el chat) o se marca hecha/rechazada (aviso al
 // cliente por /sys_ganamos_acreditado, nota en el chat, socket al panel).
 const PLATFORM_MANUAL = !!girox.MANUAL_MODE;
-// Banderas derivadas (hoy todas = PLATFORM_MANUAL). Existió un modo `ganamos_api`
-// (#191–#193) que también las encendía; se eliminó el 2026-09-29 (#194) porque GANAMOS
-// bloquea su API con Cloudflare + Servicepipe. Se conservan los nombres por si vuelve
-// a haber una plataforma sin netwin/SSO/alta.
-const PLATFORM_NO_STATS = PLATFORM_MANUAL;      // sin netwin → reembolsos/VIP/cashback off
-const PLATFORM_NO_SSO = PLATFORM_MANUAL;        // casino en pestaña
-const PLATFORM_NO_SELFSIGNUP = PLATFORM_MANUAL; // alta por agente
+// Banderas derivadas de `girox.FEATURES` (#231, src/services/platformService.js):
+//   manual  → sin stats, sin SSO, sin alta pública (todo = PLATFORM_MANUAL, como antes).
+//   mijoker → API con saldo/alta pero SIN netwin ni SSO: NO_STATS y NO_SSO true,
+//             NO_SELFSIGNUP según MIJOKER_PUBLIC_REGISTER (default abierto).
+//   girox   → todo false.
+// Existió un modo `ganamos_api` (#191–#193) que también las encendía; se eliminó el
+// 2026-09-29 (#194) porque GANAMOS bloquea su API con Cloudflare + Servicepipe.
+const PLATFORM_FEATURES = girox.FEATURES || { stats: !PLATFORM_MANUAL, sso: !PLATFORM_MANUAL, signup: !PLATFORM_MANUAL, balance: !PLATFORM_MANUAL, cashier: !PLATFORM_MANUAL, rollover: !PLATFORM_MANUAL, bonus: !PLATFORM_MANUAL };
+const PLATFORM_NO_STATS = !PLATFORM_FEATURES.stats;      // sin netwin → reembolsos/VIP/cashback/referidos off
+const PLATFORM_NO_SSO = !PLATFORM_FEATURES.sso;          // casino en pestaña
+const PLATFORM_NO_SELFSIGNUP = !PLATFORM_FEATURES.signup; // alta por agente
 const PUBLIC_REGISTER_ENABLED = String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === '1' || String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === 'true';
 function _taskKindLabel(kind) { return { deposit: 'CARGA', withdraw: 'RETIRO', gift: 'BONO/REGALO' }[kind] || String(kind || '').toUpperCase(); }
 function _taskFlowLabel(flow) {
@@ -675,6 +680,26 @@ if (PLATFORM_MANUAL) {
         : `❌ RECHAZADA por ${task.doneBy || 'agente'} — ${kindLabel} de ${money(task.amount)}${bonusTxt} · ${motivo}.${task.note ? ' Motivo: ' + task.note : ''} ⚠️ NO se acreditó/debitó nada en GANAMOS; revisá la Transaction si quedó registrada.`);
     }
     notifyAdmins('platform_task', { event, taskId, kind: task.kind, username: task.username, amount: task.amount, flow: task.flow || null, by: task.doneBy || null });
+  });
+}
+// #231 PLATFORM_MODE=mijoker: la Operator API no tiene idempotencia; `mijokerService`
+// lleva el libro mayor PlatformOp y avisa acá cuando una operación de plata queda SIN
+// CONFIRMAR (timeout/5xx y el historial tampoco respondió) o cuando la reconcilia
+// después. La nota va al chat del cliente (sólo agentes) y por socket al panel.
+if (typeof girox.setOpListener === 'function') {
+  girox.setOpListener(async (event, op) => {
+    if (!['unknown', 'reconciled'].includes(event)) return;
+    const money = (n) => '$' + Number(n || 0).toLocaleString('es-AR');
+    const kindLabel = _taskKindLabel(op.kind);
+    const motivo = op.description || _taskFlowLabel(op.flow);
+    let userId = null;
+    try { const u = await findUserByUsernameCI(op.username); userId = u ? u.id : null; } catch (_) {}
+    if (userId) {
+      await _emitAdminOnlyChatNote(userId, op.username, event === 'unknown'
+        ? `⚠️ OPERACIÓN SIN CONFIRMAR EN LA PLATAFORMA — ${kindLabel} de ${money(op.amount)} · ${motivo} (ref ${op.reference}). La API no respondió y no se pudo verificar en su historial. NO se reintenta sola: revisá el historial del jugador en la plataforma y, si NO figura, reintentá la operación; si figura, pedile al administrador que la marque conciliada (Pendientes → Operaciones sin confirmar).`
+        : `✅ OPERACIÓN CONCILIADA — ${kindLabel} de ${money(op.amount)} · ${motivo} (ref ${op.reference}) figura en el historial de la plataforma${op.ambiguous ? ' ⚠️ (había más de un movimiento igual: verificá que no se haya cargado dos veces)' : ''}.`).catch(() => {});
+    }
+    notifyAdmins('platform_op', { event, reference: op.reference, kind: op.kind, username: op.username, amount: op.amount, flow: op.flow || null, ambiguous: !!op.ambiguous });
   });
 }
 // Rangos de fecha en hora argentina para los períodos de reembolso.
@@ -3843,13 +3868,14 @@ app.post('/api/auth/register', authLimiter, registerIpLimiter, async (req, res) 
     try {
       jgResult = await girox.syncUserToPlatform({
         username: username,
-        password: password
+        password: password,
+        selfSignup: true // #231 mijoker: un username que YA existe en la plataforma rebota (no se vincula sin validar clave)
       });
       
       if (!jgResult.success && !jgResult.alreadyExists) {
         // Username tomado en 1girox por OTRA estructura (nuestra key no lo ve):
         // rebotar con mensaje claro y SIN cuenta local (réplica #205).
-        if (jgResult.code === 'username_taken_foreign') {
+        if (jgResult.code === 'username_taken_foreign' || jgResult.code === 'username_taken') {
           return res.status(400).json({ error: 'Ese nombre de usuario ya está en uso. Elegí otro.' });
         }
         return res.status(400).json({ error: 'No se pudo crear el usuario en la plataforma: ' + (jgResult.error || 'Error desconocido') });
@@ -4084,9 +4110,9 @@ app.post('/api/auth/register-quick', authLimiter, registerIpLimiter, async (req,
     // Crear en JUGAYGANA primero (igual que el flujo normal).
     let jgResult = null;
     try {
-      jgResult = await girox.syncUserToPlatform({ username, password });
+      jgResult = await girox.syncUserToPlatform({ username, password, selfSignup: true }); // #231
       if (!jgResult.success && !jgResult.alreadyExists) {
-        if (jgResult.code === 'username_taken_foreign') {
+        if (jgResult.code === 'username_taken_foreign' || jgResult.code === 'username_taken') {
           return res.status(400).json({ error: 'Ese nombre de usuario ya está en uso. Elegí otro.' });
         }
         return res.status(400).json({ error: 'No se pudo crear el usuario en la plataforma: ' + (jgResult.error || 'Error desconocido') });
@@ -4295,7 +4321,10 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
       }
       ownerCampaign = normalizedCode;
     } else {
-      const result = await girox.syncUserToPlatform({ username, password });
+      const result = await girox.syncUserToPlatform({ username, password, selfSignup: true }); // #231
+      if (!result.success && (result.code === 'username_taken' || result.code === 'username_taken_foreign')) {
+        return res.status(400).json({ error: 'Ese nombre de usuario ya está en uso. Probá de nuevo.' });
+      }
       if (!result.success) {
         console.error(`[landing-signup] alta 1girox (master) falló para ${username}: ${result.error}`);
         return res.status(502).json({ error: 'No pudimos crear tu cuenta en este momento. Probá de nuevo en unos minutos.' });
@@ -4836,7 +4865,8 @@ app.get('/api/auth/verify', authMiddleware, async (req, res) => {
         role: user.role,
         balance: user.balance,
         mustChangePassword: user.mustChangePassword === true,
-        platformMode: girox.PLATFORM_MODE, // #190 'manual' | 'girox' (la PWA oculta saldo/SSO en manual)
+        platformMode: girox.PLATFORM_MODE, // #190 'manual' | 'girox' | 'mijoker' (la PWA oculta saldo/SSO en manual)
+        platformFeatures: girox.FEATURES || null, // #231
         metaMatching: isAdminRole(user.role) ? null : metaCapi.buildAdvancedMatching({
           email: user.email,
           phone: user.phone,
@@ -4907,6 +4937,7 @@ app.get('/api/admin/me', async (req, res) => {
         publisherCampaignCode: user.publisherCampaignCode || null
       },
       platformMode: girox.PLATFORM_MODE, // #190 el panel muestra "Pendientes GANAMOS" y oculta saldos en manual
+      platformFeatures: girox.FEATURES || null, // #231 qué tiene la plataforma (saldo, stats, rollover, cajero…)
       playUrl: girox.getPlayUrl(),
       token: freshToken
     });
@@ -5330,7 +5361,7 @@ async function platformSessionHandler(req, res) {
     // pestaña (el jugador entra con su usuario y clave de GANAMOS). `openInTab`
     // le dice a la PWA que NO use el iframe (otro dominio, sin sesión compartida).
     if (PLATFORM_NO_SSO) {
-      return res.json({ success: true, redirectUrl: girox.getPlayUrl(), platformUrl: girox.getPlayUrl(), manual: true, openInTab: true });
+      return res.json({ success: true, redirectUrl: girox.getPlayUrl(), platformUrl: girox.getPlayUrl(), manual: PLATFORM_MANUAL, openInTab: true });
     }
 
     let session = await girox.createSession(user.username);
@@ -10946,6 +10977,9 @@ async function initializeData() {
   // que se vea fuerte en los logs del arranque y no recién con el primer cliente.
   if (PLATFORM_MANUAL) {
     console.log(`✅ Plataforma en MODO MANUAL (GANAMOS sin API): cargas/retiros/bonos van a la bandeja "Pendientes GANAMOS" del panel. Casino: ${girox.getPlayUrl()}. Registro público: ${PUBLIC_REGISTER_ENABLED ? 'ABIERTO' : 'apagado (alta por agente)'}.`);
+  } else if (girox.PLATFORM_MODE === 'mijoker') {
+    if (girox.isEnabled()) console.log(`✅ Plataforma MIJOKER (Operator API en ${girox.getBaseUrl()}, agente ${girox.getAgentName() || '⚠️ SIN MIJOKER_AGENT_NAME'}). Casino: ${girox.getPlayUrl()}. Registro público: ${!PLATFORM_NO_SELFSIGNUP || PUBLIC_REGISTER_ENABLED ? 'ABIERTO' : 'apagado (alta por agente)'}. Sin rollover, netwin ni SSO.`);
+    else console.error('❌ MIJOKER SIN CONFIGURAR: faltan MIJOKER_API_URL y/o MIJOKER_API_TOKEN. Cargas, retiros, saldo y altas NO van a funcionar.');
   } else if (girox.isEnabled()) {
     console.log(`✅ 1girox configurado (${girox.getBaseUrl()})`);
   } else {
@@ -11280,7 +11314,7 @@ async function initializeData() {
   // otro proyecto corriendo contra esta base, o quedaron de una versión vieja). Nadie los
   // usa. Se avisan en el log y el panel los marca y deja BORRARLOS de verdad (admin general).
   _knownSysCmds = new Set(systemCmds.map((c) => c.name));
-  if (!PLATFORM_MANUAL) _knownSysCmds.add('/sys_referral_pct');
+  if (!PLATFORM_NO_STATS) _knownSysCmds.add('/sys_referral_pct'); // #231 tampoco en mijoker
   try {
     const enBase = await Command.find({ name: /^\/sys_/ }, { name: 1 }).lean();
     const huerfanos = enBase.map((c) => c.name).filter((n) => !_knownSysCmds.has(n));
@@ -11357,7 +11391,7 @@ async function initializeData() {
   // {rollover}, rakeback) se PISAN con el texto vigente de la seed. Idempotente y
   // segura: sólo toca respuestas que todavía contengan una de esas marcas; un texto
   // que el owner ya editó sin esas palabras no se toca.
-  if (PLATFORM_MANUAL) {
+  if (PLATFORM_NO_STATS) { // #231 manual Y mijoker (ninguna tiene rollover/reembolsos/VIP/referidos)
     const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|\{referral_pct\}|referid|rakeback|nivel VIP/i; // #207 + referidos
     let fixed = 0;
     for (const cmd of systemCmds) {
@@ -15040,11 +15074,48 @@ app.get('/api/public/config', async (req, res) => {
   res.json({
     platformMode: girox.PLATFORM_MODE,
     manual: PLATFORM_MANUAL,
+    features: PLATFORM_FEATURES, // #231 balance / stats / sso / signup / rollover…
+    noSso: PLATFORM_NO_SSO,      // #231 CASINO en pestaña (manual y mijoker)
     playUrl: girox.getPlayUrl(),
-    publicRegister: !PLATFORM_MANUAL || PUBLIC_REGISTER_ENABLED,
+    publicRegister: !PLATFORM_NO_SELFSIGNUP || PUBLIC_REGISTER_ENABLED,
     brand: process.env.BRAND_NAME || 'GANAMOS',
     ...(PLATFORM_NO_STATS ? {} : { referralPct }) // #195/#207: sin referidos en GANAMOS
   });
+});
+
+// #231 MIJOKER — libro mayor de operaciones de plata (PlatformOp). Sólo admin general.
+// GET  /api/admin/platform-ops?status=unknown|failed|done|pending|all&username=&limit=   (count=1 → sólo unknownCount)
+// POST /api/admin/platform-ops/:reference/reconcile  → busca la operación en el historial de la plataforma
+app.get('/api/admin/platform-ops', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Sólo el administrador general.' });
+    if (typeof girox.listOps !== 'function') return res.json({ supported: false, ops: [], unknownCount: 0 });
+    const unknownCount = await girox.countUnknown();
+    if (String(req.query.count || '') === '1') return res.json({ supported: true, unknownCount });
+    const status = ['unknown', 'failed', 'done', 'pending', 'all'].includes(String(req.query.status || '')) ? String(req.query.status) : 'unknown';
+    const ops = await girox.listOps({ status, limit: Number(req.query.limit) || 200, username: req.query.username ? String(req.query.username).trim() : null });
+    res.json({ supported: true, status, unknownCount, ops: ops.map((o) => ({
+      id: String(o._id), reference: o.reference, kind: o.kind, operation: o.operation, status: o.status, username: o.username, amount: o.amount,
+      description: o.description, flow: o.flow, flowLabel: _taskFlowLabel(o.flow), attempts: o.attempts, startedAt: o.startedAt, finishedAt: o.finishedAt,
+      balanceAfter: o.balanceAfter, platformTxId: o.platformTxId, reconciled: !!o.reconciled, ambiguous: !!o.ambiguous, error: o.error, errorCode: o.errorCode, httpStatus: o.httpStatus, createdAt: o.createdAt
+    })) });
+  } catch (e) {
+    logger.error(`[platform-ops] list: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+app.post('/api/admin/platform-ops/:reference/reconcile', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Sólo el administrador general.' });
+    if (typeof girox.reconcileOp !== 'function') return res.status(400).json({ error: 'La plataforma activa no tiene libro mayor de operaciones.' });
+    const r = await girox.reconcileOp(String(req.params.reference));
+    if (!r.success) return res.status(400).json({ error: r.error, code: r.code, op: r.op || null });
+    logger.info(`[platform-ops] reconcile ${req.params.reference} por ${req.user.username} → ${r.op && r.op.status}${r.found ? ' (figura en el historial)' : ''}`);
+    res.json({ success: true, found: !!r.found, ambiguous: !!r.ambiguous, alreadyDone: !!r.alreadyDone, op: r.op });
+  } catch (e) {
+    logger.error(`[platform-ops] reconcile: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
 });
 
 function _canSettlePlatformTask(role, kind) {

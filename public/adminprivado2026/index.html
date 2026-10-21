@@ -34,32 +34,35 @@
     <script src="/lib/firebase/9.1.2/firebase-app-compat.js"></script>
     <script src="/lib/firebase/9.1.2/firebase-messaging-compat.js"></script>
 <style>
-/* #196 GANAMOS (modo manual): sin reembolsos, sin niveles VIP, sin rollover, sin saldo del jugador */
+/* #196 GANAMOS (modo manual): sin reembolsos, sin niveles VIP, sin rollover, sin saldo del jugador.
+   #231 Las clases las pone admin.js (setupRoleBasedUI) según las CAPACIDADES de la plataforma:
+   platform-manual (sólo manual) · platform-noextras (sin netwin: manual y mijoker) ·
+   platform-norollover (manual y mijoker) · platform-nobalance (sólo manual: mijoker SÍ tiene saldo). */
 body.platform-manual .manual-hide,
-body.platform-manual .nav-group-title.nav-group-refunds,
-body.platform-manual .nav-item[data-section="reembolsos"],
-body.platform-manual .filter-btn[data-filter="cashback"],
-body.platform-manual .filter-btn[data-filter="rakeback"],
-body.platform-manual .filter-btn[data-filter="vip_levelup"],
-body.platform-manual #bonusRolloverHeader, body.platform-manual #bonusRolloverForm,
-body.platform-manual #cashbackHeader, body.platform-manual #cashbackForm,
-body.platform-manual #refundTiersHeader, body.platform-manual #refundTiersForm,
-body.platform-manual #vipLevelsHeader, body.platform-manual #vipLevelsForm,
-body.platform-manual #nbRolloverWrap,
-body.platform-manual #schedType option[value="reembolso"],
-body.platform-manual #schedPlan option[value="solo_reembolsos"],
-body.platform-manual #notifSegment option[value="with_balance"],
-body.platform-manual .col-balance,
-body.platform-manual .stat-card.cashback,
-body.platform-manual .stat-card.rakeback, body.platform-manual .stat-card.vip_levelup,
-body.platform-manual .rp-roll-col,
-body.platform-manual .nav-item[data-section="referrals"],
-body.platform-manual .filter-btn[data-filter="referral_commission"],
-body.platform-manual .stat-card.referral { display: none !important; } /* #207 sin referidos */
+body.platform-noextras .nav-group-title.nav-group-refunds,
+body.platform-noextras .nav-item[data-section="reembolsos"],
+body.platform-noextras .filter-btn[data-filter="cashback"],
+body.platform-noextras .filter-btn[data-filter="rakeback"],
+body.platform-noextras .filter-btn[data-filter="vip_levelup"],
+body.platform-norollover #bonusRolloverHeader, body.platform-norollover #bonusRolloverForm,
+body.platform-noextras #cashbackHeader, body.platform-noextras #cashbackForm,
+body.platform-noextras #refundTiersHeader, body.platform-noextras #refundTiersForm,
+body.platform-noextras #vipLevelsHeader, body.platform-noextras #vipLevelsForm,
+body.platform-norollover #nbRolloverWrap,
+body.platform-noextras #schedType option[value="reembolso"],
+body.platform-noextras #schedPlan option[value="solo_reembolsos"],
+body.platform-nobalance #notifSegment option[value="with_balance"],
+body.platform-nobalance .col-balance,
+body.platform-noextras .stat-card.cashback,
+body.platform-noextras .stat-card.rakeback, body.platform-noextras .stat-card.vip_levelup,
+body.platform-norollover .rp-roll-col,
+body.platform-noextras .nav-item[data-section="referrals"],
+body.platform-noextras .filter-btn[data-filter="referral_commission"],
+body.platform-noextras .stat-card.referral { display: none !important; } /* #207 sin referidos */
 </style>
 </head>
 <body>
-<!-- #196 la clase platform-manual la pone admin.js (setupRoleBasedUI) cuando platformMode=manual: oculta todo lo de reembolsos/VIP/rollover/saldo que GANAMOS no tiene -->
+<!-- #196/#231 las clases platform-manual / platform-noextras / platform-norollover / platform-nobalance las pone admin.js (setupRoleBasedUI) según las capacidades de la plataforma (window._platformFeatures) -->
 <script>
 // Avisos de formulario en ESPAÑOL: el navegador los muestra en el idioma del
 // sistema (inglés en muchos equipos) ignorando el lang de la página. Mismo
@@ -152,6 +155,12 @@ document.addEventListener('change', function (ev) {
                     <span>⏳</span>
                     <span>Pendientes GANAMOS</span>
                     <span id="platformTasksBadge" style="display:none;background:#ff5050;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;">0</span>
+                </a>
+                <!-- #231 Operaciones contra la API de la plataforma (modo mijoker, sólo admin general): libro mayor PlatformOp con las que quedaron SIN CONFIRMAR. La muestra setupRoleBasedUI. -->
+                <a href="#" class="nav-item nav-item-platform-ops" data-section="platformOps" style="display:none">
+                    <span>🔁</span>
+                    <span>Operaciones plataforma</span>
+                    <span id="platformOpsBadge" style="display:none;background:#ff5050;color:#fff;font-size:9px;font-weight:900;padding:1px 6px;border-radius:8px;margin-left:4px;">0</span>
                 </a>
                 <!-- #215 Reembolsos semanales por planilla (la muestra wrfSetupNav según el rol). -->
                 <a href="#" class="nav-item nav-item-weekly-refund" data-section="weeklyRefund" style="display:none">
@@ -2251,6 +2260,28 @@ document.addEventListener('change', function (ev) {
                     <input id="platformTasksSearch" type="text" placeholder="Buscar usuario…" style="margin-left:auto;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.30);color:#fff;font-size:12px;min-width:160px;" onkeydown="if(event.key==='Enter'){loadPlatformTasks();}">
                 </div>
                 <div id="platformTasksBody">
+                    <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
+                </div>
+            </section>
+
+            <!-- #231 Operaciones contra la API (PLATFORM_MODE=mijoker) -->
+            <section id="platformOpsSection" class="section">
+                <div class="panel-header">
+                    <h2>🔁 Operaciones plataforma</h2>
+                    <button class="refresh-btn" onclick="loadPlatformOps()" title="Refrescar">🔄</button>
+                </div>
+                <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">La API de la plataforma <strong style="color:#ffd479;">no tiene idempotencia</strong>: cada carga/retiro/bono que manda el sistema queda registrado acá con su referencia. Si la API no responde (timeout o error 5xx) la operación queda <strong style="color:#ff8080;">SIN CONFIRMAR</strong> y el sistema busca el movimiento en el historial del jugador; si tampoco puede, queda así y <strong>no se reintenta sola</strong>. Revisá el historial del jugador en la plataforma: si el movimiento figura, tocá <strong style="color:#25d366;">Conciliar</strong> (vuelve a buscarlo en el historial y la marca hecha); si NO figura, Conciliar la deja como <em>fallida</em> y se puede volver a hacer la operación con normalidad.</p>
+                </div>
+                <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
+                    <button class="po-filter-btn" data-f="unknown" onclick="platformOpsSetFilter('unknown')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(212,175,55,0.45);background:rgba(212,175,55,0.15);color:#d4af37;font-weight:800;font-size:12px;cursor:pointer;">Sin confirmar</button>
+                    <button class="po-filter-btn" data-f="failed" onclick="platformOpsSetFilter('failed')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.30);color:#aaa;font-weight:800;font-size:12px;cursor:pointer;">Fallidas</button>
+                    <button class="po-filter-btn" data-f="pending" onclick="platformOpsSetFilter('pending')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.30);color:#aaa;font-weight:800;font-size:12px;cursor:pointer;">En vuelo</button>
+                    <button class="po-filter-btn" data-f="done" onclick="platformOpsSetFilter('done')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.30);color:#aaa;font-weight:800;font-size:12px;cursor:pointer;">Hechas</button>
+                    <button class="po-filter-btn" data-f="all" onclick="platformOpsSetFilter('all')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(255,255,255,0.10);background:rgba(0,0,0,0.30);color:#aaa;font-weight:800;font-size:12px;cursor:pointer;">Todas</button>
+                    <input id="platformOpsSearch" type="text" placeholder="Buscar usuario…" style="margin-left:auto;padding:7px 10px;border-radius:8px;border:1px solid rgba(255,255,255,0.15);background:rgba(0,0,0,0.30);color:#fff;font-size:12px;min-width:160px;" onkeydown="if(event.key==='Enter'){loadPlatformOps();}">
+                </div>
+                <div id="platformOpsBody">
                     <div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>
                 </div>
             </section>

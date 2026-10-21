@@ -9,7 +9,7 @@
 //   - publicRegister=false → se oculta "Registrarse".
 // Si el endpoint falla, la app sigue con el comportamiento de siempre.
 (function () {
-    VIP.state.platform = { mode: 'girox', manual: false, playUrl: VIP.config.PLATFORM_URL, publicRegister: true, loaded: false };
+    VIP.state.platform = { mode: 'girox', manual: false, noSso: false, features: null, playUrl: VIP.config.PLATFORM_URL, publicRegister: true, loaded: false };
 
     function hide(sel) { document.querySelectorAll(sel).forEach((el) => { el.style.display = 'none'; }); }
 
@@ -44,12 +44,21 @@
         if (btn && btn.parentElement) btn.parentElement.style.display = 'none';
     }
 
+    // #231 mijoker (API con saldo pero sin SSO): se muestra el saldo y el CASINO va en pestaña.
+    function applyNoBalanceUi() {
+        hide('.dash-balance');
+        if (VIP.ui && typeof VIP.ui.stopBalancePolling === 'function') VIP.ui.stopBalancePolling();
+    }
+
     VIP.platform = {
         isManual: () => !!(VIP.state.platform && VIP.state.platform.manual),
+        noSso: () => !!(VIP.state.platform && (VIP.state.platform.noSso || VIP.state.platform.manual)),
+        hasBalance: () => !(VIP.state.platform && VIP.state.platform.features && VIP.state.platform.features.balance === false) && !(VIP.state.platform && VIP.state.platform.manual),
         playUrl: () => (VIP.state.platform && VIP.state.platform.playUrl) || VIP.config.PLATFORM_URL,
         applyReferralPct,
         apply: function () {
             if (VIP.state.platform.manual) applyManualUi();
+            else if (VIP.state.platform.features && VIP.state.platform.features.balance === false) applyNoBalanceUi();
             applyRegisterUi(VIP.state.platform.publicRegister);
         },
         load: async function () {
@@ -60,6 +69,8 @@
                 VIP.state.platform = {
                     mode: j.platformMode || 'girox',
                     manual: !!j.manual,
+                    noSso: !!j.noSso,
+                    features: j.features || null,
                     playUrl: j.playUrl || VIP.config.PLATFORM_URL,
                     publicRegister: j.publicRegister !== false,
                     brand: j.brand || 'GANAMOS',

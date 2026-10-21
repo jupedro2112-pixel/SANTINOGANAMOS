@@ -977,7 +977,8 @@ VIP.ui.enterCasino = async function() {
   // #190 modo manual (GANAMOS sin API): no hay SSO ni iframe (otro dominio, sin
   // sesión compartida). Se abre la página de GANAMOS en una pestaña, DENTRO del
   // gesto del usuario (si no, el bloqueador de pop-ups mobile la mata).
-  if (VIP.platform && VIP.platform.isManual()) {
+  // #231 mijoker: hay API pero no SSO → también en pestaña.
+  if (VIP.platform && (VIP.platform.isManual() || VIP.platform.noSso())) {
     VIP.ui.closePlatformModal();
     VIP.ui._openInNewTab(VIP.platform.playUrl());
     return;

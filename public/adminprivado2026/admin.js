@@ -399,6 +399,7 @@ async function handleLogin(e) {
             currentToken = data.token;
             currentAdmin = data.user;
             window._platformMode = data.platformMode || 'girox'; // #190 'manual' = GANAMOS sin API
+            window._platformFeatures = data.platformFeatures || null; // #231
             window._playUrl = data.playUrl || '';
             
             // Configurar UI según el rol
@@ -478,6 +479,7 @@ async function checkAdminSession() {
             currentToken = data.token || null;
             currentAdmin = data.user;
             window._platformMode = data.platformMode || 'girox'; // #190
+            window._platformFeatures = data.platformFeatures || null; // #231
             window._playUrl = data.playUrl || '';
             setupRoleBasedUI();
             showApp();
@@ -666,6 +668,14 @@ function setupRoleBasedUI() {
         ptNavItem.style.display = manual ? '' : 'none';
         if (manual && !window._ptBadgeTimer) { refreshPlatformTasksBadge(); window._ptBadgeTimer = setInterval(refreshPlatformTasksBadge, 60 * 1000); }
     }
+    // #231 Operaciones plataforma (modo mijoker: API sin idempotencia): sólo admin general. Badge cada 60s.
+    const poNavItem = document.querySelector('.nav-item-platform-ops');
+    if (poNavItem) {
+        const _pfo = _platformFeatures();
+        const showOps = role === 'admin' && _pfo.api && !_pfo.tasks;
+        poNavItem.style.display = showOps ? '' : 'none';
+        if (showOps && !window._poBadgeTimer) { refreshPlatformOpsBadge(); window._poBadgeTimer = setInterval(refreshPlatformOpsBadge, 60 * 1000); }
+    }
     // #215 Reembolsos semanales por planilla: admin, cargas y comunidad (pagos no entrega bonos).
     if (typeof wrfSetupNav === 'function') wrfSetupNav();
     // #190 modo manual: no hay saldo del jugador (GANAMOS no lo informa) → ocultar el $ del
@@ -675,8 +685,17 @@ function setupRoleBasedUI() {
     // stats de reembolso/cashback/rakeback/VIP, las cards de rollover global / reembolso en vivo /
     // rangos / niveles VIP, los campos de rollover (bienvenida, fueguito, lotes, ruleta), las
     // opciones "reembolso"/"solo reembolsos"/"con saldo" y las columnas de Balance.
+    // #231 tres clases según lo que TIENE la plataforma (window._platformFeatures, del login):
+    //   platform-manual     → sólo manual (bandeja Pendientes GANAMOS)
+    //   platform-noextras   → sin netwin: reembolsos/cashback/rakeback/VIP/referidos (manual y mijoker)
+    //   platform-norollover → sin rollover (manual y mijoker)
+    //   platform-nobalance  → sin saldo del jugador (sólo manual; mijoker SÍ lo tiene)
+    const _pf = _platformFeatures();
     document.body.classList.toggle('platform-manual', window._platformMode === 'manual');
-    if (window._platformMode === 'manual') {
+    document.body.classList.toggle('platform-noextras', !_pf.stats);
+    document.body.classList.toggle('platform-norollover', !_pf.rollover);
+    document.body.classList.toggle('platform-nobalance', !_pf.balance);
+    if (!_pf.balance) {
         document.querySelectorAll('.user-balance').forEach((el) => { el.style.display = 'none'; });
         const selAll = document.getElementById('btnSelectAllBalance');
         if (selAll) selAll.style.display = 'none';
@@ -1270,6 +1289,13 @@ function initSocket() {
         const sec = document.getElementById('platformTasksSection');
         if (sec && sec.classList.contains('active') && typeof loadPlatformTasks === 'function') loadPlatformTasks(true);
         if (d && d.event === 'created') showToast(`⏳ Nueva pendiente en GANAMOS: ${d.kind === 'withdraw' ? 'retiro' : d.kind === 'gift' ? 'bono' : 'carga'} $${Number(d.amount || 0).toLocaleString('es-AR')} a ${d.username}`, 'info');
+    });
+    // #231 operación contra la API sin confirmar / conciliada (modo mijoker).
+    socket.on('platform_op', (d) => {
+        if (typeof refreshPlatformOpsBadge === 'function') refreshPlatformOpsBadge();
+        const sec = document.getElementById('platformOpsSection');
+        if (sec && sec.classList.contains('active') && typeof loadPlatformOps === 'function') loadPlatformOps(true);
+        if (d && d.event === 'unknown' && currentAdmin && currentAdmin.role === 'admin') showToast(`⚠️ Operación SIN CONFIRMAR en la plataforma: ${d.kind === 'withdraw' ? 'retiro' : d.kind === 'gift' ? 'bono' : 'carga'} $${Number(d.amount || 0).toLocaleString('es-AR')} a ${d.username}. Revisá "Operaciones plataforma".`, 'error');
     });
     // #215 reembolsos semanales: reclamo nuevo / entregado / semana publicada o anulada.
     socket.on('weekly_refund', (d) => {
@@ -4987,6 +5013,7 @@ function switchSection(section) {
     if (section === 'chatDelays') loadChatDelays();
     if (section === 'reviews') loadReviews();
     if (section === 'platformTasks') loadPlatformTasks(); // #190
+    if (section === 'platformOps') loadPlatformOps(); // #231
     if (section === 'weeklyRefund') loadWeeklyRefundAdmin(); // #215
     if (section === 'bank') loadBankSection();
     if (section === 'campaigns') loadCampaigns();
@@ -5880,13 +5907,13 @@ async function loadCBUConfig() {
     loadHgcashConfig();
     // #196 GANAMOS (manual): reembolsos, reembolso en vivo, rollover global y niveles VIP no existen
     // (el server responde 404 y el CSS oculta las cards): no se cargan.
-    const _manual = window._platformMode === 'manual';
+    const _pfc = _platformFeatures(); // #231 por capacidad (manual y mijoker no tienen stats ni rollover)
     // Cargar los porcentajes de reembolso (solo admin general)
-    if (!_manual) loadRefundTiers();
+    if (_pfc.stats) loadRefundTiers();
     // Cargar la config del reembolso en vivo (solo admin general)
-    if (!_manual) loadInstantCashbackCfg();
+    if (_pfc.stats) loadInstantCashbackCfg();
     // #184 Rollover GLOBAL de bonos (solo admin general)
-    if (!_manual) loadBonusRolloverCfg();
+    if (_pfc.rollover) loadBonusRolloverCfg();
     // #188 Regla del bono por instalar la app (solo admin general)
     loadInstallBonusCfg();
     // Cargar el estado de los niveles VIP (solo admin general)
@@ -7428,7 +7455,7 @@ function nbFormChanged() {
     const show = (id, on) => { const el = document.getElementById(id); if (el) el.style.display = on ? '' : 'none'; };
     show('nbCodeWrap', mode === 'code');
     show('nbUseHoursWrap', mode === 'code' && gift === 'percent'); // #198 horas para usar el bono tras canjear (solo código + %)
-    show('nbRolloverWrap', gift === 'fixed' && window._platformMode !== 'manual'); // #196 GANAMOS sin rollover
+    show('nbRolloverWrap', gift === 'fixed' && _platformFeatures().rollover); // #196 GANAMOS sin rollover (#231 tampoco mijoker)
     show('nbCapWrap', gift === 'percent'); nbCapHint(); // #CAP tope propio del lote
     const lbl = document.getElementById('nbAmountLabel');
     if (lbl) lbl.textContent = gift === 'fixed' ? 'Monto ($ fichas)' : 'Monto (%)';
@@ -14482,14 +14509,14 @@ function renderBankClose(c, isToday) {
     const body = document.getElementById('bankCloseBody');
     if (!body || !c) return;
     const s = c.summary || {}, ca = c.cashier || {}, bk = c.bank || {};
-    const st = c.status === 'ok' ? '<span style="color:#4caf50;font-weight:800;">✅ 0 diferencias — todo cuadra</span>' : (c.status === 'diff' ? '<span style="color:#ff5050;font-weight:800;">🔴 ' + c.unresolvedCount + ' diferencia(s) sin resolver</span>' : (window._platformMode === 'manual' ? '<span style="color:#4caf50;font-weight:800;">✅ Sin diferencias</span>' : '<span style="color:#ffb347;font-weight:800;">⚠️ Sin diferencias (el cruce con el cajero 1girox no tiene datos)</span>'));
+    const st = c.status === 'ok' ? '<span style="color:#4caf50;font-weight:800;">✅ 0 diferencias — todo cuadra</span>' : (c.status === 'diff' ? '<span style="color:#ff5050;font-weight:800;">🔴 ' + c.unresolvedCount + ' diferencia(s) sin resolver</span>' : (!_platformFeatures().cashier ? '<span style="color:#4caf50;font-weight:800;">✅ Sin diferencias</span>' : '<span style="color:#ffb347;font-weight:800;">⚠️ Sin diferencias (el cruce con el cajero 1girox no tiene datos)</span>'));
     const tile = (t, v, sub) => '<div style="flex:1;min-width:150px;padding:10px 12px;border-radius:8px;background:rgba(255,255,255,.04);border:1px solid rgba(255,255,255,.12);"><div style="font-size:10.5px;color:#aaa;text-transform:uppercase;letter-spacing:.5px;">' + t + '</div><div style="font-size:16px;font-weight:800;">' + v + '</div>' + (sub ? '<div style="font-size:11px;color:#bbb;">' + sub + '</div>' : '') + '</div>';
     let html = '<div style="margin-bottom:10px;font-size:14px;">Cierre <b>' + escapeHtml(c.dateKey) + '</b>' + (isToday ? ' <span style="color:#ffb347;">(día en curso — parcial)</span>' : '') + ' · ' + st + '<div style="font-size:11px;color:#888;">calculado ' + escapeHtml(c.computedAt ? fmtFechaHoraAR(c.computedAt) : '') + ' por ' + escapeHtml(c.computedBy || '') + (c.notifiedAt ? ' · enviado a Telegram' : '') + '</div></div>';
     html += '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px;">' +
         tile('⬇️ Entradas banco', (s.entradas ? s.entradas.count : 0) + ' · ' + _money(s.entradas && s.entradas.total), 'auto ' + (s.entradasCargadas ? s.entradasCargadas.auto : 0) + ' · asignadas ' + (s.entradasCargadas ? s.entradasCargadas.asignadas : 0) + ' · manual ' + (s.entradasCargadas ? s.entradasCargadas.manuales : 0) + ' · no corresponde ' + (s.entradasNoCorresponde ? s.entradasNoCorresponde.count : 0)) +
         tile('💰 Cargas sistema', (s.cargas ? s.cargas.count : 0) + ' · ' + _money(s.cargas && s.cargas.total), 'con transferencia ' + (s.cargas ? s.cargas.vinculadas : 0) + ' · otro banco ' + (s.cargas && s.cargas.otroBanco ? s.cargas.otroBanco.count : 0) + ' · sin origen ' + (s.cargas && s.cargas.sinTransferencia ? s.cargas.sinTransferencia.count : 0)) +
         tile('⬆️ Salidas banco', (s.salidas ? s.salidas.count : 0) + ' · ' + _money(s.salidas && s.salidas.total), 'pagos ' + (s.salidas ? s.salidas.pagos : 0) + ' (' + _money(s.salidas && s.salidas.pagosTotal) + ') · bajadas ' + (s.salidas ? s.salidas.bajadas : 0) + ' (' + _money(s.salidas && s.salidas.bajadasTotal) + ')') +
-        (window._platformMode === 'manual' ? '' : tile('🎰 Cajero 1girox', ca.status === 'sin_datos' ? 'sin datos' : (ca.status === 'ok' ? '✅ cuadra' : '🔴 ' + _money(ca.diff)), ca.status !== 'sin_datos' ? 'real ' + _money(ca.actualDelta) + ' · sistema ' + _money(ca.expectedDelta) + ' · ' + (ca.ops || 0) + ' op.' : 'la Partner API de 1girox no informa el saldo del agente (cruce sin datos)')) + // #196 GANAMOS: sin cajero
+        (!_platformFeatures().cashier ? '' : tile('🎰 Cajero 1girox', ca.status === 'sin_datos' ? 'sin datos' : (ca.status === 'ok' ? '✅ cuadra' : '🔴 ' + _money(ca.diff)), ca.status !== 'sin_datos' ? 'real ' + _money(ca.actualDelta) + ' · sistema ' + _money(ca.expectedDelta) + ' · ' + (ca.ops || 0) + ' op.' : 'la Partner API de 1girox no informa el saldo del agente (cruce sin datos)')) + // #196 GANAMOS: sin cajero
         (bk.netBalance != null ? tile('🏦 Saldo hgcash al cierre', _money(bk.netBalance), bk.actualDelta != null ? 'vs. cierre anterior ' + _money(bk.actualDelta) + ' (entradas−salidas ' + _money(bk.expectedDelta) + ')' : '') : '') +
         '</div>';
     const diffs = c.diffs || [];
@@ -14602,6 +14629,15 @@ window.bankCloseRun = bankCloseRun; window.bankCloseResolve = bankCloseResolve; 
 //   POST /api/admin/platform-tasks/:id/done | /reject {note}
 let _ptFilter = 'pending';
 let _ptCache = [];
+
+// #231 Capacidades de la plataforma activa (del login / me). Si el server viejo no las manda,
+// se deducen del modo: manual = nada; girox = todo.
+function _platformFeatures() {
+    if (window._platformFeatures && typeof window._platformFeatures === 'object') return window._platformFeatures;
+    const manual = window._platformMode === 'manual';
+    return { api: !manual, tasks: manual, balance: !manual, stats: !manual, sso: !manual, signup: !manual, rollover: !manual, bonus: !manual, cashier: !manual };
+}
+window._platformFeaturesOf = _platformFeatures;
 
 async function refreshPlatformTasksBadge() {
     if (window._platformMode !== 'manual') return;
@@ -14717,6 +14753,103 @@ function platformTaskReject(id) {
 }
 window.loadPlatformTasks = loadPlatformTasks; window.platformTasksSetFilter = platformTasksSetFilter;
 window.platformTaskDone = platformTaskDone; window.platformTaskReject = platformTaskReject; window.refreshPlatformTasksBadge = refreshPlatformTasksBadge;
+
+// ============================================================
+// #231 OPERACIONES PLATAFORMA (PLATFORM_MODE=mijoker) — libro mayor PlatformOp
+// GET /api/admin/platform-ops?status=&username=  ·  POST /api/admin/platform-ops/:reference/reconcile
+// ============================================================
+let _poFilter = 'unknown';
+let _poCache = [];
+async function refreshPlatformOpsBadge() {
+    const pf = _platformFeatures();
+    if (!(pf.api && !pf.tasks) || !currentAdmin || currentAdmin.role !== 'admin') return;
+    try {
+        const r = await authFetch('/api/admin/platform-ops?count=1');
+        if (!r.ok) return;
+        const j = await r.json();
+        const b = document.getElementById('platformOpsBadge');
+        if (!b) return;
+        if (j.unknownCount > 0) { b.textContent = String(j.unknownCount); b.style.display = ''; }
+        else b.style.display = 'none';
+    } catch (_) { /* badge */ }
+}
+function platformOpsSetFilter(f) {
+    _poFilter = f;
+    document.querySelectorAll('.po-filter-btn').forEach((btn) => {
+        const on = btn.dataset.f === f;
+        btn.style.border = on ? '1px solid rgba(212,175,55,0.45)' : '1px solid rgba(255,255,255,0.10)';
+        btn.style.background = on ? 'rgba(212,175,55,0.15)' : 'rgba(0,0,0,0.30)';
+        btn.style.color = on ? '#d4af37' : '#aaa';
+    });
+    loadPlatformOps();
+}
+async function loadPlatformOps(silent) {
+    const body = document.getElementById('platformOpsBody');
+    if (body && !silent) body.innerHTML = '<div style="color:#aaa;text-align:center;padding:24px;">⏳ Cargando…</div>';
+    try {
+        const q = (document.getElementById('platformOpsSearch') || {}).value || '';
+        const r = await authFetch(`/api/admin/platform-ops?status=${encodeURIComponent(_poFilter)}&limit=300${q ? '&username=' + encodeURIComponent(q.trim()) : ''}`);
+        const j = await r.json();
+        if (!r.ok) throw new Error(j.error || 'Error');
+        _poCache = j.ops || [];
+        const b = document.getElementById('platformOpsBadge');
+        if (b) { if (j.unknownCount > 0) { b.textContent = String(j.unknownCount); b.style.display = ''; } else b.style.display = 'none'; }
+        _poRender();
+    } catch (e) {
+        if (body) body.innerHTML = `<div style="color:#ff8080;text-align:center;padding:14px;">${escapeHtml(e.message || 'Error de conexión')}</div>`;
+    }
+}
+function _poStatusBadge(o) {
+    const when = o.finishedAt ? `<div style="color:#888;font-size:10px;">${formatDateTime(o.finishedAt)}</div>` : '';
+    if (o.status === 'done') return `<span style="color:#25d366;font-weight:900;font-size:11px;">✅ HECHA${o.reconciled ? ' (conciliada)' : ''}</span>${o.ambiguous ? '<div style="color:#ffb347;font-size:10px;font-weight:800;">⚠️ había más de un movimiento igual</div>' : ''}${when}`;
+    if (o.status === 'unknown') return `<span style="color:#ff5050;font-weight:900;font-size:11px;">⚠️ SIN CONFIRMAR</span><div style="color:#aaa;font-size:10px;">${escapeHtml(o.error || '')}</div>${when}`;
+    if (o.status === 'failed') return `<span style="color:#ff8a5b;font-weight:900;font-size:11px;">❌ FALLIDA</span><div style="color:#aaa;font-size:10px;">${escapeHtml(o.errorCode || '')}${o.httpStatus ? ' HTTP ' + o.httpStatus : ''} · ${escapeHtml(o.error || '')}</div>${when}`;
+    return `<span style="color:#ffd479;font-weight:900;font-size:11px;">⏳ EN VUELO</span><div style="color:#888;font-size:10px;">desde ${formatDateTime(o.startedAt)}</div>`;
+}
+function _poRender() {
+    const body = document.getElementById('platformOpsBody');
+    if (!body) return;
+    if (!_poCache.length) {
+        body.innerHTML = `<div style="color:#aaa;text-align:center;padding:24px;">${_poFilter === 'unknown' ? '🎉 No hay operaciones sin confirmar.' : 'Sin resultados.'}</div>`;
+        return;
+    }
+    const rows = _poCache.map((o) => {
+        const chat = `<span style="font-weight:800;color:#d4af37;">${escapeHtml(o.username)}</span>`;
+        const actions = (o.status === 'unknown' || o.status === 'failed' || o.status === 'pending')
+            ? `<button class="btn-small" onclick="platformOpReconcile('${escapeHtml(o.reference)}')" style="background:#1f6f3a;color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12px;">🔎 Conciliar</button>`
+            : (o.platformTxId ? `<span style="color:#666;font-size:10px;">tx ${escapeHtml(o.platformTxId)}</span>` : '');
+        return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
+            <td style="padding:8px 6px;white-space:nowrap;color:#bbb;font-size:11px;">${formatDateTime(o.createdAt)}${o.attempts > 1 ? `<div style="color:#888;font-size:10px;">${o.attempts} intentos</div>` : ''}</td>
+            <td style="padding:8px 6px;">${_ptKindBadge(o.kind)}</td>
+            <td style="padding:8px 6px;">${chat}</td>
+            <td style="padding:8px 6px;font-weight:900;color:#fff;white-space:nowrap;">$${Number(o.amount).toLocaleString('es-AR')}${o.balanceAfter != null ? `<div style="color:#888;font-size:10px;">saldo después $${Number(o.balanceAfter).toLocaleString('es-AR')}</div>` : ''}</td>
+            <td style="padding:8px 6px;color:#ccc;font-size:11.5px;max-width:280px;"><div style="font-weight:800;color:#ffd479;">${escapeHtml(o.flowLabel || o.flow || '')}</div>${escapeHtml(o.description || '')}<div style="color:#666;font-size:10px;">ref ${escapeHtml(o.reference)}</div></td>
+            <td style="padding:8px 6px;">${_poStatusBadge(o)}</td>
+            <td style="padding:8px 6px;white-space:nowrap;">${actions}</td>
+        </tr>`;
+    }).join('');
+    body.innerHTML = `<div style="overflow-x:auto;"><table style="width:100%;border-collapse:collapse;font-size:12.5px;">
+        <thead><tr style="color:#d4af37;font-size:11px;text-align:left;border-bottom:1px solid rgba(212,175,55,0.3);">
+            <th style="padding:6px;">Fecha</th><th style="padding:6px;">Tipo</th><th style="padding:6px;">Usuario</th><th style="padding:6px;">Monto</th><th style="padding:6px;">Motivo</th><th style="padding:6px;">Estado</th><th style="padding:6px;">Acción</th>
+        </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+async function platformOpReconcile(reference) {
+    const o = _poCache.find((x) => x.reference === reference);
+    const det = o ? `${o.kind === 'withdraw' ? 'RETIRO' : o.kind === 'gift' ? 'BONO' : 'CARGA'} de $${Number(o.amount).toLocaleString('es-AR')} a ${o.username}` : reference;
+    if (!confirm(`¿Buscar en el historial de la plataforma ${det}?\n\nSi figura, se marca HECHA. Si no figura, queda FALLIDA (no se acreditó) y se puede volver a hacer.`)) return;
+    try {
+        const r = await authFetch(`/api/admin/platform-ops/${encodeURIComponent(reference)}/reconcile`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'No se pudo conciliar', 'error'); return; }
+        if (j.alreadyDone) showToast('Ya estaba hecha', 'info');
+        else if (j.found) showToast(`✅ Figura en el historial: marcada como hecha${j.ambiguous ? ' ⚠️ (había más de un movimiento igual, verificá que no esté duplicada)' : ''}`, 'success');
+        else showToast('❌ No figura en el historial: quedó como fallida. Se puede volver a hacer la operación.', 'info');
+        loadPlatformOps(true);
+        refreshPlatformOpsBadge();
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+window.loadPlatformOps = loadPlatformOps; window.platformOpsSetFilter = platformOpsSetFilter;
+window.platformOpReconcile = platformOpReconcile; window.refreshPlatformOpsBadge = refreshPlatformOpsBadge;
 
 // ============================================
 // #215 REEMBOLSOS SEMANALES POR PLANILLA (GANAMOS sin API)

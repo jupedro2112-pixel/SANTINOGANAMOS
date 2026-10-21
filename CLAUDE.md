@@ -21,9 +21,24 @@
 > 
 > 🚫 **NO existe modo con API de GANAMOS.** Hubo un `PLATFORM_MODE=ganamos_api` (#191–#193,
 > cliente contra `agents.ganamos.co`) y se ELIMINÓ el 2026-09-29 (#194): GANAMOS bloquea
-> esa API con Cloudflare + un desafío JS de Servicepipe y no se va a saltear. El único
-> modo operativo de este repo es `manual`; `girox` queda para volver a 1girox. Si
+> esa API con Cloudflare + un desafío JS de Servicepipe y no se va a saltear. Si
 > alguien pide "automatizar contra GANAMOS", la respuesta es: no hay acceso oficial.
+>
+> 🟡 **TERCER MODO `PLATFORM_MODE=mijoker` (#231, 2026-10-21): copia de GANAMOS CON API.**
+> Para la sala mijoker.com, que expone una **Operator API v0.1** (Bearer token; alta, saldo,
+> carga/retiro `INCOME|OUTCOME`, historial, clave, estado — doc transcripta de capturas en
+> `docs/API-MIJOKER-OPERATOR-v0.1.md`, la web está detrás de Cloudflare). Cliente
+> `src/services/mijokerService.js`, mismo contrato que los otros dos. **La API NO tiene
+> idempotencia**: cada operación de plata se registra ANTES en `src/models/PlatformOp.js`
+> (reference única, `pending|done|failed|unknown`) y un timeout/5xx se RECONCILIA contra
+> `balance-history` antes de cualquier reintento; si no se puede confirmar, el flujo recibe
+> `code:'unknown_outcome'` y queda en el panel → "🔁 Operaciones plataforma" (Conciliar).
+> `validateCredentials` es SIEMPRE `valid:false` (la API no valida la clave del jugador: no
+> abrir esa puerta) y el registro público pasa `selfSignup:true` (username existente rebota).
+> Capacidades por modo en `girox.FEATURES` (`platformService.js`): mijoker = saldo visible,
+> sin rollover/netwin/SSO/bonos; `MIJOKER_*` en SSM salvo `MIJOKER_PUBLIC_REGISTER` (EB).
+> Test en frío: `node scripts/test-mijoker-adapter.js`. **Todavía NO probado contra la API
+> real** (ver pendientes de #231 en WORKLOG). Detalle: `docs/ARCHITECTURE.md` §0.3.
 
 > ⚠️ **LEER PRIMERO (continuidad entre sesiones).** El owner trabaja en **Tails sin
 > almacenamiento persistente**: al reiniciar la PC se borra TODO lo local y vuelve a
@@ -79,8 +94,13 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   define ExternalUser y UserActivity; el resto es proxy a /src/models).
 - `src/services/platformService.js` — **SELECTOR** del cliente de plataforma
   (`PLATFORM_MODE`): `ganamosPlatformService.js` (manual, default — registra
-  `PlatformTask`, sin API) o `giroxService.js` (Partner API de 1girox). Sólo esos dos. **Requerir
-  siempre el selector, nunca giroxService directo.**
+  `PlatformTask`, sin API), `mijokerService.js` (Operator API de mijoker.com, #231) o
+  `giroxService.js` (Partner API de 1girox). Expone `FEATURES` (capacidades del modo activo;
+  server.js deriva de ahí `PLATFORM_NO_ROLLOVER/NO_STATS/NO_SSO/NO_SELFSIGNUP`). **Requerir
+  siempre el selector, nunca un cliente directo.**
+- `src/services/mijokerService.js` + `src/models/PlatformOp.js` — cliente de la Operator
+  API y libro mayor local de operaciones de plata (idempotencia + reconciliación por
+  historial). Doc de la API: `docs/API-MIJOKER-OPERATOR-v0.1.md`.
 - `src/services/giroxService.js` — cliente de la Partner API de 1girox (altas, saldo,
   cargas, retiros, bonos, cambio de clave y login único/SSO). Sólo con `PLATFORM_MODE=girox`.
 - `src/services/ganamosPlatformService.js` + `src/models/PlatformTask.js` — adaptador
@@ -307,7 +327,8 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 
 1. Leer `WORKLOG.md` al iniciar.
 2. Hacer el cambio. Validar sintaxis (`node --check` en archivos tocados), **si se
-   tocó el adaptador o el contrato de plataforma correr `node scripts/test-ganamos-adapter.js`**, **si se tocó
+   tocó el adaptador o el contrato de plataforma correr `node scripts/test-ganamos-adapter.js`
+   y `node scripts/test-mijoker-adapter.js`**, **si se tocó
    el reembolso semanal correr `node scripts/test-weekly-refund.js` y
    `node scripts/test-weekly-refund-flow.js`**, **y, si se
    tocó `server.js`, correr `node scripts/check-tdz.js`** (detecta usos de nivel

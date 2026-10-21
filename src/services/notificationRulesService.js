@@ -761,8 +761,9 @@ async function seedDefaultRulesIfMissing(NotificationRule) {
   }
   // #196 GANAMOS (modo manual): no hay reembolsos → las reglas de categoría 'refund'
   // no se siembran, y las ya guardadas se desactivan y marcan.
+  // #231 también en mijoker (API sin netwin): manda `FEATURES.stats`.
   let _manualMode = false;
-  try { _manualMode = !!require('./platformService').MANUAL_MODE; } catch (_) {}
+  try { const _p = require('./platformService'); _manualMode = _p.FEATURES ? !_p.FEATURES.stats : !!_p.MANUAL_MODE; } catch (_) {}
   if (_manualMode) {
     for (let i = defaults.length - 1; i >= 0; i--) if (defaults[i].category === 'refund') defaults.splice(i, 1);
     try {

@@ -777,11 +777,12 @@ const NOTIF_TEMPLATE_DEFAULTS = {
 };
 // #196 GANAMOS (modo manual): no hay reembolsos → la plantilla "reembolso" y el plan
 // "solo_reembolsos" no existen (no se listan, no se lanzan, no se programan).
-let _MANUAL_MODE = false;
-try { _MANUAL_MODE = !!require('../services/platformService').MANUAL_MODE; } catch (_) {}
-if (_MANUAL_MODE) delete NOTIF_TEMPLATE_DEFAULTS.reembolso;
+// #231 también en mijoker (API sin netwin): manda `FEATURES.stats`, no sólo el modo manual.
+let _NO_REFUNDS = false;
+try { const _p = require('../services/platformService'); _NO_REFUNDS = _p.FEATURES ? !_p.FEATURES.stats : !!_p.MANUAL_MODE; } catch (_) {}
+if (_NO_REFUNDS) delete NOTIF_TEMPLATE_DEFAULTS.reembolso;
 const NOTIF_TEMPLATE_TYPES = Object.keys(NOTIF_TEMPLATE_DEFAULTS);
-const NOTIF_LAUNCH_PLANS = _MANUAL_MODE ? ['suave', 'normal', 'activo', 'todos'] : ['suave', 'normal', 'activo', 'solo_reembolsos', 'todos'];
+const NOTIF_LAUNCH_PLANS = _NO_REFUNDS ? ['suave', 'normal', 'activo', 'todos'] : ['suave', 'normal', 'activo', 'solo_reembolsos', 'todos'];
 
 // Categoría de tope de cada tipo. El reembolso no tiene tope mensual.
 const NOTIF_TYPE_CATEGORY = {

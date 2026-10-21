@@ -282,7 +282,15 @@ como **propiedad del entorno de Elastic Beanstalk**, no en SSM.
   `AWS_REGION` (región del Parameter Store y de SNS; default `sa-east-1`),
   `NODE_ENV=production`. Opcionales que también se leen al require: `LOG_LEVEL`,
   `PUBLIC_REGISTER_ENABLED` (reabrir el registro público), `PLATFORM_MODE` (no ponerla:
-  default `manual`), `SSM_SKIP_KEYS` (sólo clones), `FCM_DEBUG_LOGS`. `PORT` lo pone EB.
+  default `manual`; `mijoker` para la copia con API, §0.3), `MIJOKER_PUBLIC_REGISTER`
+  (`0` cierra el registro público en modo mijoker), `SSM_SKIP_KEYS` (sólo clones),
+  `FCM_DEBUG_LOGS`. `PORT` lo pone EB.
+- **SSM sólo con `PLATFORM_MODE=mijoker` (#231):** `MIJOKER_API_URL` (base real de la
+  Operator API, sin barra final — el Swagger sólo muestra localhost), `MIJOKER_API_TOKEN`
+  (Bearer), `MIJOKER_AGENT_NAME` (`agentName` del alta de jugadores; sin él el alta falla con
+  `not_configured`), `MIJOKER_PLAY_URL` (botón CASINO; default `https://mijoker.com`);
+  opcionales `MIJOKER_MAX_RPM` (55), `MIJOKER_TIMEOUT_MS` (20000), `MIJOKER_PLAYER_CACHE_MS`
+  (8000), `MIJOKER_IN_FLIGHT_MS` (120000). En modo manual nadie las lee.
 - **SSM obligatorias:** `JWT_SECRET` (sin ella el server no arranca; 32+ caracteres),
   `MONGODB_URI` (base PROPIA de GANAMOS; default localhost), `PUBLIC_BASE_URL` (⚠️ default
   `https://cargas1girox.com`: links de acceso y de comprobantes), `ALLOWED_ORIGINS` (orígenes DISTINTOS del propio host que
@@ -334,8 +342,115 @@ devuelve 403 directo, y con IP residencial argentina aparece un desafío JS de
 de GANAMOS y sacar el modo entero. Si algún día GANAMOS da acceso oficial, el
 código está en el historial de git (commits `0093e11`…`eae9431`). Las envs
 `GANAMOS_AGENT_*`, `GANAMOS_OP_*`, `GANAMOS_PROXY_URL`/`PROXY_URL`,
-`GANAMOS_DEBUG_SHAPES` ya no hacen nada. En `server.js` quedan las banderas
-`PLATFORM_NO_STATS/NO_SSO/NO_SELFSIGNUP`, hoy todas iguales a `PLATFORM_MANUAL`.
+`GANAMOS_DEBUG_SHAPES` ya no hacen nada. En `server.js` las banderas
+`PLATFORM_NO_STATS/NO_SSO/NO_SELFSIGNUP` salen desde #231 de `girox.FEATURES` (§0.3).
+
+### 0.3 MODO `mijoker` — copia de GANAMOS CON API (Operator API v0.1, #231, 2026-10-21)
+
+**Qué es.** Una sala "copia de GANAMOS" (mijoker.com) que expone una **Operator API**
+REST con Bearer token fijo. La doc (Swagger) está detrás de Cloudflare y se transcribió
+desde capturas a **`docs/API-MIJOKER-OPERATOR-v0.1.md`** (leerla antes de tocar el
+cliente). Se activa con `PLATFORM_MODE=mijoker` (propiedad EB); `manual` y `girox`
+quedan intactos.
+
+**Capacidades (`girox.FEATURES`, `src/services/platformService.js`).** El selector
+expone por modo `{api, tasks, balance, stats, sso, signup, rollover, bonus, cashier}`:
+
+| | girox | manual | mijoker |
+|---|---|---|---|
+| api / tasks | ✓ / – | – / ✓ | ✓ / – |
+| balance (saldo del jugador) | ✓ | – | ✓ |
+| stats (netwin → reembolsos por netwin, VIP, cashback, referidos) | ✓ | – | – |
+| sso (CASINO embebido) | ✓ | – (pestaña) | – (pestaña `MIJOKER_PLAY_URL`) |
+| signup (registro público crea al jugador) | ✓ | – | ✓ (`MIJOKER_PUBLIC_REGISTER=0` lo cierra) |
+| rollover / bonus | ✓ | – | – (todo x0, INCOME liso) |
+| cashier (saldo del agente, cierre diario) | ✓ | – | – (`sin_datos`) |
+
+`server.js` deriva `PLATFORM_NO_ROLLOVER = !rollover`, `PLATFORM_NO_STATS = !stats`,
+`PLATFORM_NO_SSO = !sso`, `PLATFORM_NO_SELFSIGNUP = !signup`; `PLATFORM_MANUAL` sigue
+siendo SOLO manual (bandeja PlatformTask, hgcash "pendiente", `/api/balance` manual…).
+Así mijoker hereda todo lo apagado de #196/#207 (reembolsos/VIP/cashback/referidos 404,
+crons cortados, migración de textos `/sys_*`, plantilla de reembolso fuera) sin tocar
+flujos, pero con saldo visible y acreditación inmediata (`pending:false`). Las
+capacidades viajan al front en `/api/public/config` (`features`, `noSso`),
+`/api/auth/verify` y `/api/admin/me` (`platformFeatures`): la PWA abre CASINO en pestaña
+si `isManual() || noSso()` y oculta el saldo sólo si `features.balance === false`; el
+panel pone en `<body>` `platform-manual` (sólo manual), `platform-noextras` (sin stats),
+`platform-norollover`, `platform-nobalance` (sólo manual) y usa `_platformFeatures()`.
+
+**Cliente `src/services/mijokerService.js`** (mismo contrato que `giroxService`,
+`scripts/test-mijoker-adapter.js` lo verifica export por export). Mapeo:
+
+| contrato | Operator API |
+|---|---|
+| `createPlatformUser({username,password})` | `POST /users {agentName: MIJOKER_AGENT_NAME, playerName, password}`; clave validada ANTES contra el patrón de la API (3–32 ASCII); 400 "exists" o timeout+GET que lo encuentra → `username_taken`/`alreadyExists` |
+| `syncUserToPlatform({username,password,selfSignup})` | GET user → existe: `selfSignup` ⇒ `username_taken` (NO vincula), si no `alreadyExists:true`; no existe ⇒ crea |
+| `validateCredentials` | **siempre `valid:false`** (la API no valida la clave; ver seguridad) |
+| `getUserInfoByName` / `getUserBalance` | `GET /users?username=` + `GET /users/balance?username=` (cache 8 s + coalescing, invalidado tras plata); `available = balance`, `locked 0`, `active = status==='ACTIVE'` |
+| `changeUserPassword` | `PATCH /users/{u}/reset-password` |
+| `setUserStatus(u, ACTIVE\|BANNED)` (propio) | `PATCH /users/{u}/status` |
+| `createSession` | `{redirectUrl: MIJOKER_PLAY_URL, token:null, openInTab:true}` |
+| `ping` | GET de un jugador inexistente: 404 = OK; 401/403 = token rechazado |
+| `depositToUser` / `creditGift` / `creditUserBalance` | `POST /account-transfers` INCOME (carga con `wagering.bonusAmount` ⇒ segundo INCOME `<ref>-bonus`) |
+| `withdrawFromUser` | `POST /account-transfers` OUTCOME (400 con "insufficient/balance" ⇒ `insufficient_funds`) |
+| `getUserMovements` / `getBalanceHistory` | `GET /users/{id}/balance-history` (id numérico cacheado por username; `operations=` con fallback sin el parámetro ante 400) |
+| `getPlayerStats(Batch)` | `code:'not_supported'` · `claimPendingBonus` → vacío · `getPlatformConfig` → multiplicadores `[0]`, rollover off |
+
+Rate limit local `MIJOKER_MAX_RPM` (55/min por proceso); reintentos 2/5/15 s sólo en
+lecturas y escrituras que no mueven plata.
+
+**⚠️ Seguridad del login.** `server.js` crea la cuenta local cuando `validateCredentials`
+dice `valid:true`. La Operator API no puede validar la clave de un jugador ⇒ el cliente
+devuelve siempre `valid:false`, y el registro público / landing pasan `selfSignup:true`
+para que un username ya existente en la plataforma REBOTE ("ya está en uso") en vez de
+vincularse. Vincular un jugador existente sólo lo hace el agente desde el panel.
+
+**IDEMPOTENCIA SIN IDEMPOTENCIA — `src/models/PlatformOp.js`.** `POST /account-transfers`
+no acepta `reference`: un reintento a ciegas acredita dos veces. El cliente lleva un
+libro mayor local (índice único por `reference`; `kind`, `operation`, `username`,
+`amount`, `flow`, `status pending|done|failed|unknown`, `attempts`, `startedAt`,
+`finishedAt`, `balanceAfter`, `platformTxId`, `reconciled`, `ambiguous`, `error`). `_moneyOp`:
+
+1. `done` ⇒ `duplicate:true` sin llamar. `pending` menor a `MIJOKER_IN_FLIGHT_MS` (120 s)
+   ⇒ `code:'in_progress'` (otra instancia la tiene). `pending` más vieja ⇒ el proceso murió
+   ⇒ `unknown`.
+2. `unknown` ⇒ RECONCILIAR antes de nada (abajo). Figura ⇒ `done` + `duplicate:true`.
+   Historial caído ⇒ `code:'unknown_outcome'` y NO se manda. No figura ⇒ sigue en 3.
+3. `failed` / `unknown` no encontrada ⇒ re-claim atómico (`findOneAndUpdate` status∈
+   {failed,unknown} → pending, `attempts+1`) y se manda `POST /account-transfers`
+   con `retryable:false` (NUNCA se reintenta sola).
+4. 2xx ⇒ `done` (`balanceAfter = newBalance`). 4xx o rate limit local (`sent:false`) ⇒
+   `failed` (la API no movió plata; reintentable con la misma reference). Timeout / red /
+   5xx ⇒ `unknown` + reconciliación inmediata.
+
+**Reconciliación (`_reconcile`)**: `GET balance-history` del jugador desde
+`startedAt − 60 s` hasta ahora + 60 s, `operations = INCOME|OUTCOME`, hasta 3 páginas de
+30; candidato = misma operación + mismo monto (±0.005) + `createdAt ≥ startedAt − 60 s`,
+EXCLUYENDO ítems ya atribuidos a otras operaciones `done` del mismo usuario (por
+`transactionId` o por el par monto/`balanceAfter`). Encontrada ⇒ `done` con `reconciled`
+(`ambiguous:true` si había más de un candidato: se avisa, se marca igual con el más
+nuevo). No encontrada ⇒ `failed`. Historial caído ⇒ queda `unknown`, el flujo recibe
+`code:'unknown_outcome'` y el listener (`setOpListener`, cableado en server.js) deja una
+nota SOLO-AGENTES en el chat del cliente y emite `platform_op` al panel. Dos operaciones
+DISTINTAS con el mismo monto en el mismo minuto es el caso ambiguo real: por eso se
+excluyen las hermanas ya hechas y se marca `ambiguous`.
+
+**Panel "🔁 Operaciones plataforma"** (sólo admin general, visible cuando `FEATURES.api
+&& !tasks`): `GET /api/admin/platform-ops?status=unknown|failed|pending|done|all&username=`
+(`count=1` ⇒ sólo `unknownCount`, badge cada 60 s) y **Conciliar** =
+`POST /api/admin/platform-ops/:reference/reconcile` (`girox.reconcileOp`): figura ⇒
+hecha; no figura ⇒ fallida (se puede rehacer la operación con la misma reference desde
+el flujo que corresponda, o a mano). `rejectOp` no existe: una `failed` no mueve plata.
+
+**Qué NO cambia respecto de manual/girox.** Referencias `vip-*` iguales (tabla §4.4);
+`_pendingBonusFor`/`_settlePendingBonuses` siguen calculando el bono (sale como segundo
+INCOME); hgcash acredita en el acto (`_hgPending` false porque `PLATFORM_MANUAL` es
+false); reembolso semanal por planilla (#215) funciona y se acredita al reclamar
+(`creditGift` ⇒ `pending:false` ⇒ `_wrfOnTaskSettled('done')` inmediato); ruleta igual.
+
+**Lo que la API no dice y hay que mirar en la primera prueba real:** formato de
+`operations` (¿uno o varios?), orden de los ítems del historial (el cliente ordena por
+`createdAt`), formato de los errores (se lee `message`/`error`/`detail`), rate limit real.
 
 ## 1. Visión general del negocio
 
@@ -623,6 +738,10 @@ La misma cuota la comparte el script de migración: mientras corre, producción
 sigue pidiendo saldos, cargas y retiros contra el mismo cupo de la master.
 
 ### 4.4 Idempotencia por `reference` — LA REGLA DE ORO
+
+> #231: en `PLATFORM_MODE=mijoker` la API NO acepta `reference`; la misma regla la
+> garantiza el libro mayor local `PlatformOp` (§0.3). Las referencias `vip-*` de la
+> tabla de abajo se usan igual en los tres modos.
 
 Cada operación de plata (deposit / withdraw / bonus) lleva una `reference` de hasta
 **100 caracteres** que es su llave de idempotencia. Si se repite, 1girox NO vuelve a
