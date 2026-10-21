@@ -52,6 +52,7 @@ async function fakeAxios(cfg) {
   }
   if (m === 'post' && url === '/account-transfers') {
     const b = cfg.data;
+    api.lastIdem = cfg.headers['idempotency-key'] || null; // #232
     const u = _u(b.targetUserName);
     if (!u) throw httpErr(404, 'account transaction not found');
     if (!(b.amount > 0)) throw httpErr(400, 'Invalid input');
@@ -172,6 +173,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
   _u('pepe').balance = 1000;
   const d1 = await mj.depositToUser('pepe', 5000, 'Carga manual', 'vip-dep-1', { flow: 'admin_deposit', agentExecuted: true });
   ok(d1.success && !d1.duplicate && d1.pending === false && d1.data.user_balance_after === 6000, 'depositToUser → INCOME, saldo 6000, pending:false');
+  ok(api.lastIdem === 'vip-dep-1', '#232 header idempotency-key = reference en la transferencia');
   ok(op('vip-dep-1').status === 'done' && op('vip-dep-1').flow === 'admin_deposit' && op('vip-dep-1').operation === 'INCOME', 'PlatformOp done, flow, INCOME');
   const n1 = transfers();
   const d2 = await mj.depositToUser('pepe', 5000, 'Carga manual', 'vip-dep-1');

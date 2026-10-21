@@ -37,6 +37,8 @@
 > abrir esa puerta) y el registro público pasa `selfSignup:true` (username existente rebota).
 > Capacidades por modo en `girox.FEATURES` (`platformService.js`): mijoker = saldo visible,
 > sin rollover/netwin/SSO/bonos; `MIJOKER_*` en SSM salvo `MIJOKER_PUBLIC_REGISTER` (EB).
+> #232: ya manda `idempotency-key: <reference>` (el proveedor lo va a soportar); token vence al
+> año (`MIJOKER_TOKEN_EXPIRES_AT` avisa); SSO/stats/bonos los puede desarrollar el proveedor.
 > Test en frío: `node scripts/test-mijoker-adapter.js`. **Todavía NO probado contra la API
 > real** (ver pendientes de #231 en WORKLOG). Detalle: `docs/ARCHITECTURE.md` §0.3.
 

@@ -150,6 +150,18 @@ Query: `id` (number, opcional) y/o `username` (string, opcional).
 | 403 | Unauthorized | — |
 | 404 | user balance not found | — |
 
+## Respuestas del proveedor (2026-10-21, consulta del owner — lo que NO está en el Swagger)
+
+| tema | respuesta del proveedor | qué hace el cliente |
+|---|---|---|
+| Token Bearer | independiente de la sesión del panel, **vence al AÑO**, se genera en el panel de administración, **máximo 3 activos** | `MIJOKER_TOKEN_EXPIRES_AT` opcional: el boot, `ping` ("Probar conexión") y un recordatorio diario avisan desde 30 días antes |
+| `agentName` | **un agente por publicista** es posible: al crear el jugador se manda el `agentName` al que se lo quiere asociar | hoy se usa un solo `MIJOKER_AGENT_NAME`; el alta por publicista queda para cuando se decida (ver ARCHITECTURE §0.3) |
+| Rate limit | **hoy no hay**; si detectan volumen excesivo lo activan: **429 + `Retry-After`** | ya contemplado (`retryAfterMs`); límite local `MIJOKER_MAX_RPM` default 120 como freno |
+| Login por link / iframe | no hay link de un solo uso **pero pueden desarrollarlo**; el casino **se puede abrir en iframe** si les damos el dominio desde el que se carga | hasta entonces `sso:false` (pestaña). Cuando exista: implementar `createSession` y poner `sso:true` en `FEATURES.mijoker` |
+| Stats por jugador | pueden desarrollar un endpoint por rango de fechas; preguntan si hace falta por jugador o consolidado por agente, y si ampliar `balance-history` es sólo para stats | `stats:false` hasta que exista. Cuando esté: `getPlayerStats`/`getPlayersStatsBatch` reales y `stats:true` |
+| Idempotency-Key | **lo van a incorporar en `account-transfers`**; pidieron que ya mandemos el header `idempotency-key` | el cliente ya manda `idempotency-key: <reference>` en cada transferencia. `PlatformOp` sigue siendo la garantía hasta que esté activo (y después, como red) |
+| Bonos | **no tienen** bonos ni rollover por API; piden una descripción del sistema para evaluarlo | `bonus:false`, `rollover:false`: todo regalo es INCOME libre |
+
 ## Lo que la API NO tiene (y cómo lo cubre el cliente)
 
 - **Sin idempotencia** en las transferencias → `src/models/PlatformOp.js` es el

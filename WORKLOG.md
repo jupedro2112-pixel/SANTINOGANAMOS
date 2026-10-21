@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-21** (última entrada: #231)
+> **Última actualización: 2026-10-21** (última entrada: #232)
 
 ---
 
@@ -63,6 +63,24 @@
 ---
 
 ## Sesión 2026-10-21
+
+### 232. Respuestas del proveedor de mijoker: `idempotency-key` ya se manda, aviso de vencimiento del token, límite local 120/min
+- **Contexto:** el owner le mandó al proveedor las 7 preguntas que no responde el Swagger
+  (token, agentName, rate limit, SSO/iframe, stats, idempotencia, bonos). Respuestas
+  completas en la tabla "Respuestas del proveedor" de `docs/API-MIJOKER-OPERATOR-v0.1.md`.
+- **Hecho en código:** (1) `POST /account-transfers` manda el header `idempotency-key: <reference>`
+  (el proveedor lo va a soportar y pidió que ya lo enviemos; mientras tanto lo ignoran y
+  `PlatformOp` sigue siendo la garantía). (2) El token vence al AÑO: env opcional
+  `MIJOKER_TOKEN_EXPIRES_AT=YYYY-MM-DD` → el boot, "Probar conexión" (`ping`) y un
+  recordatorio diario (log + Telegram) avisan desde 30 días antes. (3) Hoy no hay rate
+  limit (si lo activan: 429 + `Retry-After`, ya contemplado) → `MIJOKER_MAX_RPM` default 120.
+- **Sin cambios de código (dependen del proveedor):** SSO/iframe, stats por rango y bonos.
+  El diseño ya está condicionado por `FEATURES.mijoker` (`sso`, `stats`, `bonus`): cuando
+  entreguen cada cosa, se implementa el método en `mijokerService` y se prende la bandera.
+  Un agente por publicista (`agentName` por `Campaign`) es posible pero no está hecho.
+- **Pendiente del owner:** responderles (borrador en la conversación del 2026-10-21):
+  dominio para el iframe, qué stats (por jugador + batch de hasta 100 usernames; consolidado
+  por agente es opcional), y la descripción del sistema de bonos.
 
 ### 231. `PLATFORM_MODE=mijoker`: cliente para la copia de GANAMOS CON API (Operator API v0.1 de mijoker.com) + libro mayor `PlatformOp` para tener idempotencia sin que la API la tenga
 - **Pedido del owner:** "quiero implementar la api de una copia de ganamos y la documentación a la

@@ -448,6 +448,20 @@ INCOME); hgcash acredita en el acto (`_hgPending` false porque `PLATFORM_MANUAL`
 false); reembolso semanal por planilla (#215) funciona y se acredita al reclamar
 (`creditGift` ⇒ `pending:false` ⇒ `_wrfOnTaskSettled('done')` inmediato); ruleta igual.
 
+**Respuestas del proveedor (#232, 2026-10-21)** — tabla completa en
+`docs/API-MIJOKER-OPERATOR-v0.1.md`. Lo que cambia el diseño: (a) el cliente ya manda
+`idempotency-key: <reference>` en `POST /account-transfers` (lo van a soportar; hasta
+entonces lo ignoran y `PlatformOp` sigue mandando); (b) el token vence al año →
+`MIJOKER_TOKEN_EXPIRES_AT` (opcional) hace que el boot, "Probar conexión" y un
+recordatorio diario (log + Telegram) avisen desde 30 días antes; (c) hoy NO hay rate
+limit (429 + `Retry-After` si lo activan) → `MIJOKER_MAX_RPM` default 120; (d) pueden
+desarrollar link de sesión (SSO), iframe (hay que darles el dominio) y un endpoint de
+stats por rango: cuando existan se implementan `createSession` / `getPlayerStats` en el
+cliente y se ponen `sso:true` / `stats:true` en `FEATURES.mijoker` — todo lo demás ya
+está condicionado por esas banderas; (e) un agente por publicista es posible
+(`agentName` en el alta): hoy se usa uno solo, un alta por publicista sería un
+`agentName` por `Campaign` (como `giroxPublisherKeys`) y NO está hecho.
+
 **Lo que la API no dice y hay que mirar en la primera prueba real:** formato de
 `operations` (¿uno o varios?), orden de los ítems del historial (el cliente ordena por
 `createdAt`), formato de los errores (se lee `message`/`error`/`detail`), rate limit real.

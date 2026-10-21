@@ -10979,6 +10979,16 @@ async function initializeData() {
     console.log(`✅ Plataforma en MODO MANUAL (GANAMOS sin API): cargas/retiros/bonos van a la bandeja "Pendientes GANAMOS" del panel. Casino: ${girox.getPlayUrl()}. Registro público: ${PUBLIC_REGISTER_ENABLED ? 'ABIERTO' : 'apagado (alta por agente)'}.`);
   } else if (girox.PLATFORM_MODE === 'mijoker') {
     if (girox.isEnabled()) console.log(`✅ Plataforma MIJOKER (Operator API en ${girox.getBaseUrl()}, agente ${girox.getAgentName() || '⚠️ SIN MIJOKER_AGENT_NAME'}). Casino: ${girox.getPlayUrl()}. Registro público: ${!PLATFORM_NO_SELFSIGNUP || PUBLIC_REGISTER_ENABLED ? 'ABIERTO' : 'apagado (alta por agente)'}. Sin rollover, netwin ni SSO.`);
+    if (girox.isEnabled() && typeof girox.tokenExpiryWarning === 'function' && girox.tokenExpiryWarning()) console.error(`[mijoker] ${girox.tokenExpiryWarning()}`);
+    // #232 el token vence al año: recordatorio diario en el log (y por Telegram si está configurado) desde 30 días antes.
+    if (girox.isEnabled() && typeof girox.tokenExpiryWarning === 'function') {
+      setInterval(() => {
+        const w = girox.tokenExpiryWarning();
+        if (!w) return;
+        console.error(`[mijoker] ${w}`);
+        try { if (telegramAlert.isEnabled()) telegramAlert.send(`🔑 <b>MIJOKER</b> — ${telegramAlert.esc(w)}`).catch(() => {}); } catch (_) {}
+      }, 24 * 60 * 60 * 1000);
+    }
     else console.error('❌ MIJOKER SIN CONFIGURAR: faltan MIJOKER_API_URL y/o MIJOKER_API_TOKEN. Cargas, retiros, saldo y altas NO van a funcionar.');
   } else if (girox.isEnabled()) {
     console.log(`✅ 1girox configurado (${girox.getBaseUrl()})`);

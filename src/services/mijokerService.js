@@ -60,7 +60,25 @@ function getPlayUrl() { return (process.env.MIJOKER_PLAY_URL || 'https://mijoker
 /** true si el cliente puede operar (URL + token; el agentName sólo hace falta para el alta). */
 function isEnabled() { return !!(getBaseUrl() && getApiToken()); }
 function _timeoutMs() { return Number(process.env.MIJOKER_TIMEOUT_MS || 20000); }
-function _maxRpm() { return Number(process.env.MIJOKER_MAX_RPM || 55); }
+// #232 el proveedor confirmó que HOY no hay rate limit (si lo activan: 429 + Retry-After, ya
+// contemplado). El límite local queda como freno para no quedar marcados como "volumen excesivo".
+function _maxRpm() { return Number(process.env.MIJOKER_MAX_RPM || 120); }
+/** #232 el token vence al AÑO de generado (panel de administración, máx. 3 activos). Opcional:
+ *  MIJOKER_TOKEN_EXPIRES_AT=YYYY-MM-DD para que el boot y "Probar conexión" avisen antes. */
+function getTokenExpiry() {
+  const raw = String(process.env.MIJOKER_TOKEN_EXPIRES_AT || '').trim();
+  if (!raw) return null;
+  const d = new Date(raw.length === 10 ? raw + 'T23:59:59-03:00' : raw);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function tokenExpiryWarning() {
+  const d = getTokenExpiry();
+  if (!d) return null;
+  const days = Math.floor((d.getTime() - Date.now()) / 86400000);
+  if (days < 0) return `⚠️ el token de la Operator API VENCIÓ el ${d.toLocaleDateString('es-AR')} (MIJOKER_TOKEN_EXPIRES_AT): generá uno nuevo en el panel de administración de la plataforma y cargalo en SSM`;
+  if (days <= 30) return `⚠️ el token de la Operator API vence en ${days} día(s) (${d.toLocaleDateString('es-AR')}): generá uno nuevo en el panel de administración de la plataforma antes`;
+  return null;
+}
 function _playerCacheTtlMs() { return Number(process.env.MIJOKER_PLAYER_CACHE_MS || 8000); }
 
 const API_PREFIX = '/api/operator/v1';
@@ -166,8 +184,8 @@ async function _acquireSlot() {
 // ============================================================
 // HTTP
 // ============================================================
-function _headers() {
-  return { Authorization: `Bearer ${getApiToken()}`, 'Content-Type': 'application/json', Accept: 'application/json' };
+function _headers(extra) {
+  return { Authorization: `Bearer ${getApiToken()}`, 'Content-Type': 'application/json', Accept: 'application/json', ...(extra || {}) };
 }
 function _extractMessage(body) {
   if (!body) return null;
@@ -222,7 +240,7 @@ function _normalizeError(e, label) {
  * `retryable`). Devuelve { ok:true, data, httpStatus } | { ok:false, ...error, sent }.
  * `sent:false` = la request NO salió (rate limit local o config faltante).
  */
-async function _request({ method, path, body, params, label, retryable = true }) {
+async function _request({ method, path, body, params, label, retryable = true, headers = null }) {
   if (!isEnabled()) {
     logger.error('[mijoker] MIJOKER_API_URL / MIJOKER_API_TOKEN no configurados');
     return { ok: false, error: 'La plataforma no está configurada. Avisale al soporte.', code: 'not_configured', httpStatus: null, sent: false };
@@ -240,7 +258,7 @@ async function _request({ method, path, body, params, label, retryable = true })
       return { ok: false, error: 'La plataforma está saturada. Reintentá en un minuto.', code: 'rate_limited_local', httpStatus: null, sent: false };
     }
     try {
-      const resp = await axios({ method, url, data: body, params, headers: _headers(), timeout: _timeoutMs(), proxy: false });
+      const resp = await axios({ method, url, data: body, params, headers: _headers(headers), timeout: _timeoutMs(), proxy: false });
       return { ok: true, data: resp.data || {}, httpStatus: resp.status };
     } catch (e) {
       lastErr = _normalizeError(e, label);
@@ -396,7 +414,7 @@ async function ping() {
   const probe = 'zz_probe_' + Date.now().toString(36).slice(-8);
   const r = await _request({ method: 'get', path: '/users', params: { username: probe }, label: `ping(${probe})`, retryable: false });
   if (r.ok) return { ok: false, estado: 'inesperado', detalle: 'Devolvió datos para un jugador que no existe', httpStatus: r.httpStatus };
-  if (r.httpStatus === 404) return { ok: true, estado: 'ok', detalle: `Operator API responde en ${getBaseUrl()} y el token es válido${getAgentName() ? '' : ' (⚠️ falta MIJOKER_AGENT_NAME para el alta de jugadores)'}`, httpStatus: 404, code: r.code };
+  if (r.httpStatus === 404) return { ok: true, estado: 'ok', detalle: `Operator API responde en ${getBaseUrl()} y el token es válido${getAgentName() ? '' : ' (⚠️ falta MIJOKER_AGENT_NAME para el alta de jugadores)'}${tokenExpiryWarning() ? ' — ' + tokenExpiryWarning() : ''}`, httpStatus: 404, code: r.code };
   if (r.httpStatus === 401 || r.httpStatus === 403) return { ok: false, estado: 'credenciales_rechazadas', detalle: `La API rechazó el token (HTTP ${r.httpStatus})`, httpStatus: r.httpStatus, code: r.code };
   return { ok: false, estado: 'error', detalle: r.error, httpStatus: r.httpStatus, code: r.code };
 }
@@ -682,6 +700,10 @@ async function _moneyOp({ kind, operation, username, amount, description, refere
   const r = await _request({
     method: 'post', path: '/account-transfers',
     body: { amount, operation, targetUserName: String(username) },
+    // #232 el proveedor va a soportar Idempotency-Key en account-transfers y pidió que ya lo
+    // mandemos: la reference (única y estable por operación) es exactamente eso. Hasta que
+    // esté activo lo ignoran; el libro mayor PlatformOp sigue siendo la garantía.
+    headers: { 'idempotency-key': String(reference).slice(0, 255) },
     label: `${operation}(${username}, $${amount}, ref=${reference})`,
     retryable: false // NUNCA a ciegas: sin reference la API acreditaría dos veces
   });
@@ -878,6 +900,8 @@ module.exports = {
   // propios de mijoker
   MANUAL_MODE: false,
   getAgentName,
+  getTokenExpiry,
+  tokenExpiryWarning,
   validatePassword,
   setUserStatus,
   getBalanceHistory,
