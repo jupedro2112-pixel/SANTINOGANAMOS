@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-24** (última entrada: #233)
+> **Última actualización: 2026-10-24** (última entrada: #234)
 
 ---
 
@@ -64,7 +64,19 @@
 
 ## Sesión 2026-10-24
 
-### 233. Testing de seguridad propio con OWASP ZAP (no toca código de la app)
+### 234. El testing de seguridad se mudó a un repo propio aparte (`pentest-toolkit`)
+- **Decisión del owner:** no atar el toolkit de seguridad a este repo; lo quiere general
+  para usar contra sus varias páginas. Se creó un repo nuevo e independiente
+  `~/Documents/pentest-toolkit` (fuera de SANTINOGANAMOS) y se SACÓ de acá la carpeta
+  `security/zap/` que había dejado el #233 (los planes de ZAP ahora viven allá, genéricos).
+- **Qué tiene el toolkit nuevo:** `scan/run-all.sh` (encadena npm audit + semgrep + ZAP
+  pasivo/activo + nuclei + el probador de toma de cuenta), `zap/*.yaml` parametrizados por
+  `TARGET`, y `tests/account-takeover.js` (Node sin dependencias: IDOR/autorización + JWT
+  con secreto débil, alg:none y payload alterado). Apuntable a cualquier sitio por config.
+- **No es código de ninguna app** → acá solo queda este registro; sin cambios en
+  ARCHITECTURE/CLAUDE.md.
+
+### 233. Testing de seguridad propio con OWASP ZAP (no toca código de la app) — MOVIDO (ver #234)
 - **Pedido del owner:** avanzar con lo de ZAP (venía de la charla del 2026-10-23 sobre
   probar la seguridad de la propia página). Es testing defensivo sobre nuestra app.
 - **Hecho:** carpeta nueva `security/zap/` con el Automation Framework de ZAP a medida
