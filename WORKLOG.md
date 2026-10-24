@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-21** (última entrada: #232)
+> **Última actualización: 2026-10-24** (última entrada: #233)
 
 ---
 
@@ -59,6 +59,33 @@
 > **⚠️ Seguridad:** las capturas que el owner pegó el 2026-09-29 tenían cookies de
 > sesión VIVAS de la cuenta de agente `metawin100`. Se le avisó que cierre sesión para
 > invalidarlas.
+
+---
+
+## Sesión 2026-10-24
+
+### 233. Testing de seguridad propio con OWASP ZAP (no toca código de la app)
+- **Pedido del owner:** avanzar con lo de ZAP (venía de la charla del 2026-10-23 sobre
+  probar la seguridad de la propia página). Es testing defensivo sobre nuestra app.
+- **Hecho:** carpeta nueva `security/zap/` con el Automation Framework de ZAP a medida
+  del repo (login real `POST /api/auth/login` → cookie httpOnly `admin_api_session`,
+  verificación poleando `GET /api/auth/verify`):
+  - `zap-baseline.yaml` — spider + reglas PASIVAS (primer barrido, no inyecta ataques).
+  - `zap-active.yaml` — spider + escaneo ACTIVO, con usuarios por rol (admin/depositor/
+    withdrawer/player) para el testing de autorización/IDOR.
+  - `README.md` — instalación offline de ZAP, cómo parar una copia descartable como
+    target, correr los planes, y el paso MANUAL de autorización/IDOR/lógica de negocio
+    (doble pago, reference duplicada, carrera, firma del webhook hgcash, fuerza bruta
+    en login/OTP) + nota de NoSQLi (Mongo) y Semgrep/npm audit.
+  - `.gitignore` para no subir los informes HTML (pueden tener datos de la copia).
+- **Barreras de seguridad en los planes:** excluidos del escaneo los endpoints que
+  gastan plata o mandan SMS reales (OTP, `/api/admin/bulk-sms`, `verify-phone`), el
+  webhook `/api/hgcash/webhook`, `platform-login` y `logout`. Regla repetida en el
+  README: NUNCA contra producción con jugadores reales, solo copia descartable.
+- **Pendiente del owner:** en `zap-active.yaml`, completar los patrones de exclusión de
+  las rutas reales de carga/retiro/bono del panel (los dejé con palabras genéricas)
+  antes de la primera corrida activa; e instalar la copia aislada con datos de mentira.
+- **No cambió ningún flujo ni modelo de la app** → sin cambios en ARCHITECTURE/CLAUDE.md.
 
 ---
 
