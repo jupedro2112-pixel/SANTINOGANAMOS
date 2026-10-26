@@ -1738,3 +1738,22 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   `projectionCalibration`. `_diaPromoConfig` lee la escalera del reembolso semanal, `installBonus` y la ruleta.
   `POST /api/activity/ping` (rol user) arma las sesiones y escribe `lastDevice`/`deviceIds`; apagado ⇒ `{ok:false, off:true}`.
   Cliente: `public/js/activity.js` + `window.VIP_DEVICE` (index.html).
+
+### 10.2 Historias (#237)
+
+- Modelo `Story` (`src/models/Story.js`; `autoKey` único sparse, `mediaData` y `autoImg` con `select:false`; vencen por
+  `expiresAt` pero quedan en el panel). `User.storyBonus`.
+- Rutas cliente: `GET /api/stories/public` (sin sesión), `GET /api/stories/active` (`off:true` si está apagado),
+  `POST /api/stories/:id/view|click|react`, `GET /api/stories/:id/auto.svg|media`, `POST /api/stories/:id/claim-bonus`,
+  `GET /api/stories/bonus`. Admin: `/api/admin/stories*`, `/api/admin/stories-autopilot*` (admin general). Gate `_storiesGate`.
+- Motor: `_storyAutoTick` (5 min), `_storiesRepeatTick` (1 h); plan del día = `storyAuto.planDay(dayKey, matches, ctx)`
+  (temas sin reembolso/VIP/referidos, sin rollover); fotos = `storyImage.renderSvg(spec)` servidas en `/auto.svg` (CSP
+  estricta). `STORY_IMG_VER` fuerza rearmar las fotos. Config: `storiesConfig`, `storyAutoMatches`, `storyGamesSnapshot`,
+  `storyAutoDiag`.
+- Bono de historia en la carga: parte `story` de `_pendingBonusFor` + `_consumeStoryBonus` en `_settlePendingBonuses`. El
+  bono viaja dentro de la carga (NO hay Transaction 'bonus' aparte). Un flujo de carga nuevo que pase por
+  `_settlePendingBonuses` lo hereda solo.
+- PWA: `public/js/stories.js` (`VIP.stories = {init, load, loadPublic, open, openById, claimBonus, close, …}`; links
+  `app:*` mapeados a `depositModal`, `VIP.withdraw.openWithdrawModal`, `VIP.roulette`, `VIP.weeklyRefund.open`,
+  `verifyPhoneModal`, `VIP.appTest.doInstall`, `VIP.ui.enterCasino`), botón `#navHistorias` (header), anillo `#lgStoriesRing`
+  (ingreso), visor `#storyViewer`; CSS en `chat.css` y `login.css`. El SW reenvía `data.url` de la push (`vip-open`).

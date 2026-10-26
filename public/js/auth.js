@@ -30,7 +30,11 @@ VIP.auth = (function () {
             .then(function (r) { return r.ok ? r.json() : null; })
             .then(function (j) {
                 if (!j) return;
-                const run = function () { _applyRegistrationMode(j); };
+                const run = function () {
+                    _applyRegistrationMode(j);
+                    // #237: historias públicas en la pantalla de ingreso (sólo con la función prendida)
+                    try { if (j.features && j.features.stories && VIP.stories && VIP.stories.loadPublic) VIP.stories.loadPublic('lgStoriesRing'); } catch (_) {}
+                };
                 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', run); else run();
             }).catch(function () {});
     } catch (_) {}

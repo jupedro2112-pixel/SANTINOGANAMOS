@@ -325,6 +325,9 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   automáticas ANTERIOR (reglas, encuesta, recordatorios #209, `ScheduledNotif`) corre sólo con `legacyNotifs` ON. El
   registro es `Config['registrationMode']` `'open'|'invite'` (`_inviteOnlyBlocks`; también en el envío del OTP) y se
   evalúa después del 410 de plataforma. Detalle en ARCHITECTURE §10. Marca en textos: GANAMOS (nunca PICA ROJA).
+  **Historias (#237):** el bono `+X%` de una historia (`User.storyBonus`) lo aplica el server en la carga por
+  `_pendingBonusFor`/`_settlePendingBonuses` (parte `story`), SIN Transaction 'bonus' aparte. El SW abre `data.url` de
+  las pushes (`vip-open`).
 
 - **Lotes y Cronograma (#228):** el POST `/api/admin/notif-batches` es un wrapper de
   `_createNotifBatchFromBody(body, user)`; cualquier validación/efecto nuevo del lote va en esa
