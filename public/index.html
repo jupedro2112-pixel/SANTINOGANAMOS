@@ -1797,6 +1797,15 @@
             <div class="modal-header">
                 <h2>⚙️ Configuración</h2>
             </div>
+            <!-- #238 (réplica #971 de PICA ROJA): qué avisos quiere recibir, sin apagar las notificaciones del teléfono. Se ve sólo con el Centro de avisos prendido. -->
+            <div id="pfAvisosRow" style="display:none;margin-bottom:14px;background:rgba(0,0,0,0.3);border:1px solid rgba(212,175,55,0.25);border-radius:10px;padding:12px;">
+                <div style="font-size:13px;font-weight:800;color:#d4af37;margin-bottom:4px;">🎚️ Qué avisos querés recibir</div>
+                <div id="pfAvisosHint" style="font-size:11px;color:#999;margin-bottom:8px;">Bonos del día, novedades y todo lo tuyo</div>
+                <select id="pfAvisosSel" onchange="VIP.notifPrefs.set(this.value)" aria-label="Qué avisos querés recibir"
+                    style="width:100%;background:#1a0033;color:#fff;border:1px solid rgba(212,175,55,0.4);border-radius:10px;padding:9px 10px;font-size:13px;font-weight:700;">
+                    <option value="all">Todos</option><option value="mine">Sólo lo mío</option><option value="none">Ninguno</option>
+                </select>
+            </div>
             <!-- Bloque destacado de verificación pendiente — visible sólo si
                  el user.phoneVerificationPending = true. Lo muestra/oculta
                  ui.js cuando abre el modal. -->

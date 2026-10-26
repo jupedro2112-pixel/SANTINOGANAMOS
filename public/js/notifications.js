@@ -128,3 +128,24 @@ VIP.notifications = (function () {
 window.registerUserServiceWorker = VIP.notifications.registerUserServiceWorker;
 // sendFcmTokenAfterLogin may be overridden by index.html inline script (intentional)
 window.sendFcmTokenAfterLogin    = VIP.notifications.sendFcmTokenAfterLogin;
+
+// #238 (réplica #971 de PICA ROJA vía CARGASGIROX #211): preferencia de avisos del cliente (Configuración → "Qué avisos querés
+// recibir"): GET/POST /api/notifications/prefs. Con el Centro de avisos apagado la fila no se muestra (enabled:false).
+VIP.notifPrefs = (function () {
+    function _hint(v) { const h = document.getElementById('pfAvisosHint'); if (h) h.textContent = v === 'none' ? 'Sólo Soporte y tus cargas y retiros' : v === 'mine' ? 'Lo tuyo (tu reembolso semanal y los regalos para vos); nada masivo' : 'Bonos del día, novedades y todo lo tuyo'; }
+    function paint() {
+        const row = document.getElementById('pfAvisosRow'), sel = document.getElementById('pfAvisosSel'); if (!row || !sel || !VIP.state || !VIP.state.currentToken) return;
+        fetch(VIP.config.API_URL + '/api/notifications/prefs', { headers: { 'Authorization': 'Bearer ' + VIP.state.currentToken } }).then((x) => x.json()).then((j) => {
+            if (!j || !j.success || j.enabled === false) { row.style.display = 'none'; return; }
+            row.style.display = ''; sel.value = j.level || 'all'; _hint(sel.value);
+        }).catch(() => {});
+    }
+    async function set(v) {
+        try {
+            const x = await fetch(VIP.config.API_URL + '/api/notifications/prefs', { method: 'POST', headers: { 'Authorization': 'Bearer ' + VIP.state.currentToken, 'Content-Type': 'application/json' }, body: JSON.stringify({ level: v }) });
+            const j = await x.json(); if (!(j && j.success)) throw new Error((j && j.error) || 'error');
+            _hint(j.level); try { VIP.ui.showToast('Listo, guardado ✓'); } catch (_) {}
+        } catch (_) { try { VIP.ui.showToast('No se pudo guardar, probá de nuevo', 'error'); } catch (__) {} paint(); }
+    }
+    return { paint, set };
+})();

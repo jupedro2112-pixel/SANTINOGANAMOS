@@ -49,6 +49,7 @@ const schema = new mongoose.Schema({
   platformTaskId: { type: String, default: null },
   // Aviso al cliente (chat + push): null = falta, sending = en curso, sent | no_account | error
   notifyState:   { type: String, default: null },
+  remindedAt:    { type: Date, default: null }, // #238 Centro de avisos: cuándo se le mandó el recordatorio "no te olvides de reclamar" (una vez)
   notifyAt:      { type: Date, default: null },
   createdAt:     { type: Date, default: Date.now }
 }, { timestamps: false });

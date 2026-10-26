@@ -311,8 +311,8 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 - **Multi-instancia (AWS EB):** los crons son `setInterval` en CADA instancia; su
   idempotencia depende de índices únicos (EncuestaFire.slotKey, InactividadFire.fireKey,
   HgcashCharge.chargeKey, RecordatorioFire.fireKey, DailyRouletteSpin
-  userId+dateKey+seq, RefundBatch.activeKey, WeeklyRefund batchId+usernameLower).
-  No quitar esos índices.
+  userId+dateKey+seq, RefundBatch.activeKey, WeeklyRefund batchId+usernameLower, Story.autoKey,
+  ScheduledCampaign.autoKey) y de los locks `_cronClaim` (#238). No quitar esos índices.
 - **Front frágil:** cientos de `onclick` inline dependen de funciones en `window.*`
   (no renombrar exports sin actualizar el HTML/strings). Tabla de usuarios del panel
   acoplada a `USERS_LIST_FIELDS` del backend (columna nueva ⇒ sumar campo al select).
@@ -328,6 +328,10 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   **Historias (#237):** el bono `+X%` de una historia (`User.storyBonus`) lo aplica el server en la carga por
   `_pendingBonusFor`/`_settlePendingBonuses` (parte `story`), SIN Transaction 'bonus' aparte. El SW abre `data.url` de
   las pushes (`vip-open`).
+  **Centro de avisos / piloto (#238):** todo lote nuevo pasa por `_resolveNotifBatchAudience` (wrapper con `appOnly`,
+  `monthlyCap`, `dailyCap`, `rotGroup`) y respeta `User.notifPrefs` (`prefsFilter`, `data.kind` promo/personal). El aviso
+  del reembolso es SÓLO el semanal por planilla (`WeeklyRefund.remindedAt`, `/sys_refund_reminder_weekly`). El piloto usa
+  `ScheduledCampaign.autoKey` (único sparse). Un flag nuevo de notificaciones: sumar `_cronClaim` (multi-instancia).
 
 - **Lotes y Cronograma (#228):** el POST `/api/admin/notif-batches` es un wrapper de
   `_createNotifBatchFromBody(body, user)`; cualquier validación/efecto nuevo del lote va en esa

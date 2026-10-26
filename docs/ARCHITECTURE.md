@@ -1757,3 +1757,22 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   `app:*` mapeados a `depositModal`, `VIP.withdraw.openWithdrawModal`, `VIP.roulette`, `VIP.weeklyRefund.open`,
   `verifyPhoneModal`, `VIP.appTest.doInstall`, `VIP.ui.enterCasino`), botón `#navHistorias` (header), anillo `#lgStoriesRing`
   (ingreso), visor `#storyViewer`; CSS en `chat.css` y `login.css`. El SW reenvía `data.url` de la push (`vip-open`).
+
+### 10.3 Centro de avisos y piloto automático (#238)
+
+- **Audiencia de lotes:** `_resolveNotifBatchAudience` = wrapper (`appOnly`, `monthlyCap`, `dailyCap`, `rotGroup`) sobre
+  `_resolveNotifBatchAudienceBase`. `NotifBatch.giftType 'none'` = sólo aviso. Preferencias: `User.notifPrefs`
+  (`prefsFilter` en notificationService; `sendPushIfOffline` mira `data.kind`). Fatiga ⇒ `/api/activity/ping` la resetea.
+  PWA: fila en ⚙️ Configuración (`VIP.notifPrefs`, `notifications.js`).
+- **Recorrido:** `retentionJourney.{classify,pickStep,render,batchBody}` (textos de GANAMOS); motor `_journeyScan`/`_journeyTick`;
+  panel `/api/admin/notif-center` (GET/PUT/run). Config `notifCenter {monthlyCap, journey, refundReminder}`, `journeyTuning`, `journeyLast`.
+- **Aviso del reembolso semanal:** `_refundRemindRun/_refundReminderTick` sobre `WeeklyRefund` (`claim_pending` + `_wrfAvailable` +
+  sin `remindedAt`, 6 h después de disponible; marca `remindedAt`). Push `kind:'personal'`, `url:'/?open=refund'` ⇒ `app.js`
+  abre `VIP.weeklyRefund.open()`. Comando `/sys_refund_reminder_weekly`. No hay diario/mensual.
+- **Revisión semanal:** `_weeklyMetrics` (reembolsos = `WeeklyRefund.claimedAt`) + `weeklyReview.decide` ⇒ `journeyTuning`;
+  informe en `Config['weeklyReview']`; rutas `/api/admin/weekly-review` (+`/run`).
+- **Piloto:** `getAutopilotConfig` (fijo: 19:00, 4 h, 3 tandas/30 min, tope 8 o el del Centro), `_autopilotMonthItems(Raw)`
+  (sin `applyMode`), `_autopilotProgramMonth`, `_autopilotClearFuture`, `_autopilotTick`; ruta `/api/admin/cronograma-autopilot`.
+  Las campañas las ejecuta `_schedTick` como cualquier otra (`payload` → `_createNotifBatchFromBody`).
+- Locks multi-instancia: `_cronClaim(name, ttl)` sobre `Config['cronlock_<name>']` (fail-open). Índice único sparse
+  `ScheduledCampaign.autoKey` (no quitarlo).
