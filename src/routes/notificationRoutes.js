@@ -1126,6 +1126,9 @@ router.delete('/strategy/schedules/:id', requireAdmin, async (req, res) => {
 // Worker: cada minuto revisa las programaciones y dispara las que corresponden.
 async function _runDueSchedules() {
   try {
+    // #235: la estrategia programada es parte del sistema de notificaciones ANTERIOR → corre solo si está
+    // prendido en COMANDOS → Funciones → "Sistema anterior" (featureFlags.legacyNotifs).
+    if (!(await require('../services/featureFlags').isOn('legacyNotifs'))) return;
     const { hhmm, ymd, dow } = _argParts();
     const now = new Date();
     const schedules = await ScheduledNotif.find({ enabled: true }).lean();

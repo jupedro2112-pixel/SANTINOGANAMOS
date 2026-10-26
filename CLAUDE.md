@@ -318,6 +318,14 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   acoplada a `USERS_LIST_FIELDS` del backend (columna nueva ⇒ sumar campo al select).
   Detalle completo de trampas en `docs/ARCHITECTURE.md` §9.
 
+- **Funciones replicadas de PICA ROJA (#235+, 2026-10-26, réplica de CARGASGIROX #208–#211):** TODAS arrancan
+  APAGADAS y se prenden desde COMANDOS → "🧩 Funciones" (`src/services/featureFlags.js`, `Config['features']`). Toda
+  ruta/cron de Datos IA, Alertas de estafa, Centro de avisos, piloto automático e historias tiene que consultar
+  `featureFlags.isOn(...)`; un ítem nuevo del menú del panel lleva `data-feature="x"`. El sistema de notificaciones
+  automáticas ANTERIOR (reglas, encuesta, recordatorios #209, `ScheduledNotif`) corre sólo con `legacyNotifs` ON. El
+  registro es `Config['registrationMode']` `'open'|'invite'` (`_inviteOnlyBlocks`; también en el envío del OTP) y se
+  evalúa después del 410 de plataforma. Detalle en ARCHITECTURE §10. Marca en textos: GANAMOS (nunca PICA ROJA).
+
 - **Lotes y Cronograma (#228):** el POST `/api/admin/notif-batches` es un wrapper de
   `_createNotifBatchFromBody(body, user)`; cualquier validación/efecto nuevo del lote va en esa
   función (así lo heredan las campañas programadas). Las rutas del cronograma son
