@@ -399,7 +399,7 @@ async function handleLogin(e) {
             currentToken = data.token;
             currentAdmin = data.user;
             window._platformMode = data.platformMode || 'girox'; // #190 'manual' = GANAMOS sin API
-            window._platformFeatures = data.platformFeatures || null; // #231
+            window._platformFeaturesData = data.platformFeatures || null; // #231 (#239: NO usar window._platformFeatures — es la función de abajo y la pisaba)
             window._playUrl = data.playUrl || '';
             
             // Configurar UI según el rol
@@ -479,7 +479,7 @@ async function checkAdminSession() {
             currentToken = data.token || null;
             currentAdmin = data.user;
             window._platformMode = data.platformMode || 'girox'; // #190
-            window._platformFeatures = data.platformFeatures || null; // #231
+            window._platformFeaturesData = data.platformFeatures || null; // #231 (#239: NO usar window._platformFeatures — es la función de abajo y la pisaba)
             window._playUrl = data.playUrl || '';
             setupRoleBasedUI();
             showApp();
@@ -686,7 +686,7 @@ function setupRoleBasedUI() {
     // stats de reembolso/cashback/rakeback/VIP, las cards de rollover global / reembolso en vivo /
     // rangos / niveles VIP, los campos de rollover (bienvenida, fueguito, lotes, ruleta), las
     // opciones "reembolso"/"solo reembolsos"/"con saldo" y las columnas de Balance.
-    // #231 tres clases según lo que TIENE la plataforma (window._platformFeatures, del login):
+    // #231 tres clases según lo que TIENE la plataforma (window._platformFeaturesData, del login):
     //   platform-manual     → sólo manual (bandeja Pendientes GANAMOS)
     //   platform-noextras   → sin netwin: reembolsos/cashback/rakeback/VIP/referidos (manual y mijoker)
     //   platform-norollover → sin rollover (manual y mijoker)
@@ -15476,8 +15476,12 @@ let _ptCache = [];
 
 // #231 Capacidades de la plataforma activa (del login / me). Si el server viejo no las manda,
 // se deducen del modo: manual = nada; girox = todo.
+// ⚠️ #239: el dato vive en window._platformFeaturesData. Esta función es una declaración global
+// (= propiedad de window), así que `window._platformFeatures = {...}` la PISABA y el login del panel
+// moría con "_platformFeatures is not a function" → "Error de conexión". No volver a ese nombre.
 function _platformFeatures() {
-    if (window._platformFeatures && typeof window._platformFeatures === 'object') return window._platformFeatures;
+    const d = window._platformFeaturesData;
+    if (d && typeof d === 'object') return d;
     const manual = window._platformMode === 'manual';
     return { api: !manual, tasks: manual, balance: !manual, stats: !manual, sso: !manual, signup: !manual, rollover: !manual, bonus: !manual, cashier: !manual };
 }

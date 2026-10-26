@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-26** (última entrada: #238)
+> **Última actualización: 2026-10-26** (última entrada: #239)
 
 ---
 
@@ -54,6 +54,10 @@
 > 8. **Funciones replicadas de PICA ROJA (#235–#238):** TODAS arrancan APAGADAS en COMANDOS → "🧩 Funciones"
 >    (Datos IA, Alertas de estafa, Centro de avisos, piloto automático, Historias, sistema anterior de
 >    notificaciones). Prender de a una y mirar. El registro queda como estaba (410 por plataforma).
+> 9. **🔴 REDEPLOY URGENTE (#239):** el deploy de las 19:05 del 26/10 dejó el panel SIN poder iniciar
+>    sesión ("Error de conexión" para todos los agentes; las sesiones ya abiertas siguen). El fix está
+>    en `main` (commit de #239): hay que volver a desplegar. Verificar: login en el panel → "Login
+>    exitoso" y en el log `Admin connected: <agente>` después de cada login.
 >
 > **Tests que corro antes de tocar nada** (no hay node_modules, sólo esto):
 > `node scripts/test-weekly-refund.js` · `node scripts/test-weekly-refund-flow.js` ·
@@ -67,6 +71,26 @@
 ---
 
 ## Sesión 2026-10-26
+
+### 239. 🔴 FIX: el panel no dejaba iniciar sesión tras el deploy de #235–#238 ("Error de conexión" con credenciales válidas)
+- **Síntoma (captura del owner, 19:27):** login del panel en el dominio de EB → "Error de conexión". Logs de las
+  dos instancias: el server responde `Login successful for ignite1000` (y para admin4, admin1…) pero después del
+  deploy de las 19:05 **ningún login nuevo llega a `Admin connected`** (socket). Las sesiones abiertas antes del
+  deploy seguían andando (reconectan por cookie sin pasar por el login). Sin errores del lado del server.
+- **Causa (del lado del navegador, no del server):** en `admin.js`, `handleLogin` y `checkAdminSession` hacían
+  `window._platformFeatures = data.platformFeatures || null` (#231) y tres líneas después `setupRoleBasedUI()`
+  llama a `_platformFeatures()`, que es una **declaración de función global** (= propiedad de `window`): la
+  asignación la PISABA con el objeto (o con `null`) → `TypeError: _platformFeatures is not a function` → el
+  `catch` del login muestra "Error de conexión". El bug entró con #231 (21/10) pero el deploy del 25/10
+  (`SANTINOGANAMOS11`) no lo traía; el de hoy sí. Reproducido en frío con el HTML real del panel.
+- **Fix:** el dato vive en `window._platformFeaturesData` (las dos asignaciones) y `_platformFeatures()` lee de ahí.
+  Nada más cambia. `admin.js` se sirve `no-store` y el panel no tiene service worker: con el redeploy alcanza.
+- **Test nuevo `scripts/test-admin-panel-login.js`:** evalúa `admin.js` en un DOM mínimo armado con los ids/clases
+  REALES de `index.html` (lo que no existe devuelve `null`, como el navegador) y corre `handleLogin()` para los 4
+  roles en modo manual, sin `platformFeatures`, mijoker y girox: tiene que terminar en "Login exitoso" sin
+  `console.error`. Con la versión rota fallan los 8 chequeos; con el fix pasan. **Correrlo cada vez que se toque
+  `admin.js` o `index.html` del panel** (regla sumada a CLAUDE.md).
+- **Pendiente del owner:** REDEPLOY (ver "PRÓXIMO PASO" 9).
 
 ### 238. RÉPLICA DE PICA ROJA (vía CARGASGIROX #211) — tanda 4: 🧭 CENTRO DE AVISOS (recorrido, aviso del reembolso semanal, preferencias, revisión semanal) y 🤖 PILOTO AUTOMÁTICO de notificaciones (en OFF, dos interruptores en COMANDOS)
 - **Interruptores:** `notifCenter` (recorrido por cliente + aviso "reclamá tu reembolso semanal" + revisión semanal + preferencias del

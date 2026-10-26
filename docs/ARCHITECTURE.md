@@ -5,7 +5,8 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
+> Última actualización: **2026-10-26** — #239: trampa de globales del panel (`window.X` que pisa una función
+> global `X`; test `scripts/test-admin-panel-login.js`; §9). Antes: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
 > clientes en TANDAS con plazo propio (`WeeklyRefund.availableAt`, `RefundBatch.partsPlan`,
 > `release-next`, #230; §0.1, §7, §9). Antes: **2026-10-11** — banco: Depositar/Asignar toman también un movimiento en
 > `shadow_matched` y un `claiming` viejo (`BANK_AGENT_CLAIMABLE_STATES`, `_bankAgentClaimFilter`,
@@ -1560,6 +1561,14 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
 
 ## 9. Trampas / "no rompas esto"
 
+- **Globales del panel: `window.X = dato` PISA una `function X()` global (#239, 2026-10-26).** En
+  `admin.js` las funciones de nivel superior son propiedades de `window`; guardar un dato con el mismo
+  nombre (`window._platformFeatures = {...}` vs `function _platformFeatures()`) reemplaza la función y el
+  login del panel muere con "Error de conexión" aunque el server haya aceptado las credenciales (el
+  `catch` de `handleLogin` tapa cualquier excepción del código que corre después del login). Regla: un
+  dato en `window` lleva sufijo propio (`window._platformFeaturesData`), nunca el nombre de una función.
+  Test en frío: `node scripts/test-admin-panel-login.js` (evalúa admin.js con los ids reales de index.html
+  y corre `handleLogin()` por rol); correrlo tras tocar `admin.js` o `index.html` del panel.
 - **Equipos / comunidad (#224):** el inicio del usuario se compara en forma CANÓNICA
   (`_teamNorm`); no volver a `startsWith` sobre texto crudo (un `_` o una mayúscula
   distinta mandaba al cliente a la comunidad general). Un equipo sin Telegram en su fila

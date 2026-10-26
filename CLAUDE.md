@@ -316,7 +316,10 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 - **Front frágil:** cientos de `onclick` inline dependen de funciones en `window.*`
   (no renombrar exports sin actualizar el HTML/strings). Tabla de usuarios del panel
   acoplada a `USERS_LIST_FIELDS` del backend (columna nueva ⇒ sumar campo al select).
-  Detalle completo de trampas en `docs/ARCHITECTURE.md` §9.
+  **Nunca guardar un dato en `window.X` si existe una `function X()` global en admin.js**
+  (#239: `window._platformFeatures = {...}` pisó `_platformFeatures()` y el panel entero quedó
+  sin login, "Error de conexión"). Tras tocar `admin.js`/`index.html` del panel correr
+  `node scripts/test-admin-panel-login.js`. Detalle completo de trampas en `docs/ARCHITECTURE.md` §9.
 
 - **Funciones replicadas de PICA ROJA (#235+, 2026-10-26, réplica de CARGASGIROX #208–#211):** TODAS arrancan
   APAGADAS y se prenden desde COMANDOS → "🧩 Funciones" (`src/services/featureFlags.js`, `Config['features']`). Toda
@@ -345,7 +348,8 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
 1. Leer `WORKLOG.md` al iniciar.
 2. Hacer el cambio. Validar sintaxis (`node --check` en archivos tocados), **si se
    tocó el adaptador o el contrato de plataforma correr `node scripts/test-ganamos-adapter.js`
-   y `node scripts/test-mijoker-adapter.js`**, **si se tocó
+   y `node scripts/test-mijoker-adapter.js`**, **si se tocó `admin.js` o `index.html` del panel
+   correr `node scripts/test-admin-panel-login.js`** (#239), **si se tocó
    el reembolso semanal correr `node scripts/test-weekly-refund.js` y
    `node scripts/test-weekly-refund-flow.js`**, **y, si se
    tocó `server.js`, correr `node scripts/check-tdz.js`** (detecta usos de nivel
