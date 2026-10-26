@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-26** (última entrada: #235)
+> **Última actualización: 2026-10-26** (última entrada: #236)
 
 ---
 
@@ -63,6 +63,45 @@
 ---
 
 ## Sesión 2026-10-26
+
+### 236. RÉPLICA DE PICA ROJA (vía CARGASGIROX #209) — tanda 2: 🚨 ALERTAS DE ESTAFA y 🧠 DATOS IA 🔒 (ambas en OFF, interruptor en COMANDOS)
+- **Alertas de estafa** (`src/services/fraudRadar.js`, copiado 1:1 de CARGASGIROX): reglas que cruzan los datos (CBU de
+  carga/retiro compartido, mismo celular por token de push o ID del celular, mismo número de teléfono, terceros que cargan,
+  retiro a nombre de otro, abuso de bonos, retiro casi sin jugar, cuenta nueva con retiro grande, ciclo carga→retiro, granja
+  de referidos, marcas previas, sin teléfono) y suman PUNTAJE (60+ alto, 30–59 medio) con la evidencia. **Nada se bloquea
+  solo.** Rutas `GET /api/admin/fraud/alerts?days=&fresh=` (cache 5 min), `GET /api/admin/fraud/case/:id` (caso completo),
+  `POST /api/admin/fraud/review/:id` (legit/watch/clear → `User.fraudReview` + `fraudNotes`). Bloquear usa el
+  `/api/admin/users/:id/block` de siempre. **Solo admin general** (`_fraudGate`) y `featureFlags.fraudRadar` (apagado ⇒
+  404 `FEATURE_OFF`). Sin crons. Panel: menú "🚨 Alertas de estafa" (`data-feature="fraudRadar"`, oculto si está OFF),
+  sección `#fraudSection`, caso en `#frCaseModal`.
+  **Diferencia con CARGASGIROX:** las stats de juego salen de `girox.getPlayersStatsBatch` del ADAPTADOR activo; en modo
+  manual (GANAMOS) y mijoker responde `success:false` ⇒ mapa vacío: las reglas "retiro casi sin jugar" / "abuso de bonos"
+  quedan sin dato de apuestas (no fallan, no suman). Con `PLATFORM_MODE=girox` funcionan completas. La regla de referidos
+  propios sólo puede disparar en modo girox (acá no hay referidos).
+- **Datos IA** (`src/services/datosIaService.js` + modelos `AppSession` y `DatosIaSnapshot`, copiados 1:1; **no usa IA**:
+  son agregaciones de Mongo sobre Transaction/User/RefundClaim/DailyRouletteSpin/Message/AppSession). Pestañas Panorama
+  (inversión y proyección con calibración), Cierre de ayer (base retenida), Análisis por fechas (KPIs, informe con
+  semáforos, escalera post 1ª carga, serie, gasto en pauta), Comparativa con "la otra página" (números a mano) e Historial.
+  "VENTA (netwin)" acá es depósitos − retiros registrados (no depende de la plataforma). Rutas bajo `/api/admin/datos-ia/*`
+  con un `app.use` que exige: función prendida (`featureFlags.datosIa`) → admin general → **clave propia** si está cargada
+  (`Config['datosIaPinHash']` sha256, header `x-datos-pin`, 423 `PIN_REQUIRED`; 6 fallos ⇒ 15 min 429). Clave en COMANDOS →
+  "🔒 Clave de Datos IA" (`/api/admin/datos-ia-pin`). Cotización USDT manual o de criptoya (público, sin clave).
+  **`_diaPromoConfig` adaptado a GANAMOS:** bono de 1ª carga y automático = 0; reembolso diario/mensual = 0 (no existen);
+  semanal = % máximo de la escalera del reembolso por planilla (`getWeeklyRefundTiers`, #215); extra por instalar =
+  `getInstallBonusConfig()`; ruleta = % promedio ponderado de los premios `percent` (`getDailyRouletteConfig().prizes`, la
+  ruleta de acá no tiene `enabled`).
+- **Medidor de uso de la app**: `public/js/activity.js` pinguea `POST /api/activity/ping` cada 60 s con la app visible
+  (sesión nueva si pasan >3 min) + `window.VIP_DEVICE` (modelo/OS/pantalla, bloque inline en index.html antes de app.js)
+  + ID propio del celular (`localStorage.vip_device_id`) → `User.lastDevice` y `User.deviceIds` (últimos 6), que también
+  cruzan las Alertas de estafa. Con Datos IA apagado el server responde `{ok:false, off:true}` y la app deja de pinguear en
+  esa sesión. `mode` va null (esta PWA no tiene selector de modos del inicio).
+- `User`: + `lastDevice`, `deviceIds` (index), `fraudFlags`, `fraudNotes`, `fraudReview`. Panel: `admin.css` suma las
+  reglas `.dia` con las variables `--p-*` mapeadas al tema oscuro (las mismas variables `--darker` que CARGASGIROX);
+  `authFetch` agrega `x-datos-pin` a `/api/admin/datos-ia/`; `datosIaGate` pide la clave una vez por sesión
+  (sessionStorage `datos_pin`); `_featureOnOrToast` avisa si se entra a una sección apagada. SW `v133`. `node --check` +
+  `check-tdz` OK.
+- Lo que NO se trajo (igual que CARGASGIROX): la sección INICIO de PICA ROJA, "clave para Datos/Datos 2.0/Cierres" y
+  `STAFF_DENY_MUTATIONS` (acá se resolvió con admin-only en las rutas nuevas).
 
 ### 235. RÉPLICA DE PICA ROJA (vía CARGASGIROX #208) — tanda 1: interruptores en COMANDOS, registro abierto / sólo con invitación, sistema de notificaciones anterior APAGADO y al fondo del menú
 - **Owner:** replicar en este repo las seis funciones de `PICAROJA30` ya portadas a `CARGASGIROX` (#208–#211 de allá):

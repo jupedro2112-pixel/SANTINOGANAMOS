@@ -1723,3 +1723,18 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   modo manual sin la env el tilde no cambia nada. Aviso `/sys_register_invite`. `GET /api/config/access` (público,
   no-store) publica `registrationMode`, `registerInviteText`, `publicRegister` y `features.stories`; la PWA pone
   `body.reg-invite` (`auth.js`, `VIP.state.access`).
+
+### 10.1 Alertas de estafa y Datos IA (#236)
+
+- **Alertas de estafa:** `src/services/fraudRadar.js` (`scan(deps,{days})`, `caseFile(deps,userId)`, `RULES`). Rutas
+  `/api/admin/fraud/alerts|case/:id|review/:id`, gate `_fraudGate` (flag `fraudRadar` + admin general). Campos de
+  `User`: `fraudFlags`, `fraudNotes`, `fraudReview{status legit|watch|null,by,at,note}`, `lastDevice`, `deviceIds`.
+  Un cliente `legit` no vuelve a aparecer. Usa `PendingPayout`, `BankMovement`, `Transaction` y `girox.getPlayersStatsBatch`
+  del adaptador activo (manual/mijoker ⇒ sin stats, las reglas de juego no suman).
+- **Datos IA:** `src/services/datosIaService.js` (`analyze`, `compare`, `project`, `review`, `dailyRetained`,
+  `dayTotals`, `dateKeyART`; cache 5 min por proceso), modelos `AppSession` (TTL 180 d) y `DatosIaSnapshot` (TTL 2 años).
+  `app.use('/api/admin/datos-ia')` = flag `datosIa` → admin general → clave (`Config['datosIaPinHash']`, header
+  `x-datos-pin`, 423/429). Config: `datosIaPinHash`, `usdtRate`, `adSpend`, `adSpendTotal`, `otherPageStats`,
+  `projectionCalibration`. `_diaPromoConfig` lee la escalera del reembolso semanal, `installBonus` y la ruleta.
+  `POST /api/activity/ping` (rol user) arma las sesiones y escribe `lastDevice`/`deviceIds`; apagado ⇒ `{ok:false, off:true}`.
+  Cliente: `public/js/activity.js` + `window.VIP_DEVICE` (index.html).
