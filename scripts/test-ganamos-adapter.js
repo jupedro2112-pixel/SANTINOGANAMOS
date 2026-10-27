@@ -7,7 +7,7 @@
  * → nace `done`, sin evento 'created'; (4) server-initiated → `pending` + evento
  * 'created'; (5) settleTask → evento 'done' y es idempotente; (6) login seguro
  * (validateCredentials.valid === false); (7) saldo/netwin → code 'manual_mode';
- * (8) flow deducido del prefijo de la reference.
+ * (8) flow deducido del prefijo de la reference; (9, #242) requestAccountCreation → tarea `signup`.
  */
 const Module = require('module');
 const path = require('path');
@@ -114,6 +114,20 @@ const ok = (cond, msg) => { if (cond) console.log('  ✅', msg); else { fails++;
   const cfg = await manual.getPlatformConfig();
   ok(cfg.success && cfg.config.bonus.multipliers.length === 1 && cfg.config.bonus.multipliers[0] === 0 && cfg.config.rollover.enabled === false, 'getPlatformConfig: único multiplicador 0, rollover apagado (#196)');
   ok((await manual.depositToUser('pepe', 0, '', 'vip-x')).code === 'invalid_amount', 'monto 0 → invalid_amount');
+
+  console.log('7) #242 alta por landing (tarea signup)');
+  const evBefore = events.length;
+  const su = await manual.requestAccountCreation({ username: 'nuevo1', userId: 'uid-nuevo1', pin: '482913', name: 'Juan' });
+  ok(su.success && su.pending === true && su.duplicate === false, 'requestAccountCreation → success, pending');
+  const ts = store.find((t) => t.reference === 'vip-signup-uid-nuevo1');
+  ok(ts && ts.kind === 'signup' && ts.amount === 0 && ts.flow === 'landing_signup' && ts.status === 'pending' && ts.meta.pin === '482913' && ts.meta.name === 'Juan', 'tarea kind signup, amount 0, flow landing_signup, meta con pin y nombre');
+  ok(events.length === evBefore + 1 && events[events.length - 1][0] === 'created', "evento 'created' para la tarea signup");
+  const su2 = await manual.requestAccountCreation({ username: 'nuevo1', userId: 'uid-nuevo1', pin: '482913', name: 'Juan' });
+  ok(su2.success && su2.duplicate === true && su2.taskId === su.taskId, 'reintento → duplicate:true, misma tarea (reference vip-signup-<userId>)');
+  ok(!(await manual.requestAccountCreation({ username: 'a b', userId: 'x', pin: '1' })).success, 'username inválido rebota');
+  ok((await manual.requestAccountCreation({ username: 'nuevo2', userId: '', pin: '1' })).code === 'invalid_user', 'sin userId → invalid_user');
+  const sd = await manual.settleTask(su.taskId, { status: 'done', by: 'ana' });
+  ok(sd.success && sd.task.status === 'done' && events[events.length - 1][0] === 'done', "settleTask done → evento 'done'");
 
   console.log(fails ? `\n❌ ${fails} chequeo(s) fallaron` : '\n✅ Todos los chequeos del adaptador manual pasan');
   console.warn = origWarn;

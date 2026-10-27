@@ -9,7 +9,10 @@
 > las del agente nacen `done`; las que genera el server solo (hgcash, ruleta,
 > fueguito, VIP, lotes…) quedan `pending` en la sección **"⏳ Pendientes GANAMOS"**
 > del panel hasta que un agente las marca hechas (el cliente recibe
-> `/sys_ganamos_acreditado`). Sin saldo, sin SSO (CASINO abre `GANAMOS_PLAY_URL` en
+> `/sys_ganamos_acreditado`). **#242: alta por LANDING sin API** (flag `landingSignup`,
+> apagado por default): la landing crea la cuenta local + tarea `signup` (👤 CREAR USUARIO,
+> botón de 2 toques, "✏️ Cambiar usuario" si el nombre ya existe en GANAMOS; el PIN se ve
+> al agente sólo mientras está pendiente). Sin saldo, sin SSO (CASINO abre `GANAMOS_PLAY_URL` en
 > pestaña), **SIN reembolsos por netwin, SIN niveles VIP/rakeback y SIN rollover de bonos**
 > (#196: todo eso se eliminó de la PWA y se cierra/oculta en backend y panel en modo
 > manual — no volver a mencionarlos en ningún texto al cliente; la ÚNICA excepción es el

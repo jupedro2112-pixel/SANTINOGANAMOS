@@ -524,7 +524,10 @@ VIP.auth = (function () {
                 // (el flag lo setea tryAccessLink antes de limpiar la URL).
                 if (VIP.state._openCasinoOnLogin) {
                     VIP.state._openCasinoOnLogin = false;
-                    try { VIP.ui.enterCasino(); } catch (e) { /* ignore */ }
+                    // #242 cuenta por crear en GANAMOS: se queda en el chat (ahí está el aviso).
+                    if (!(VIP.state.currentUser && VIP.state.currentUser.platformAccountPending === true)) {
+                        try { VIP.ui.enterCasino(); } catch (e) { /* ignore */ }
+                    }
                 }
 
                 // Server-side enforcement: if the user must change their

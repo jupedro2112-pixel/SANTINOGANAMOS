@@ -3,19 +3,31 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>CARGAS 1GIROX — Jugá ahora</title>
-<meta name="description" content="Creá tu cuenta en segundos y empezá a jugar. Acreditación al instante y retiros rápidos.">
+<title>GANAMOS — Creá tu usuario y jugá</title>
+<meta name="description" content="Creá tu usuario de GANAMOS en segundos. Cargás por transferencia, jugás a los mejores slots y retirás rápido. Soporte 24/7.">
+<meta name="theme-color" content="#0d0d1a">
 <!--
-  LANDING PUENTE de conversión (archivo suelto — NO va en public/).
-  Se sube al dominio puente (Vercel / Cloudflare Pages / dominio final).
+  LANDING PUENTE de conversión de GANAMOS (archivo suelto — NO va en public/).
+  Se sube al dominio puente (Vercel / Cloudflare Pages / dominio final). Sólo este
+  archivo: NO importar el repo entero en Vercel (el vercel.json de la raíz es un
+  resto viejo que rutea todo a server.js).
+
+  #242 MODO MANUAL (GANAMOS sin API): el backend crea la cuenta LOCAL (usuario + clave
+  que se le muestran acá) y un agente crea ese mismo usuario en GANAMOS a mano; el
+  cliente entra a la app y le avisan por el chat. Requiere el interruptor
+  "Alta por LANDING sin API" prendido en el panel (COMANDOS → Funciones nuevas);
+  apagado, el backend responde 410 y acá se muestra el error.
 
   CONFIG (constantes de abajo):
-    API_BASE_DEFAULT  backend de producción (se puede pisar con ?api=https://otro)
+    API_BASE_DEFAULT  backend de producción (se puede pisar con ?api=https://otro).
+                      De ahí también salen el logo, los banners y las fotos de juegos
+                      (/icons, /images: los mismos archivos de la app).
     CAMPAIGN_CODE     código fijo de campaña; vacío = tomar de ?p= / ?campaign= / path
-    BONUS_BIG/SUB     texto del banner de bono.
-                      ⚠️ Deben ser la oferta REAL: mostrarle a Meta algo distinto
+    BONUS_BIG/SUB     texto del banner de arriba.
+                      ⚠️ Debe ser la oferta REAL: mostrarle a Meta algo distinto
                       de lo que ve el usuario es cloaking → baneo de dominio,
-                      pixel y cuenta publicitaria.
+                      pixel y cuenta publicitaria. NO prometer rollover, rakeback,
+                      niveles VIP ni reembolsos (GANAMOS no los tiene).
 -->
 <style>
   * { margin:0; padding:0; box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -24,16 +36,26 @@
     background:#0d0d1a; color:#fff; min-height:100vh;
     display:flex; flex-direction:column; align-items:center;
   }
-  .wrap { width:100%; max-width:420px; padding:18px 16px 40px; }
+  .wrap { width:100%; max-width:420px; padding:14px 16px 40px; }
+  .brand { display:flex; align-items:center; justify-content:center; gap:10px; margin-bottom:12px; }
+  .brand img { width:44px; height:44px; border-radius:12px; box-shadow:0 4px 14px rgba(212,175,55,0.35); }
+  .brand .name { font-size:24px; font-weight:900; letter-spacing:1px; color:#f5d76e; }
+  /* Banners de GANAMOS (rotan solos, mismas imágenes que la app) */
+  .hero { position:relative; border-radius:14px; overflow:hidden; aspect-ratio:1200/420; background:#16162a; margin-bottom:14px; border:1px solid rgba(212,175,55,0.25); }
+  .hero img { position:absolute; inset:0; width:100%; height:100%; object-fit:cover; opacity:0; transition:opacity .6s ease; }
+  .hero img.on { opacity:1; }
+  .hero .dots { position:absolute; bottom:6px; left:0; right:0; display:flex; justify-content:center; gap:5px; }
+  .hero .dots i { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.4); }
+  .hero .dots i.on { background:#f5d76e; }
   .bonus {
     background:linear-gradient(135deg,#d4af37,#f5d76e);
-    color:#1a1a2e; border-radius:14px; padding:18px 16px; text-align:center;
-    box-shadow:0 6px 24px rgba(212,175,55,0.35); margin-bottom:18px;
+    color:#1a1a2e; border-radius:14px; padding:14px 16px; text-align:center;
+    box-shadow:0 6px 24px rgba(212,175,55,0.35); margin-bottom:14px;
   }
-  .bonus .big { font-size:26px; font-weight:900; letter-spacing:0.5px; }
-  .bonus .sub { font-size:14px; font-weight:600; margin-top:4px; }
-  h1 { font-size:22px; text-align:center; margin-bottom:6px; color:#f5d76e; }
-  .pitch { text-align:center; color:#cfcfe0; font-size:14.5px; line-height:1.5; margin-bottom:18px; }
+  .bonus .big { font-size:22px; font-weight:900; letter-spacing:0.5px; }
+  .bonus .sub { font-size:13.5px; font-weight:600; margin-top:3px; }
+  h1 { font-size:21px; text-align:center; margin-bottom:6px; color:#fff; }
+  .pitch { text-align:center; color:#cfcfe0; font-size:14.5px; line-height:1.5; margin-bottom:14px; }
   .card {
     background:#16162a; border:1px solid rgba(212,175,55,0.25);
     border-radius:14px; padding:18px 16px; margin-bottom:16px;
@@ -50,14 +72,25 @@
     background:linear-gradient(135deg,#00c853,#00e676); color:#062812;
     box-shadow:0 5px 18px rgba(0,200,83,0.35);
   }
+  .btn.gold { background:linear-gradient(135deg,#d4af37,#f5d76e); color:#1a1a2e; box-shadow:0 5px 18px rgba(212,175,55,0.35); }
   .btn:disabled { opacity:0.6; cursor:default; }
   .err { color:#ff7b7b; font-size:13px; margin-top:10px; display:none; text-align:center; }
-  .sellos { display:flex; justify-content:space-between; gap:8px; margin-bottom:16px; }
+  .sellos { display:flex; justify-content:space-between; gap:8px; margin-bottom:14px; }
   .sello {
     flex:1; background:#16162a; border:1px solid rgba(255,255,255,0.08);
     border-radius:10px; padding:10px 6px; text-align:center; font-size:11.5px; color:#cfcfe0;
   }
   .sello .ico { font-size:20px; display:block; margin-bottom:4px; }
+  /* Tira de juegos (fotos reales de la app) */
+  .games { margin-bottom:16px; }
+  .games .t { font-size:12px; color:#aaa; text-align:center; margin-bottom:8px; letter-spacing:1px; }
+  .games .row { display:flex; gap:8px; overflow-x:auto; scrollbar-width:none; padding-bottom:4px; }
+  .games .row::-webkit-scrollbar { display:none; }
+  .games img { flex:0 0 auto; width:92px; height:92px; object-fit:cover; border-radius:12px; border:1px solid rgba(212,175,55,0.3); background:#16162a; }
+  .soporte { display:flex; align-items:center; gap:12px; background:#16162a; border:1px solid rgba(255,255,255,0.08); border-radius:12px; padding:10px 12px; margin-bottom:16px; }
+  .soporte img { width:46px; height:46px; border-radius:50%; object-fit:cover; }
+  .soporte .tx { font-size:12.5px; color:#cfcfe0; line-height:1.4; }
+  .soporte .tx b { color:#fff; }
   .legal { text-align:center; color:#666; font-size:11px; line-height:1.5; margin-top:8px; }
   /* Pantalla de credenciales */
   .creds { display:none; }
@@ -68,6 +101,7 @@
   .creds .dato .k { font-size:12px; color:#888; }
   .creds .dato .v { font-size:24px; font-weight:900; color:#f5d76e; letter-spacing:1px; font-family:monospace; }
   .warn { color:#ffb74d; font-size:13px; text-align:center; margin-top:10px; }
+  .pend { display:none; background:rgba(255,183,77,0.10); border:1px solid rgba(255,183,77,0.45); border-radius:10px; padding:10px 12px; margin-top:12px; font-size:13px; color:#ffe0b2; line-height:1.45; text-align:center; }
   /* Popup de enganche */
   #hookPop {
     display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75);
@@ -84,16 +118,28 @@
 <body>
 <div class="wrap">
 
+  <div class="brand">
+    <img id="logoImg" alt="GANAMOS" src="" onerror="this.style.display='none'">
+    <span class="name">GANAMOS</span>
+  </div>
+
+  <div class="hero" id="hero">
+    <img id="hero0" alt="GANAMOS" src="" onerror="this.remove()">
+    <img id="hero1" alt="Jackpots GANAMOS" src="" onerror="this.remove()">
+    <img id="hero2" alt="Fútbol GANAMOS" src="" onerror="this.remove()">
+    <div class="dots" id="heroDots"><i class="on"></i><i></i><i></i></div>
+  </div>
+
   <div class="bonus">
     <div class="big" id="bonusBig"></div>
     <div class="sub" id="bonusSub"></div>
   </div>
 
-  <h1>🎰 CARGAS 1GIROX</h1>
-  <p class="pitch">Creá tu cuenta <strong>en segundos</strong> y empezá a jugar ya mismo. Sin vueltas: solo decinos tu nombre.</p>
+  <h1>🎰 Creá tu usuario de GANAMOS</h1>
+  <p class="pitch">Decinos tu nombre y te damos <strong>usuario y clave</strong> al toque. Cargás por transferencia desde la app y jugás a los mejores slots.</p>
 
   <div class="sellos">
-    <div class="sello"><span class="ico">⚡</span>Acreditación al instante</div>
+    <div class="sello"><span class="ico">🏦</span>Cargás por transferencia</div>
     <div class="sello"><span class="ico">💸</span>Retiros rápidos</div>
     <div class="sello"><span class="ico">🎧</span>Soporte 24/7</div>
   </div>
@@ -102,28 +148,39 @@
   <div class="card" id="formCard">
     <label for="nameInput">¿Cómo te llamás?</label>
     <input type="text" id="nameInput" maxlength="60" autocomplete="name" placeholder="Tu nombre">
-    <button class="btn" id="goBtn" onclick="crearCuenta()">🎁 CREAR MI CUENTA GRATIS</button>
+    <button class="btn" id="goBtn" onclick="crearCuenta()">🎁 CREAR MI USUARIO GRATIS</button>
     <div class="err" id="errMsg"></div>
   </div>
 
   <!-- CREDENCIALES -->
   <div class="card creds" id="credsCard">
-    <h2 style="text-align:center;color:#00e676;font-size:19px;">✅ ¡Tu cuenta está lista!</h2>
+    <h2 style="text-align:center;color:#00e676;font-size:19px;" id="credsTitle">✅ ¡Tu usuario está listo!</h2>
     <div class="dato"><div class="k">TU USUARIO</div><div class="v" id="credUser"></div></div>
     <div class="dato"><div class="k">TU CLAVE</div><div class="v" id="credPass"></div></div>
     <p class="warn">📌 Sacale captura o anotalos: con esto entrás desde cualquier dispositivo.</p>
+    <div class="pend" id="pendBox">⏳ <b>Un agente está activando tu usuario en GANAMOS.</b> Entrá a la app: en unos minutos te avisamos por el chat y ya podés cargar y jugar.</div>
     <button class="btn" id="enterBtn" onclick="entrar()">🎰 ENTRAR A MI CUENTA</button>
   </div>
 
-  <p class="legal">Juego para mayores de 18 años (+18). Jugá con responsabilidad.<br>Al crear la cuenta aceptás los términos y condiciones del servicio.</p>
+  <div class="games" id="gamesStrip">
+    <div class="t">JUEGOS DESTACADOS</div>
+    <div class="row" id="gamesRow"></div>
+  </div>
+
+  <div class="soporte">
+    <img id="soporteImg" alt="" src="" onerror="this.style.display='none'">
+    <div class="tx"><b>Atención por chat las 24 hs.</b><br>Cargas, retiros y cualquier duda, por la app.</div>
+  </div>
+
+  <p class="legal">Juego para mayores de 18 años (+18). Jugá con responsabilidad.<br>Al crear el usuario aceptás los términos y condiciones del servicio.</p>
 </div>
 
 <!-- Popup de enganche (una sola vez: intento de salida o 12s) -->
 <div id="hookPop">
   <div class="box">
-    <h2>🎁 ¡Tu bono te espera!</h2>
-    <p>Creá tu cuenta gratis en segundos y jugá con tu regalo de bienvenida.</p>
-    <button class="btn" onclick="cerrarHook()">¡LO QUIERO!</button>
+    <h2>🎰 ¡Tu usuario te espera!</h2>
+    <p>Creá tu usuario de GANAMOS gratis en segundos y empezá a jugar hoy.</p>
+    <button class="btn gold" onclick="cerrarHook()">¡LO QUIERO!</button>
   </div>
 </div>
 
@@ -131,11 +188,11 @@
 // ============================================================
 // CONFIG
 // ============================================================
-var API_BASE_DEFAULT = 'https://cargas1girox.com'; // backend de producción
+var API_BASE_DEFAULT = 'https://www.cargasganamos.com'; // backend de producción (app de GANAMOS)
 var CAMPAIGN_CODE = ''; // fijo, o vacío = tomar de ?p= / ?campaign= / path
-// ⚠️ Oferta REAL (ver nota de cloaking arriba).
-var BONUS_BIG = '🎁 BONO DE BIENVENIDA';
-var BONUS_SUB = 'Creá tu cuenta gratis y empezá a jugar';
+// ⚠️ Oferta REAL (ver nota de cloaking arriba). Sin rollover/rakeback/VIP/reembolsos.
+var BONUS_BIG = '🎁 USUARIO GRATIS EN SEGUNDOS';
+var BONUS_SUB = 'Cargá por transferencia y jugá en GANAMOS';
 
 // Override para pruebas: ?api=https://otro-backend pisa API_BASE sin editar el archivo.
 var qs = new URLSearchParams(location.search);
@@ -143,6 +200,27 @@ var API_BASE = (qs.get('api') || API_BASE_DEFAULT).replace(/\/+$/, '');
 
 document.getElementById('bonusBig').textContent = BONUS_BIG;
 document.getElementById('bonusSub').textContent = BONUS_SUB;
+
+// ── Imágenes de GANAMOS: las mismas que sirve la app (public/icons, public/images) ──
+document.getElementById('logoImg').src = API_BASE + '/icons/icon-192x192.png';
+document.getElementById('soporteImg').src = API_BASE + '/images/soporte-ganamos.png';
+var HERO = ['/images/banner-inicio-ganamos.jpg', '/images/banner-jackpots-ganamos.jpg', '/images/banner-futbol-ganamos.jpg'];
+HERO.forEach(function (p, i) { var el = document.getElementById('hero' + i); if (el) el.src = API_BASE + p; });
+var heroIdx = 0;
+function heroShow(i) {
+  var imgs = document.querySelectorAll('#hero img');
+  var dots = document.querySelectorAll('#heroDots i');
+  if (!imgs.length) { document.getElementById('hero').style.display = 'none'; return; }
+  heroIdx = i % imgs.length;
+  imgs.forEach(function (im, k) { im.classList.toggle('on', k === heroIdx); });
+  dots.forEach(function (d, k) { d.classList.toggle('on', k === heroIdx); });
+}
+heroShow(0);
+setInterval(function () { heroShow(heroIdx + 1); }, 4000);
+var GAMES = ['sweet-bonanza-2500', 'gates-of-olympus-1000', 'sugar-rush-1000', 'starlight-princess-1000', 'big-bass-bonanza', 'buffalo-king-untamed', 'jokers-jewels-hold-spin', 'zeus-rush-fever', 'mines', 'jokers-jewels'];
+document.getElementById('gamesRow').innerHTML = GAMES.map(function (g) {
+  return '<img src="' + API_BASE + '/images/games/' + g + '.jpg" alt="' + g.replace(/-/g, ' ') + '" loading="lazy" onerror="this.remove()">';
+}).join('');
 
 function campaignCode() {
   if (CAMPAIGN_CODE) return CAMPAIGN_CODE;
@@ -167,13 +245,14 @@ function fbcValue() {
 
 var accessUrl = null;
 var creado = false;
+var BTN_TXT = '🎁 CREAR MI USUARIO GRATIS';
 
 async function crearCuenta() {
   var name = (document.getElementById('nameInput').value || '').trim();
   var errEl = document.getElementById('errMsg');
   errEl.style.display = 'none';
   if (name.length < 2) {
-    errEl.textContent = 'Escribí tu nombre para crear la cuenta.';
+    errEl.textContent = 'Escribí tu nombre para crear el usuario.';
     errEl.style.display = 'block';
     return;
   }
@@ -185,7 +264,7 @@ async function crearCuenta() {
   }
   var btn = document.getElementById('goBtn');
   btn.disabled = true;
-  btn.textContent = 'Creando tu cuenta…';
+  btn.textContent = 'Creando tu usuario…';
   try {
     var r = await fetch(API_BASE + '/api/landing/signup', {
       method: 'POST',
@@ -200,24 +279,31 @@ async function crearCuenta() {
     });
     var data = await r.json().catch(function () { return {}; });
     if (!r.ok || !data.success) {
-      errEl.textContent = data.error || 'No pudimos crear tu cuenta. Probá de nuevo.';
+      errEl.textContent = data.error || 'No pudimos crear tu usuario. Probá de nuevo.';
       errEl.style.display = 'block';
       btn.disabled = false;
-      btn.textContent = '🎁 CREAR MI CUENTA GRATIS';
+      btn.textContent = BTN_TXT;
       return;
     }
     creado = true;
     accessUrl = data.accessUrl;
     document.getElementById('credUser').textContent = data.username;
     document.getElementById('credPass').textContent = data.password;
+    // #242 modo manual: un agente lo crea en GANAMOS; el cliente entra a la app y le avisan por el chat.
+    if (data.pendingAgent) {
+      document.getElementById('credsTitle').textContent = '✅ ¡Ya tenés tu usuario y tu clave!';
+      document.getElementById('pendBox').style.display = 'block';
+      document.getElementById('enterBtn').textContent = '💬 ENTRAR A LA APP';
+    }
     document.getElementById('formCard').style.display = 'none';
     document.getElementById('credsCard').style.display = 'block';
+    document.getElementById('gamesStrip').style.display = 'none';
     window.scrollTo(0, 0);
   } catch (e) {
     errEl.textContent = 'Error de conexión. Revisá tu internet y probá de nuevo.';
     errEl.style.display = 'block';
     btn.disabled = false;
-    btn.textContent = '🎁 CREAR MI CUENTA GRATIS';
+    btn.textContent = BTN_TXT;
   }
 }
 

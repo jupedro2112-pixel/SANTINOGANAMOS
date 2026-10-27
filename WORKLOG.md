@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-27** (última entrada: #241)
+> **Última actualización: 2026-10-27** (última entrada: #242)
 
 ---
 
@@ -71,6 +71,45 @@
 ---
 
 ## Sesión 2026-10-27
+
+### 242. 👤 Alta por LANDING sin API: la landing crea la cuenta en la web y un agente crea el usuario en GANAMOS a mano (cartel de 2 toques + cambiar usuario) · landing con la marca GANAMOS
+- **Pedido del owner:** que la landing cree las "cuentas fantasma" igual, que al agente le salga un cartel para crear ese usuario en
+  GANAMOS a mano, que lo marque "usuario creado" con un botón de 2 toques, y que si GANAMOS rechaza el nombre porque ya existe se
+  pueda cambiar el usuario desde adminprivado2026. Más adaptar la landing a GANAMOS con las fotos y banners que ya tiene la app.
+- **Interruptor:** `Config['features'].landingSignup` ("Alta por LANDING sin API", panel → COMANDOS → 🧩 Funciones nuevas), **apagado
+  por default**. Apagado, `/api/landing/signup` sigue dando el 410 de #190. Sólo aplica en `PLATFORM_MODE=manual`; girox/mijoker no cambian.
+- **Flujo:** la landing pide el nombre → `User` local con usuario derivado + PIN de 6 dígitos, `giroxSyncStatus:'pending'` y
+  `platformAccount:{status:'pending_agent', pin, name, requestedAt}` (**campo nuevo en `User`**) → `PlatformTask kind:'signup'`
+  (**kind nuevo**, amount 0, reference `vip-signup-<userId>`, flow `landing_signup`, `meta:{pin,name,campaignCode}`) vía
+  `girox.requestAccountCreation()` (**método nuevo del adaptador manual**, idempotente) → chat abierto + bienvenida
+  `/sys_landing_cuenta_pendiente` ({name} {username} {password}) → la landing muestra usuario y clave con el aviso "un agente está
+  activando tu usuario" y el access-link **sin `ir=casino`** (cae al chat). En la PWA, mientras `platformAccountPending` (lo manda
+  `/api/auth/verify`) CASINO no abre GANAMOS: toast "un agente está creando tu usuario".
+- **Panel:** la tarea aparece en ⏳ Pendientes GANAMOS como 👤 CREAR USUARIO (usuario + **clave visible** + nombre) y en el chat del
+  cliente como cartel dorado (`#chatPlatformAccountBanner`, `loadPlatformAccountBanner`, `GET /api/admin/users/:id/platform-account`).
+  Botón **"✅ Ya lo creé" de DOS toques** (`platformTaskDoneTwice`: el 1º arma el botón 6 s, el 2º confirma; sin `confirm()`) → `settleTask`
+  → listener `_signupTaskSettled`: `platformAccount.status:'created'`, **PIN borrado**, `giroxSyncStatus:'linked'`, aviso al cliente
+  `/sys_ganamos_cuenta_creada`. **"✏️ Cambiar usuario"** (`POST /api/admin/users/:id/rename`, sólo con la cuenta `pending_agent`):
+  valida 3–18 `[a-zA-Z0-9_]` + `girox.validateUsername` + unicidad local CI, actualiza User/usernameLower, ChatStatus, Transaction y la
+  tarea pendiente (descripción con "antes X"), guarda `platformAccount.renamedFrom`, avisa `/sys_username_changed` ({username} {old}) y
+  deja nota interna. Rechazar una tarea signup pide confirmación extra ("si el nombre ya existe NO rechaces, cambiá el usuario") y deja
+  `platformAccount.status:'rejected'`. Roles: `_canSettlePlatformTask(role,'signup')` → admin, depositor (cargas) y comunidad (como las
+  cargas). Tabla Usuarios: badge "👤 POR CREAR EN GANAMOS" (`platformAccount.status` sumado a `USERS_LIST_FIELDS`). Socket
+  `platform_task` con `kind:'signup'` o `event:'renamed'` refresca el cartel del chat abierto.
+- **Landing (`landing/index.html`):** título y textos GANAMOS, logo (`/icons/icon-192x192.png`), 3 banners rotando
+  (`/images/banner-inicio|jackpots|futbol-ganamos.jpg`), tira de 10 juegos (`/images/games/*.jpg`), avatar de soporte: todo se carga
+  desde `API_BASE` (`https://www.cargasganamos.com`, pisable con `?api=`), así no hay que copiar imágenes al dominio puente. Sellos
+  "Cargás por transferencia / Retiros rápidos / Soporte 24/7"; sin bono en %, sin rollover/VIP/reembolsos. Responde a `pendingAgent:true`
+  mostrando el aviso y el botón "💬 ENTRAR A LA APP". Vercel: subir SOLO este archivo (el `vercel.json` de la raíz es un resto viejo).
+- **Decisiones / trampas:** el PIN queda en claro en `User.platformAccount.pin` y en `PlatformTask.meta.pin` SÓLO mientras está
+  pendiente (el agente lo necesita para crear la cuenta); al marcar creado se borra del User (en la tarea `done` queda en meta: si se
+  quiere, limpiar también ahí). El cambio de usuario sólo está permitido antes de crearlo en GANAMOS (después, el nombre tiene que ser
+  el mismo que en GANAMOS). Un reintento de la landing con el mismo userId no duplica la tarea (reference estable).
+- **Tests:** `scripts/test-ganamos-adapter.js` suma el caso 7 (tarea signup, idempotencia, settle). Corridos OK: check-tdz, adaptador
+  manual, mijoker, login del panel. SW: admin v68, PWA v136.
+- **Cómo lo usa el agente:** panel → COMANDOS → Funciones nuevas → tildar "Alta por LANDING sin API". Llega un cliente por la landing →
+  toast + tarea + cartel en su chat → crearlo en el panel de GANAMOS con ese usuario y esa clave → tocar 2 veces "Ya lo creé". Si GANAMOS
+  dice que el nombre existe → "Cambiar usuario" → crearlo con el nuevo → marcar.
 
 ### 241. 📣 Meta: la CARGA AUTOMÁTICA del banco ahora manda el `Purchase` (antes el píxel recibía el registro pero no la venta)
 - **Qué pasaba:** `hgcashAutoCarga` (transferís y se acredita sola, y la carga asignada desde la bandeja) no llamaba a `metaCapi.track('Purchase')` ni al aviso de fb-ads:

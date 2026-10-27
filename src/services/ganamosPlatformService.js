@@ -130,7 +130,8 @@ const _REF_FLOWS = [
   ['vip-hg-', 'hgcash'], ['vip-dep-', 'admin_deposit'], ['vip-wd-', 'admin_withdrawal'], ['vip-bonus-', 'admin_bonus'],
   ['vip-payoutref', 'payout_refund'], ['vip-payout-', 'payout'], ['vip-roulette-', 'roulette'], ['vip-fire', 'fire'],
   ['vip-lvl-', 'vip'], ['vip-levelup', 'vip'], ['vip-nbatch', 'batch'], ['vip-welcome-', 'welcome_code'], ['vip-rf-', 'refund'],
-  ['vip-cbk-', 'cashback'], ['vip-rake', 'rakeback'], ['vip-refcom-', 'referral'], ['vip-sdep-', 'movements'], ['vip-swd-', 'movements']
+  ['vip-cbk-', 'cashback'], ['vip-rake', 'rakeback'], ['vip-refcom-', 'referral'], ['vip-sdep-', 'movements'], ['vip-swd-', 'movements'],
+  ['vip-signup-', 'landing_signup']
 ];
 function _flowFromReference(reference) {
   const r = String(reference || '');
@@ -426,6 +427,27 @@ function getPlayerCacheTtlMs() { return 0; }
 // ============================================================
 // BANDEJA — la usa el panel (endpoints en server.js)
 // ============================================================
+/**
+ * #242 Alta por LANDING sin API: pide a un agente que CREE el usuario en GANAMOS con el
+ * mismo usuario y clave que vio el cliente. Es una PlatformTask `kind:'signup'` (amount 0)
+ * con reference `vip-signup-<userId>` (idempotente: un reintento no duplica). Nace
+ * `pending`, dispara el evento 'created' y se resuelve con settleTask como cualquier otra.
+ */
+async function requestAccountCreation({ username, userId, pin, name, campaignCode }) {
+  const check = validateUsername(username);
+  if (!check.valid) return { success: false, error: `Usuario inválido para la plataforma: ${check.reason}`, code: 'invalid_username' };
+  if (!userId) return { success: false, error: 'Falta el id del usuario', code: 'invalid_user' };
+  return _recordTask({
+    kind: 'signup',
+    username,
+    amount: 0,
+    description: `Crear el usuario "${username}" en GANAMOS con la clave ${pin || '(sin clave)'}${name ? ' · nombre: ' + String(name).slice(0, 60) : ''}`,
+    reference: `vip-signup-${userId}`,
+    flow: 'landing_signup',
+    meta: { pin: pin || null, name: name || null, campaignCode: campaignCode || null, userId }
+  });
+}
+
 async function listTasks({ status = 'pending', limit = 200, username = null } = {}) {
   const q = {};
   if (status && status !== 'all') q.status = status;
@@ -466,6 +488,7 @@ module.exports = {
   checkUserExists,
   ping,
   syncUserToPlatform,
+  requestAccountCreation,
   validateCredentials,
   changeUserPassword,
   createSession,

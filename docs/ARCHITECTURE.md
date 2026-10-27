@@ -179,7 +179,17 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
 - **Registro público apagado** (`/api/auth/register` y `/api/landing/signup` → 410)
   salvo `PUBLIC_REGISTER_ENABLED=1`: el agente crea la cuenta desde el panel (mismo
   username que en GANAMOS) y manda el link de acceso. `check-username` sólo mira la
-  base local.
+  base local. **Excepción (#242, 2026-10-27): alta por LANDING sin API** con el flag
+  `features.landingSignup` prendido: la landing crea la cuenta LOCAL (usuario + PIN) con
+  `User.platformAccount.status:'pending_agent'` y una `PlatformTask kind:'signup'`
+  (`girox.requestAccountCreation`, reference `vip-signup-<userId>`) para que un agente
+  cree ESE usuario con ESA clave en GANAMOS; lo marca con el botón de 2 toques del
+  cartel del chat (`#chatPlatformAccountBanner`) o de Pendientes GANAMOS →
+  `_signupTaskSettled` pone `created`, borra el PIN y avisa `/sys_ganamos_cuenta_creada`.
+  Si GANAMOS rechaza el nombre: `POST /api/admin/users/:id/rename` (sólo mientras está
+  pendiente; actualiza User/ChatStatus/Transaction/tarea y avisa `/sys_username_changed`).
+  Mientras está pendiente, `/api/auth/verify` manda `platformAccountPending:true` y la
+  PWA no abre GANAMOS (toast). Detalle en §4.10.
 - **PWA:** `public/js/platformmode.js` aplica el modo (oculta `.dash-balance`,
   `.dash-refunds`, `.dash-user`, menú Mi Perfil, botón Registrarse; CASINO →
   `window.open(playUrl)`); `syncBalance` corta el polling; `withdraw.js` sin tope de
@@ -1038,6 +1048,19 @@ puente rotan) y se saltea el `cors()` estricto global — ver el middleware
 antes del `app.use(cors(...))` en server.js. Conversión: CompleteRegistration
 a Meta CAPI (`signup_landing`) + webhook fb-ads.
 
+**Modo manual (#242, 2026-10-27):** con `features.landingSignup` ON (si no, 410) el
+alta NO toca ninguna plataforma: `syncStatus:'pending'`, `platformAccount:{status:
+'pending_agent', pin, name, requestedAt, taskId}`, tarea `signup` para el agente
+(`requestAccountCreation`), `ChatStatus` abierto, bienvenida
+`/sys_landing_cuenta_pendiente` y respuesta `{ accessUrl (sin ir=casino), username,
+password, pendingAgent:true }`. La landing (`landing/index.html`, marca GANAMOS;
+logo/banners/juegos los toma de `API_BASE` = la app) muestra el aviso "un agente está
+activando tu usuario". Endpoints del panel: `GET /api/admin/users/:id/platform-account`
+(estado + PIN sólo si pendiente + tarea + `canSettle`) y `POST …/rename {username}`.
+Roles que resuelven la tarea: `_canSettlePlatformTask(role,'signup')` = admin,
+depositor, comunidad. Seeds: `/sys_landing_cuenta_pendiente`, `/sys_ganamos_cuenta_creada`,
+`/sys_username_changed`.
+
 ### 4.11 Novedades del manual Partner API v1.11 (2026-08-13) — contexto, sin código
 
 (El PDF no está en este repo — si se consigue, guardarlo como
@@ -1567,6 +1590,12 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
 
 ## 9. Trampas / "no rompas esto"
 
+- **Alta por landing en modo manual (#242):** el PIN del cliente vive en claro en `User.platformAccount.pin` y
+  `PlatformTask.meta.pin` MIENTRAS la cuenta está `pending_agent` (el agente lo necesita para crearla en GANAMOS);
+  `_signupTaskSettled` lo borra del User al marcar creado. `POST /api/admin/users/:id/rename` sólo funciona con la cuenta
+  pendiente: una vez creada en GANAMOS el username local TIENE que ser el mismo que allá (no agregar un rename libre).
+  `PlatformTask.kind` ahora incluye `'signup'` con `amount:0`: cualquier suma/resumen por `amount` de la bandeja tiene
+  que ignorar ese kind, y `_taskKindLabel`/`_ptKindBadge` lo etiquetan.
 - **Globales del panel: `window.X = dato` PISA una `function X()` global (#239, 2026-10-26).** En
   `admin.js` las funciones de nivel superior son propiedades de `window`; guardar un dato con el mismo
   nombre (`window._platformFeatures = {...}` vs `function _platformFeatures()`) reemplaza la función y el
@@ -1725,7 +1754,7 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
 ## 10. Interruptores de funciones y modo de registro (#235, réplica de PICAROJA30 vía CARGASGIROX #208)
 
 - **`src/services/featureFlags.js`** — `Config['features']` = `{ datosIa, fraudRadar, notifCenter, autopilot,
-  stories, legacyNotifs }`, **todo `false` por default**, cache 30 s por proceso. `isOn(name)`, `getAll()`,
+  stories, legacyNotifs, landingSignup }` (#242: alta por landing sin API, §0/§4.10), **todo `false` por default**, cache 30 s por proceso. `isOn(name)`, `getAll()`,
   `set(patch, by)`. Rutas `GET/POST /api/admin/features` (POST solo admin general). Hooks `onFeaturesChanged(fn)`
   en server.js (p. ej. limpiar lo que una función programó al apagarla). Panel: COMANDOS → "🧩 Funciones"; los
   `.nav-item[data-feature]` se esconden si el flag está OFF (`applyFeatureNav`). Regla: **toda función replicada de

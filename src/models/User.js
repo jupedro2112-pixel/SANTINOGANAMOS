@@ -182,6 +182,24 @@ const userSchema = new mongoose.Schema({
     default: null,
     index: true
   },
+  // #242 Alta por LANDING en modo manual (GANAMOS sin API): la cuenta local nace
+  // SIN usuario en GANAMOS; un agente lo crea a mano con el MISMO usuario y clave
+  // (el cliente ya los vio en la landing) y lo marca creado en el panel.
+  //   status: pending_agent → falta crearlo en GANAMOS (tarea en Pendientes GANAMOS)
+  //           created       → el agente lo marcó creado · rejected → el agente lo rechazó
+  //   pin: la clave que vio el cliente, visible al agente SÓLO mientras está pendiente
+  //        (se borra al marcar creado). name: nombre que escribió en la landing.
+  platformAccount: {
+    status: { type: String, enum: ['pending_agent', 'created', 'rejected', null], default: null, index: true },
+    pin: { type: String, default: null },
+    name: { type: String, default: null },
+    taskId: { type: String, default: null },
+    requestedAt: { type: Date, default: null },
+    createdBy: { type: String, default: null },
+    createdAt: { type: Date, default: null },
+    note: { type: String, default: null },
+    renamedFrom: { type: String, default: null }
+  },
   giroxSyncStatus: {
     type: String,
     // pending  = todavía no se intentó crear en 1girox

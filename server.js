@@ -602,13 +602,14 @@ const PLATFORM_NO_STATS = !PLATFORM_FEATURES.stats;      // sin netwin → reemb
 const PLATFORM_NO_SSO = !PLATFORM_FEATURES.sso;          // casino en pestaña
 const PLATFORM_NO_SELFSIGNUP = !PLATFORM_FEATURES.signup; // alta por agente
 const PUBLIC_REGISTER_ENABLED = String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === '1' || String(process.env.PUBLIC_REGISTER_ENABLED || '').toLowerCase() === 'true';
-function _taskKindLabel(kind) { return { deposit: 'CARGA', withdraw: 'RETIRO', gift: 'BONO/REGALO' }[kind] || String(kind || '').toUpperCase(); }
+function _taskKindLabel(kind) { return { deposit: 'CARGA', withdraw: 'RETIRO', gift: 'BONO/REGALO', signup: 'CREAR USUARIO' }[kind] || String(kind || '').toUpperCase(); }
 function _taskFlowLabel(flow) {
   return {
     hgcash: 'transferencia hgcash', hgcash_assigned: 'carga asignada desde la bandeja', admin_deposit: 'carga manual',
     admin_withdrawal: 'retiro manual', admin_bonus: 'Bonificación', payout: 'retiro autogestionado', payout_refund: 'devolución de retiro rechazado',
     roulette: 'ruleta diaria', fire: 'fueguito', vip: 'nivel VIP', referral: 'comisión de referidos', batch: 'lote', welcome_code: 'código de bienvenida',
-    refund: 'reembolso', weekly_refund: 'reembolso semanal', cashback: 'reembolso en vivo', rakeback: 'rakeback', movements: 'autogestión'
+    refund: 'reembolso', weekly_refund: 'reembolso semanal', cashback: 'reembolso en vivo', rakeback: 'rakeback', movements: 'autogestión',
+    landing_signup: 'alta por landing (crear el usuario en GANAMOS)'
   }[flow] || (flow || 'operación');
 }
 async function _sendSystemMessageToUser(userId, username, content) {
@@ -627,6 +628,26 @@ async function _sendSystemMessageToUser(userId, username, content) {
 const weeklyRefundCalc = require('./src/utils/weeklyRefund');
 const RefundBatch = require('./src/models/RefundBatch');
 const WeeklyRefund = require('./src/models/WeeklyRefund');
+// #242 Alta por landing (modo manual): la tarea `signup` se resolvió → la cuenta local refleja
+// el estado y el cliente recibe /sys_ganamos_cuenta_creada. Al marcar creado se BORRA el PIN
+// guardado (ya no hace falta que lo vea nadie).
+async function _signupTaskSettled(event, task, userId) {
+  if (!userId) return;
+  if (event === 'done') {
+    await User.updateOne({ id: userId }, { $set: {
+      'platformAccount.status': 'created', 'platformAccount.pin': null, 'platformAccount.createdBy': task.doneBy || null,
+      'platformAccount.createdAt': new Date(), 'platformAccount.note': task.note || null, giroxSyncStatus: 'linked'
+    } });
+    const text = await renderSystemCommand('/sys_ganamos_cuenta_creada',
+      '✅ ¡Listo {username}! Tu usuario de GANAMOS ya está creado. Entrá con tu usuario *{username}* y la clave que te mostramos al registrarte. Para cargar fichas escribinos por acá. 🎰',
+      { username: task.username });
+    if (text) { try { await _sendSystemMessageToUser(userId, task.username, text); } catch (e) { logger.warn(`[landing-signup] aviso al cliente de la tarea ${task._id}: ${e.message}`); } }
+    logger.info(`[landing-signup] ${task.username} creado en GANAMOS por ${task.doneBy || 'agente'}`);
+  } else {
+    await User.updateOne({ id: userId }, { $set: { 'platformAccount.status': 'rejected', 'platformAccount.note': task.note || null } });
+    logger.info(`[landing-signup] alta de ${task.username} rechazada por ${task.doneBy || 'agente'}: ${task.note || ''}`);
+  }
+}
 if (PLATFORM_MANUAL) {
   girox.setUserIdResolver(async (username) => {
     const u = await findUserByUsernameCI(username);
@@ -645,7 +666,9 @@ if (PLATFORM_MANUAL) {
     if (event === 'created') {
       // hgcash deja su propia nota (con el detalle del movimiento) en hgcashAutoCarga.
       // #215 el reclamo del reembolso semanal también deja la suya (con el detalle verificado).
-      if (userId && !['hgcash', 'hgcash_assigned', 'weekly_refund'].includes(task.flow)) await _emitAdminOnlyChatNote(userId, task.username, `⏳ PENDIENTE EN GANAMOS — ${kindLabel} de ${money(task.amount)}${bonusTxt}${rollTxt} · ${motivo}. Hacelo en el panel de GANAMOS y marcalo ✅ en "Pendientes GANAMOS".`);
+      if (task.kind === 'signup') { // #242 alta por landing: el usuario NO existe en GANAMOS todavía
+        if (userId) await _emitAdminOnlyChatNote(userId, task.username, `👤 CREAR USUARIO EN GANAMOS — usuario "${task.username}" · clave ${(task.meta && task.meta.pin) || '?'}${task.meta && task.meta.name ? ' · nombre: ' + task.meta.name : ''}. Vino por la landing: crealo en el panel de GANAMOS con ESE usuario y ESA clave y tocá 2 veces "✅ Ya lo creé" en el cartel de arriba (o en Pendientes GANAMOS). Si GANAMOS dice que el nombre ya existe, usá "✏️ Cambiar usuario": NO lo rechaces.`);
+      } else if (userId && !['hgcash', 'hgcash_assigned', 'weekly_refund'].includes(task.flow)) await _emitAdminOnlyChatNote(userId, task.username, `⏳ PENDIENTE EN GANAMOS — ${kindLabel} de ${money(task.amount)}${bonusTxt}${rollTxt} · ${motivo}. Hacelo en el panel de GANAMOS y marcalo ✅ en "Pendientes GANAMOS".`);
       notifyAdmins('platform_task', { event, taskId, kind: task.kind, username: task.username, amount: task.amount, flow: task.flow || null });
       return;
     }
@@ -669,13 +692,23 @@ if (PLATFORM_MANUAL) {
     if (isWeeklyRefund) {
       try { await _wrfOnTaskSettled(event, task); } catch (e) { logger.error(`[weekly-refund] tarea ${taskId} ${event}: ${e.message}`); }
     }
-    if (event === 'done' && userId && task.source === 'server' && task.kind !== 'withdraw' && !isWeeklyRefund) {
+    // #242 alta por landing: la tarea "crear usuario" refleja su estado en User.platformAccount y
+    // el aviso al cliente es el suyo (/sys_ganamos_cuenta_creada), no el genérico de abajo.
+    const isSignup = task.kind === 'signup';
+    if (isSignup) {
+      try { await _signupTaskSettled(event, task, userId); } catch (e) { logger.error(`[landing-signup] tarea ${taskId} ${event}: ${e.message}`); }
+    }
+    if (event === 'done' && userId && task.source === 'server' && task.kind !== 'withdraw' && !isWeeklyRefund && !isSignup) {
       const text = await renderSystemCommand('/sys_ganamos_acreditado',
         '✅ ¡Listo! Ya te cargamos {amount} en tu usuario de GANAMOS ({motivo}). ¡A jugar! 🎰',
         { amount: money(task.amount), bonus: task.bonus && task.bonus.amount > 0 ? money(task.bonus.amount) : '', motivo, rollover: _rolloverNoteText(rollX) });
       if (text) { try { await _sendSystemMessageToUser(userId, task.username, text); } catch (e) { logger.warn(`[ganamos] aviso al cliente de la tarea ${taskId}: ${e.message}`); } }
     }
-    if (userId) {
+    if (userId && isSignup) {
+      await _emitAdminOnlyChatNote(userId, task.username, event === 'done'
+        ? `✅ USUARIO CREADO EN GANAMOS por ${task.doneBy || 'agente'} — "${task.username}". El cliente ya recibió el aviso.${task.note ? ' Nota: ' + task.note : ''}`
+        : `❌ ALTA RECHAZADA por ${task.doneBy || 'agente'} — "${task.username}" NO se creó en GANAMOS.${task.note ? ' Motivo: ' + task.note : ''}`);
+    } else if (userId) {
       await _emitAdminOnlyChatNote(userId, task.username, event === 'done'
         ? `✅ HECHO EN GANAMOS por ${task.doneBy || 'agente'} — ${kindLabel} de ${money(task.amount)}${bonusTxt}${rollTxt} · ${motivo}.${task.note ? ' Nota: ' + task.note : ''}`
         : `❌ RECHAZADA por ${task.doneBy || 'agente'} — ${kindLabel} de ${money(task.amount)}${bonusTxt} · ${motivo}.${task.note ? ' Motivo: ' + task.note : ''} ⚠️ NO se acreditó/debitó nada en GANAMOS; revisá la Transaction si quedó registrada.`);
@@ -4301,7 +4334,11 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
     if (String(process.env.LANDING_SIGNUP_DISABLED || '').toLowerCase() === 'true') {
       return res.status(410).json({ error: 'El registro por landing está deshabilitado.' });
     }
-    if (PLATFORM_NO_SELFSIGNUP && !PUBLIC_REGISTER_ENABLED) { // #190: alta sólo por agente
+    // #242 Modo manual (GANAMOS sin API): con el interruptor "Alta por LANDING sin API" prendido la
+    // cuenta nace LOCAL (usuario + PIN que ve el cliente) y queda una tarea `signup` para que un
+    // agente cree ese mismo usuario en GANAMOS a mano. Sin el interruptor sigue el 410 de #190.
+    const _landingManual = PLATFORM_MANUAL && (await featureFlags.isOn('landingSignup'));
+    if (PLATFORM_NO_SELFSIGNUP && !PUBLIC_REGISTER_ENABLED && !_landingManual) { // #190: alta sólo por agente
       return res.status(410).json({ error: 'El registro lo hace un agente por WhatsApp.', code: 'register_disabled' });
     }
 
@@ -4335,8 +4372,10 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
     // firmarán con esa key vía giroxOwnerCampaign).
     let ownerCampaign = null;
     let syncStatus = 'synced';
-    const hasPubKey = await Campaign.hasGiroxApiKey(normalizedCode);
-    if (hasPubKey) {
+    const hasPubKey = _landingManual ? false : await Campaign.hasGiroxApiKey(normalizedCode);
+    if (_landingManual) {
+      syncStatus = 'pending'; // #242: lo crea un agente a mano en GANAMOS (tarea signup más abajo)
+    } else if (hasPubKey) {
       const result = await giroxPublisherKeys.createUserAsPublisher(normalizedCode, { username, password });
       if (!result.success) {
         console.error(`[landing-signup] alta 1girox (publicista ${normalizedCode}) falló para ${username}: ${result.error}`);
@@ -4401,8 +4440,27 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
       metaFbp,
       landingUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
       registrationIp: req.ip || req.socket?.remoteAddress || null,
-      registrationUserAgent: (req.get('User-Agent') || '').slice(0, 500) || null
+      registrationUserAgent: (req.get('User-Agent') || '').slice(0, 500) || null,
+      // #242 modo manual: pendiente de que un agente lo cree en GANAMOS (el PIN queda visible
+      // al agente hasta que lo marque creado).
+      platformAccount: _landingManual ? { status: 'pending_agent', pin: password, name: cleanName, requestedAt: new Date() } : undefined
     });
+
+    if (_landingManual) {
+      // Tarea para el agente (bandeja Pendientes GANAMOS + cartel en el chat) + chat abierto + aviso al cliente.
+      try {
+        const t = await girox.requestAccountCreation({ username, userId, pin: password, name: cleanName, campaignCode: normalizedCode });
+        if (t && t.success && t.taskId) await User.updateOne({ id: userId }, { $set: { 'platformAccount.taskId': String(t.taskId) } });
+        else logger.error(`[landing-signup] no se pudo registrar la tarea signup de ${username}: ${t && t.error}`);
+      } catch (e) { logger.error(`[landing-signup] tarea signup de ${username}: ${e.message}`); }
+      try { await ChatStatus.create({ userId, username, status: 'open', category: 'cargas', lastMessageAt: new Date() }); } catch (_) {}
+      try {
+        const text = await renderSystemCommand('/sys_landing_cuenta_pendiente',
+          '👋 ¡Hola {name}! Bienvenido a GANAMOS.\n\nTu usuario es *{username}* y tu clave *{password}* (guardalos 📌).\n\n⏳ Un agente está creando tu usuario en GANAMOS: en unos minutos te avisamos por acá y ya podés cargar y jugar. 🎰',
+          { username, password, name: cleanName });
+        if (text) await _sendSystemMessageToUser(userId, username, text);
+      } catch (e) { logger.warn(`[landing-signup] bienvenida a ${username}: ${e.message}`); }
+    }
 
     // Conversión: Meta CAPI + webhook fb-ads (fire-and-forget).
     metaCapi.track(
@@ -4423,10 +4481,11 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
     // Link de acceso de un solo uso + ir=casino: la PWA abre el casino directo
     // al loguear. (El canje NO fuerza cambio de clave para cuentas de landing:
     // el cliente YA vio usuario+PIN en pantalla.)
-    const accessUrl = (await issueAccessLinkFor(newUser.id)) + '&ir=casino';
+    // #242 modo manual: sin ir=casino (el usuario todavía no existe en GANAMOS; el cliente cae al chat).
+    const accessUrl = (await issueAccessLinkFor(newUser.id)) + (_landingManual ? '' : '&ir=casino');
 
-    logger.info(`[landing-signup] ${username} creado (campaña ${normalizedCode}${ownerCampaign ? ', key publicista' : ''})`);
-    res.status(201).json({ success: true, accessUrl, username, password });
+    logger.info(`[landing-signup] ${username} creado (campaña ${normalizedCode}${ownerCampaign ? ', key publicista' : ''}${_landingManual ? ', PENDIENTE de crear en GANAMOS' : ''})`);
+    res.status(201).json({ success: true, accessUrl, username, password, pendingAgent: _landingManual });
   } catch (error) {
     // Stack a stdout: el winston va solo a archivo y los 500 eran invisibles en EB.
     console.error('[landing-signup] error:', error && error.stack ? error.stack : error);
@@ -4888,6 +4947,7 @@ app.get('/api/auth/verify', authMiddleware, async (req, res) => {
         role: user.role,
         balance: user.balance,
         mustChangePassword: user.mustChangePassword === true,
+        platformAccountPending: !!(user.platformAccount && user.platformAccount.status === 'pending_agent'), // #242 todavía no existe en GANAMOS
         platformMode: girox.PLATFORM_MODE, // #190 'manual' | 'girox' | 'mijoker' (la PWA oculta saldo/SSO en manual)
         platformFeatures: girox.FEATURES || null, // #231
         metaMatching: isAdminRole(user.role) ? null : metaCapi.buildAdvancedMatching({
@@ -11242,6 +11302,27 @@ async function initializeData() {
       response: '🧾 ¡Recibimos tu comprobante de ${amount}! ✅ Lo estamos verificando: en 1 minuto vas a tener tu carga. 🙌'
     },
     {
+      // #242 alta por LANDING en modo manual: bienvenida con usuario y clave mientras el agente lo crea en GANAMOS.
+      name: '/sys_landing_cuenta_pendiente',
+      description: 'ALTA POR LANDING (GANAMOS sin API): primer mensaje al cliente que se registró desde la landing; su usuario de GANAMOS todavía lo tiene que crear un agente. Variables: {name} (nombre que escribió), {username}, {password} (la clave que vio en la landing). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '👋 ¡Hola {name}! Bienvenido a GANAMOS.\n\nTu usuario es *{username}* y tu clave *{password}* (guardalos 📌).\n\n⏳ Un agente está creando tu usuario en GANAMOS: en unos minutos te avisamos por acá y ya podés cargar y jugar. 🎰'
+    },
+    {
+      // #242 el agente marcó ✅ (2 toques) que creó el usuario en GANAMOS.
+      name: '/sys_ganamos_cuenta_creada',
+      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente marca que YA CREÓ su usuario en GANAMOS. Variables: {username}. Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: '✅ ¡Listo {username}! Tu usuario de GANAMOS ya está creado. Entrá con tu usuario *{username}* y la clave que te mostramos al registrarte. Para cargar fichas escribinos por acá. 🎰'
+    },
+    {
+      // #242 el agente cambió el usuario desde el panel porque el nombre ya existía en GANAMOS.
+      name: '/sys_username_changed',
+      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente le CAMBIA el usuario desde el panel (el nombre ya estaba usado en GANAMOS). Variables: {username} (nuevo), {old} (anterior). Si lo dejás vacío, no se envía.',
+      type: 'message',
+      response: 'ℹ️ Tu usuario pasó a ser *{username}* (el nombre {old} ya estaba usado en GANAMOS). Tu clave sigue siendo la misma. ⏳ En unos minutos te avisamos cuando esté creado. 🎰'
+    },
+    {
       // #190 GANAMOS: el agente marcó ✅ una tarea pendiente (carga hgcash, premio de ruleta, fueguito, etc.).
       name: '/sys_ganamos_acreditado',
       description: 'GANAMOS (sin API): mensaje al cliente cuando el agente marca HECHA una carga/bono pendiente en "Pendientes GANAMOS". Variables: {amount}, {bonus}, {motivo} (transferencia hgcash, ruleta diaria, fueguito…). Si lo dejás vacío, no se envía.',
@@ -15289,6 +15370,83 @@ async function _settlePlatformTaskRoute(req, res, status) {
 app.post('/api/admin/platform-tasks/:id/done', authMiddleware, adminMiddleware, (req, res) => _settlePlatformTaskRoute(req, res, 'done'));
 app.post('/api/admin/platform-tasks/:id/reject', authMiddleware, adminMiddleware, (req, res) => _settlePlatformTaskRoute(req, res, 'rejected'));
 
+// ============================================================
+// #242 ALTA POR LANDING EN MODO MANUAL — cuenta "por crear en GANAMOS"
+// GET  /api/admin/users/:userId/platform-account → estado + PIN (sólo mientras está pendiente) + tarea
+// POST /api/admin/users/:userId/rename {username}  → cambia el usuario (sólo cuentas pendientes de crear:
+//      GANAMOS rechazó el nombre porque ya existía). Actualiza User, ChatStatus, la tarea signup y
+//      avisa al cliente con /sys_username_changed.
+// ============================================================
+app.get('/api/admin/users/:userId/platform-account', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    const u = await User.findOne({ id: req.params.userId }).select('id username platformAccount').lean();
+    if (!u) return res.status(404).json({ error: 'Usuario no encontrado' });
+    const pa = u.platformAccount || {};
+    if (!pa.status) return res.json({ status: null });
+    const pending = pa.status === 'pending_agent';
+    let task = null;
+    if (PLATFORM_MANUAL) {
+      const t = pa.taskId ? await girox.PlatformTask.findById(pa.taskId).lean().catch(() => null) : null;
+      const cur = t || (pending ? await girox.PlatformTask.findOne({ kind: 'signup', userId: u.id, status: 'pending' }).lean() : null);
+      if (cur) task = { id: String(cur._id), status: cur.status, doneBy: cur.doneBy || null, doneAt: cur.doneAt || null, note: cur.note || '' };
+    }
+    res.json({
+      status: pa.status, username: u.username, pin: pending ? (pa.pin || null) : null, name: pa.name || null,
+      requestedAt: pa.requestedAt || null, createdBy: pa.createdBy || null, createdAt: pa.createdAt || null, note: pa.note || null,
+      renamedFrom: pa.renamedFrom || null, task, canSettle: _canSettlePlatformTask(req.user.role, 'signup')
+    });
+  } catch (e) {
+    logger.error(`[landing-signup] platform-account: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
+app.post('/api/admin/users/:userId/rename', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (!_canSettlePlatformTask(req.user.role, 'signup')) return res.status(403).json({ error: 'Tu rol no puede cambiar usuarios.' });
+    const wanted = String((req.body && req.body.username) || '').trim();
+    const user = await User.findOne({ id: req.params.userId });
+    if (!user) return res.status(404).json({ error: 'Usuario no encontrado' });
+    if (!(user.platformAccount && user.platformAccount.status === 'pending_agent')) {
+      return res.status(400).json({ error: 'Sólo se puede cambiar el usuario mientras la cuenta está POR CREAR en GANAMOS (alta por landing).' });
+    }
+    if (!/^[a-zA-Z0-9_]{3,18}$/.test(wanted)) return res.status(400).json({ error: 'Usuario inválido: 3 a 18 caracteres, sólo letras, números y guión bajo.' });
+    const check = girox.validateUsername(wanted);
+    if (!check.valid) return res.status(400).json({ error: `Usuario inválido para la plataforma: ${check.reason}` });
+    const old = user.username;
+    if (wanted.toLowerCase() === String(old).toLowerCase()) return res.status(400).json({ error: 'Es el mismo usuario.' });
+    const taken = await findUserByUsernameCI(wanted, { lean: true });
+    if (taken) return res.status(409).json({ error: 'Ese usuario ya existe en la web. Probá otro.' });
+    user.username = wanted; // el pre('save') actualiza usernameLower
+    user.platformAccount.renamedFrom = user.platformAccount.renamedFrom || old;
+    await user.save();
+    // Colecciones que guardan el username (la cuenta es nueva: casi no hay datos, pero se cruzan igual).
+    await Promise.all([
+      ChatStatus.updateMany({ userId: user.id }, { $set: { username: wanted } }).catch(() => {}),
+      Transaction.updateMany({ userId: user.id }, { $set: { username: wanted } }).catch(() => {}),
+      PLATFORM_MANUAL ? girox.PlatformTask.updateMany({ userId: user.id, status: 'pending' }, { $set: { username: wanted } }).catch(() => {}) : Promise.resolve()
+    ]);
+    if (PLATFORM_MANUAL) {
+      const pin = (user.platformAccount && user.platformAccount.pin) || '';
+      await girox.PlatformTask.updateMany({ userId: user.id, kind: 'signup', status: 'pending' }, { $set: {
+        description: `Crear el usuario "${wanted}" en GANAMOS con la clave ${pin || '(sin clave)'}${user.platformAccount.name ? ' · nombre: ' + user.platformAccount.name : ''} (antes "${old}")`
+      } }).catch(() => {});
+    }
+    const text = await renderSystemCommand('/sys_username_changed',
+      'ℹ️ Tu usuario pasó a ser *{username}* (el nombre {old} ya estaba usado en GANAMOS). Tu clave sigue siendo la misma. ⏳ En unos minutos te avisamos cuando esté creado. 🎰',
+      { username: wanted, old });
+    if (text) { try { await _sendSystemMessageToUser(user.id, wanted, text); } catch (_) {} }
+    await _emitAdminOnlyChatNote(user.id, wanted, `✏️ USUARIO CAMBIADO por ${req.user.username}: "${old}" → "${wanted}". Crealo en GANAMOS con el nombre NUEVO y la misma clave, y marcalo ✅.`);
+    notifyAdmins('platform_task', { event: 'renamed', username: wanted, oldUsername: old, userId: user.id });
+    logger.info(`[landing-signup] ${old} → ${wanted} por ${req.user.username}`);
+    res.json({ success: true, username: wanted, oldUsername: old });
+  } catch (e) {
+    if (e && e.code === 11000) return res.status(409).json({ error: 'Ese usuario ya existe en la web. Probá otro.' });
+    logger.error(`[landing-signup] rename: ${e.message}`);
+    res.status(500).json({ error: 'Error del servidor' });
+  }
+});
+
 app.get('/api/admin/stats', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     const now = Date.now();
@@ -19257,7 +19415,7 @@ app.get('/api/admin/users', authMiddleware, adminMiddleware, async (req, res) =>
     // GET /api/users/:userId (viewUser/loadUserInfo). Antes viajaba el doc entero
     // (fcmTokens, tagHistory, withdrawalAccount, acquisitionUtm, adminNotes…).
     // ⚠️ Si se agrega una columna nueva a la tabla del panel: sumar el campo acá.
-    const USERS_LIST_FIELDS = 'id username tags accountNumber email phone role balance isActive isBlocked blockReason lastLogin createdAt notificationPlan notifMonthlyCounts phoneVerified loginWithoutPassword vipLevel lifetimeWagered';
+    const USERS_LIST_FIELDS = 'id username tags accountNumber email phone role balance isActive isBlocked blockReason lastLogin createdAt notificationPlan notifMonthlyCounts phoneVerified loginWithoutPassword vipLevel lifetimeWagered platformAccount.status'; // #242 platformAccount.status
     const users = await User.find(query)
       .select(USERS_LIST_FIELDS)
       .sort({ role: 1, username: 1 })

@@ -1289,7 +1289,9 @@ function initSocket() {
         if (typeof refreshPlatformTasksBadge === 'function') refreshPlatformTasksBadge();
         const sec = document.getElementById('platformTasksSection');
         if (sec && sec.classList.contains('active') && typeof loadPlatformTasks === 'function') loadPlatformTasks(true);
-        if (d && d.event === 'created') showToast(`⏳ Nueva pendiente en GANAMOS: ${d.kind === 'withdraw' ? 'retiro' : d.kind === 'gift' ? 'bono' : 'carga'} $${Number(d.amount || 0).toLocaleString('es-AR')} a ${d.username}`, 'info');
+        if (d && d.event === 'created') showToast(d.kind === 'signup' ? `👤 Nuevo cliente por la LANDING: crear el usuario "${d.username}" en GANAMOS` : `⏳ Nueva pendiente en GANAMOS: ${d.kind === 'withdraw' ? 'retiro' : d.kind === 'gift' ? 'bono' : 'carga'} $${Number(d.amount || 0).toLocaleString('es-AR')} a ${d.username}`, 'info');
+        // #242 el cartel "crear usuario en GANAMOS" del chat abierto
+        if (d && (d.kind === 'signup' || d.event === 'renamed') && typeof selectedUserId !== 'undefined' && selectedUserId && typeof loadPlatformAccountBanner === 'function') loadPlatformAccountBanner(selectedUserId);
     });
     // #231 operación contra la API sin confirmar / conciliada (modo mijoker).
     socket.on('platform_op', (d) => {
@@ -2831,6 +2833,8 @@ async function loadUserInfo(userId) {
         loadPayoutBanner(user.id);
         // #215 Reembolso semanal reclamado (botón "Marcar como entregado") o sin reclamar.
         if (typeof loadWeeklyRefundBanner === 'function') loadWeeklyRefundBanner(user.id);
+        // #242 Alta por landing: usuario POR CREAR en GANAMOS (clave visible + "✅ Ya lo creé" de 2 toques + cambiar usuario).
+        if (typeof loadPlatformAccountBanner === 'function') loadPlatformAccountBanner(user.id);
     } catch (error) {
         console.error('Error loading user info:', error);
     }
@@ -4349,7 +4353,7 @@ function renderUsers(users) {
 
         return `
         <tr class="${isAdminUser ? 'admin-row' : ''}">
-            <td>${escapeHtml(user.username)}${vipBadge}${tagsHtml}</td>
+            <td>${escapeHtml(user.username)}${user.platformAccount && user.platformAccount.status === 'pending_agent' ? ' <span title="Vino por la landing: un agente tiene que crear este usuario en GANAMOS (ver el cartel en su chat o Pendientes GANAMOS)" style="display:inline-block;margin-left:4px;padding:1px 6px;border-radius:6px;font-size:10px;font-weight:900;color:#ffd479;border:1px solid rgba(255,212,121,0.5);white-space:nowrap;">👤 POR CREAR EN GANAMOS</span>' : ''}${vipBadge}${tagsHtml}</td>
             <td>${escapeHtml(user.accountNumber || user.accountId || '-')}</td>
             <td>${escapeHtml(user.email || '-')}</td>
             <td>${escapeHtml(user.phone || '-')}</td>
@@ -15530,7 +15534,7 @@ async function loadPlatformTasks(silent) {
 }
 
 function _ptKindBadge(kind) {
-    const map = { deposit: ['💰 CARGA', '#25d366'], withdraw: ['💸 RETIRO', '#ff8a5b'], gift: ['🎁 BONO', '#c77dff'] };
+    const map = { deposit: ['💰 CARGA', '#25d366'], withdraw: ['💸 RETIRO', '#ff8a5b'], gift: ['🎁 BONO', '#c77dff'], signup: ['👤 CREAR USUARIO', '#ffd479'] };
     const [label, color] = map[kind] || [kind, '#aaa'];
     return `<span style="display:inline-block;padding:2px 8px;border-radius:8px;font-size:10.5px;font-weight:900;color:${color};border:1px solid ${color};white-space:nowrap;">${label}</span>`;
 }
@@ -15553,18 +15557,27 @@ function _ptRender() {
         const bonus = t.bonus && Number(t.bonus.amount) > 0
             ? `<div style="color:#c77dff;font-size:11px;font-weight:800;">+ bono $${Number(t.bonus.amount).toLocaleString('es-AR')}${t.bonus.multiplier > 0 ? ' (rollover x' + t.bonus.multiplier + ')' : ''}</div>`
             : (t.rolloverX > 0 ? `<div style="color:#c77dff;font-size:11px;">rollover x${t.rolloverX}</div>` : '');
+        const isSignup = t.kind === 'signup'; // #242 alta por landing: crear el usuario en GANAMOS (2 toques para confirmar)
         const actions = t.status === 'pending'
             ? (canSettle(t)
-                ? `<button class="btn-small" onclick="platformTaskDone('${t.id}')" style="background:#1f6f3a;color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12px;">✅ Hecha</button>
-                   <button class="btn-small" onclick="platformTaskReject('${t.id}')" style="background:#3a1a1a;color:#ff6666;border:1px solid rgba(255,80,80,0.3);padding:7px 10px;border-radius:8px;font-weight:800;cursor:pointer;font-size:12px;margin-left:6px;">❌</button>`
+                ? (isSignup
+                    ? `<button class="btn-small" onclick="platformTaskDoneTwice('${t.id}', this)" style="background:#1f6f3a;color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12px;">✅ Ya lo creé</button>
+                       <div style="color:#888;font-size:10px;margin-top:3px;">tocá 2 veces para confirmar</div>
+                       <button class="btn-small" onclick="platformAccountRename('${t.userId || ''}', '${escapeHtml(t.username)}')" style="background:rgba(212,175,55,0.15);color:#d4af37;border:1px solid rgba(212,175,55,0.45);padding:6px 10px;border-radius:8px;font-weight:800;cursor:pointer;font-size:11.5px;margin-top:4px;">✏️ Cambiar usuario</button>
+                       <button class="btn-small" onclick="platformTaskReject('${t.id}')" style="background:#3a1a1a;color:#ff6666;border:1px solid rgba(255,80,80,0.3);padding:7px 10px;border-radius:8px;font-weight:800;cursor:pointer;font-size:12px;margin-left:6px;">❌</button>`
+                    : `<button class="btn-small" onclick="platformTaskDone('${t.id}')" style="background:#1f6f3a;color:#fff;border:none;padding:7px 12px;border-radius:8px;font-weight:900;cursor:pointer;font-size:12px;">✅ Hecha</button>
+                   <button class="btn-small" onclick="platformTaskReject('${t.id}')" style="background:#3a1a1a;color:#ff6666;border:1px solid rgba(255,80,80,0.3);padding:7px 10px;border-radius:8px;font-weight:800;cursor:pointer;font-size:12px;margin-left:6px;">❌</button>`)
                 : '<span style="color:#666;font-size:11px;">(otro rol)</span>')
             : (t.note ? `<div style="color:#aaa;font-size:11px;max-width:220px;">📝 ${escapeHtml(t.note)}</div>` : '');
+        const signupCell = isSignup
+            ? `<div style="color:#ffd479;font-weight:900;">usuario: ${escapeHtml(t.username)}</div><div style="color:#fff;font-weight:900;">clave: <span style="font-family:monospace;font-size:14px;letter-spacing:1px;">${escapeHtml((t.meta && t.meta.pin) || (t.status === 'pending' ? '?' : '••••••'))}</span></div>${t.meta && t.meta.name ? `<div style="color:#bbb;font-size:11px;">nombre: ${escapeHtml(t.meta.name)}</div>` : ''}`
+            : null;
         const chat = t.userId ? `<a href="#" onclick="switchSection('chats');selectConversation('${t.userId}','${escapeHtml(t.username)}');return false;" style="color:#d4af37;font-weight:800;">${escapeHtml(t.username)}</a>` : `<span style="font-weight:800;">${escapeHtml(t.username)}</span>`;
         return `<tr style="border-bottom:1px solid rgba(255,255,255,0.06);">
             <td style="padding:8px 6px;white-space:nowrap;color:#bbb;font-size:11px;">${formatDateTime(t.createdAt)}</td>
             <td style="padding:8px 6px;">${_ptKindBadge(t.kind)}</td>
             <td style="padding:8px 6px;">${chat}</td>
-            <td style="padding:8px 6px;font-weight:900;color:#fff;white-space:nowrap;">$${Number(t.amount).toLocaleString('es-AR')}${bonus}</td>
+            <td style="padding:8px 6px;font-weight:900;color:#fff;white-space:nowrap;">${signupCell ? signupCell : '$' + Number(t.amount).toLocaleString('es-AR') + bonus}</td>
             <td style="padding:8px 6px;color:#ccc;font-size:11.5px;max-width:280px;"><div style="font-weight:800;color:#ffd479;">${escapeHtml(t.flowLabel || t.flow || '')}</div>${escapeHtml(t.description || '')}<div style="color:#666;font-size:10px;">ref ${escapeHtml(t.reference)}</div></td>
             <td style="padding:8px 6px;">${_ptStatusBadge(t)}</td>
             <td style="padding:8px 6px;white-space:nowrap;">${actions}</td>
@@ -15594,7 +15607,80 @@ function platformTaskDone(id) {
     if (!confirm(`¿Ya hiciste en el panel de GANAMOS ${det}?\n\nAl confirmar, el cliente recibe el aviso automático.`)) return;
     _ptSettle(id, 'done', '');
 }
+// #242 "Ya lo creé" de DOS toques: el primero arma el botón (6 s), el segundo confirma. Sin ventana de confirm().
+const _ptArmed = {};
+function platformTaskDoneTwice(id, btn) {
+    if (_ptArmed[id]) {
+        clearTimeout(_ptArmed[id].timer); delete _ptArmed[id];
+        if (btn) { btn.textContent = '⏳ Guardando…'; btn.disabled = true; }
+        _ptSettle(id, 'done', '').then(() => { if (typeof selectedUserId !== 'undefined' && selectedUserId && typeof loadPlatformAccountBanner === 'function') loadPlatformAccountBanner(selectedUserId); });
+        return;
+    }
+    const orig = btn ? btn.textContent : '';
+    const timer = setTimeout(() => { delete _ptArmed[id]; if (btn) { btn.textContent = orig; btn.style.background = '#1f6f3a'; btn.style.color = '#fff'; } }, 6000);
+    _ptArmed[id] = { timer };
+    if (btn) { btn.textContent = '¿Seguro? Tocá de nuevo ✅'; btn.style.background = '#d4af37'; btn.style.color = '#1a1a2e'; }
+    showToast('¿Ya creaste el usuario en GANAMOS con esa clave? Tocá el botón otra vez para confirmar.', 'info');
+}
+// #242 Cambiar el usuario (GANAMOS dijo que el nombre ya existe). Sólo mientras la cuenta está por crear.
+async function platformAccountRename(userId, currentName) {
+    if (!userId) { showToast('No se encontró la cuenta de este cliente', 'error'); return; }
+    const wanted = prompt(`Usuario NUEVO para ${currentName} (3 a 18 caracteres: letras, números y _). El cliente recibe el aviso con el usuario nuevo; la clave no cambia:`, currentName);
+    if (wanted == null) return;
+    const u = wanted.trim();
+    if (!u) { showToast('Escribí el usuario nuevo', 'error'); return; }
+    try {
+        const r = await authFetch(`/api/admin/users/${encodeURIComponent(userId)}/rename`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: u }) });
+        const j = await r.json();
+        if (!r.ok) { showToast(j.error || 'No se pudo cambiar', 'error'); return; }
+        showToast(`✏️ Usuario cambiado: ${j.oldUsername} → ${j.username}. Crealo en GANAMOS con el nombre nuevo.`, 'success');
+        loadPlatformTasks(true);
+        if (typeof selectedUserId !== 'undefined' && selectedUserId === userId) {
+            if (elements.chatUsername) elements.chatUsername.textContent = j.username;
+            loadPlatformAccountBanner(userId);
+        }
+        if (typeof loadConversations === 'function') { try { loadConversations(false); } catch (_) {} }
+    } catch (e) { showToast('Error de conexión', 'error'); }
+}
+// #242 Cartel en el chat: cuenta por crear en GANAMOS (usuario + clave + "✅ Ya lo creé" de 2 toques + cambiar usuario).
+async function loadPlatformAccountBanner(userId) {
+    const el = document.getElementById('chatPlatformAccountBanner');
+    if (!el) return;
+    if (window._platformMode !== 'manual') { el.style.display = 'none'; return; }
+    try {
+        const r = await authFetch('/api/admin/users/' + encodeURIComponent(userId) + '/platform-account');
+        if (!r.ok) { el.style.display = 'none'; return; }
+        const j = await r.json();
+        if (typeof selectedUserId !== 'undefined' && selectedUserId !== userId) return; // cambió de chat en el medio
+        if (j.status === 'pending_agent') {
+            const t = j.task || {};
+            el.style.display = '';
+            el.innerHTML = `<div style="padding:10px 14px;border-bottom:1px solid rgba(0,0,0,0.30);background:linear-gradient(90deg,#5a4300,#3d2e00);display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+                <div style="flex:1;min-width:220px;">
+                    <div style="color:#fff;font-weight:900;font-size:13px;">👤 CREAR ESTE USUARIO EN GANAMOS (vino por la landing)</div>
+                    <div style="color:#ffe9a8;font-size:12px;margin-top:2px;">usuario <b style="font-family:monospace;font-size:13px;">${escapeHtml(j.username)}</b> · clave <b style="font-family:monospace;font-size:14px;letter-spacing:1px;">${escapeHtml(j.pin || '?')}</b>${j.name ? ' · nombre: ' + escapeHtml(j.name) : ''}${j.renamedFrom ? ' · <span style="color:#ffd479;">(antes ' + escapeHtml(j.renamedFrom) + ')</span>' : ''}</div>
+                    <div style="color:#d9c48a;font-size:10.5px;margin-top:2px;">Crealo en el panel de GANAMOS con ESE usuario y ESA clave. Si GANAMOS dice que el nombre ya existe, tocá ✏️ Cambiar usuario (no lo rechaces).</div>
+                </div>
+                ${j.canSettle && t.id ? `<div style="display:flex;flex-direction:column;align-items:flex-end;gap:4px;">
+                    <button onclick="platformTaskDoneTwice('${escapeHtml(t.id)}', this)" style="background:#1f6f3a;color:#fff;border:none;border-radius:7px;padding:8px 13px;font-weight:900;font-size:12px;cursor:pointer;white-space:nowrap;">✅ Ya lo creé en GANAMOS</button>
+                    <span style="color:#d9c48a;font-size:10px;">tocá 2 veces para confirmar</span>
+                    <button onclick="platformAccountRename('${escapeHtml(userId)}', '${escapeHtml(j.username)}')" style="background:rgba(255,255,255,0.10);color:#fff;border:1px solid rgba(255,255,255,0.35);border-radius:7px;padding:6px 10px;font-weight:800;font-size:11.5px;cursor:pointer;white-space:nowrap;">✏️ Cambiar usuario</button>
+                </div>` : (j.canSettle ? '<span style="color:#ffd479;font-size:11px;">sin tarea en la bandeja (revisá Pendientes GANAMOS)</span>' : '<span style="color:#d9c48a;font-size:11px;">(lo resuelve cargas / admin)</span>')}
+            </div>`;
+            return;
+        }
+        if (j.status === 'rejected') {
+            el.style.display = '';
+            el.innerHTML = `<div style="padding:7px 14px;border-bottom:1px solid rgba(0,0,0,0.30);background:rgba(255,80,80,0.10);font-size:11.5px;color:#ffb3b3;">❌ Alta por landing RECHAZADA${j.note ? ': ' + escapeHtml(j.note) : ''}. Este usuario NO existe en GANAMOS.</div>`;
+            return;
+        }
+        el.style.display = 'none'; el.innerHTML = '';
+    } catch (e) { el.style.display = 'none'; }
+}
+window.platformTaskDoneTwice = platformTaskDoneTwice; window.platformAccountRename = platformAccountRename; window.loadPlatformAccountBanner = loadPlatformAccountBanner;
 function platformTaskReject(id) {
+    const t = _ptCache.find((x) => x.id === id);
+    if (t && t.kind === 'signup' && !confirm('⚠️ Si el problema es que el nombre YA EXISTE en GANAMOS, NO rechaces: usá "✏️ Cambiar usuario".\n\n¿Rechazar igual? El usuario NO se va a crear en GANAMOS.')) return;
     const note = prompt('Motivo del rechazo (obligatorio). NO se acredita ni debita nada en GANAMOS:');
     if (note == null) return;
     if (!note.trim()) { showToast('Escribí el motivo', 'error'); return; }

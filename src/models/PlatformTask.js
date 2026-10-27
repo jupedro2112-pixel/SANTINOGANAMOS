@@ -24,7 +24,9 @@ const mongoose = require('mongoose');
 
 const platformTaskSchema = new mongoose.Schema({
   // deposit = acreditar carga · withdraw = debitar retiro · gift = bono/regalo/premio
-  kind: { type: String, enum: ['deposit', 'withdraw', 'gift'], required: true, index: true },
+  // signup = CREAR el usuario en GANAMOS (#242, alta por landing en modo manual; amount 0,
+  //          meta.pin = clave que vio el cliente, meta.name = nombre de la landing)
+  kind: { type: String, enum: ['deposit', 'withdraw', 'gift', 'signup'], required: true, index: true },
   status: { type: String, enum: ['pending', 'done', 'rejected'], default: 'pending', index: true },
   // Llave de idempotencia (la reference que iba a la Partner API). Única.
   reference: { type: String, required: true, unique: true, index: true },

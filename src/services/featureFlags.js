@@ -18,7 +18,8 @@ const DEFAULTS = Object.freeze({
   notifCenter: false,  // panel → Centro de avisos (recorrido de retención, recordatorios de reembolso, preferencias)
   autopilot: false,    // cronograma → piloto automático de notificaciones (1 campaña/día a las 19 h)
   stories: false,      // historias (manuales + automáticas) en la app
-  legacyNotifs: false  // sistema de notificaciones automáticas anterior (ScheduledNotif + reglas + encuesta)
+  legacyNotifs: false, // sistema de notificaciones automáticas anterior (ScheduledNotif + reglas + encuesta)
+  landingSignup: false // #242 alta por landing en modo manual: la cuenta nace local y un agente la crea en GANAMOS
 });
 
 const LABELS = Object.freeze({
@@ -27,7 +28,8 @@ const LABELS = Object.freeze({
   notifCenter: 'Centro de avisos (recorrido de retención por cliente, tope diario/mensual, aviso del reembolso semanal, qué avisos quiere cada uno)',
   autopilot: 'Notificaciones programadas automáticas (una campaña por día a las 19 h en 3 tandas, sólo a quien tiene la app)',
   stories: 'Historias (manuales con bono +X% y automáticas: 5 por día, partidos, slot de la semana)',
-  legacyNotifs: 'Sistema de notificaciones automáticas ANTERIOR (estrategia programada + reglas + encuesta + recordatorios sin regalos)'
+  legacyNotifs: 'Sistema de notificaciones automáticas ANTERIOR (estrategia programada + reglas + encuesta + recordatorios sin regalos)',
+  landingSignup: 'Alta por LANDING sin API (la landing crea la cuenta en la web y queda una tarea "crear usuario en GANAMOS" para el agente; el cliente ve usuario y clave y entra a la app)'
 });
 
 let _cache = { at: 0, v: null };

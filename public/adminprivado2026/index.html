@@ -448,6 +448,8 @@ document.addEventListener('change', function (ev) {
                         <div id="chatFraudBanner" style="display:none;"></div>
                         <!-- #215 Reembolso semanal reclamado / sin reclamar — lo llena loadWeeklyRefundBanner() -->
                         <div id="chatWeeklyRefundBanner" style="display:none;"></div>
+                        <!-- #242 Alta por landing: usuario POR CREAR en GANAMOS — lo llena loadPlatformAccountBanner() -->
+                        <div id="chatPlatformAccountBanner" style="display:none;"></div>
                         <!-- Bono 100% pendiente — lo llena renderFirstChargeBonusBanner() al abrir el chat -->
                         <div id="chatBonusBanner" style="display:none;"></div>
                         <!-- Bono sorpresa del código de bienvenida (Comunidad Telegram) -->
@@ -2608,7 +2610,7 @@ document.addEventListener('change', function (ev) {
                     <button class="refresh-btn" onclick="loadPlatformTasks()" title="Refrescar">🔄</button>
                 </div>
                 <div style="background:rgba(212,175,55,0.06);border:1px solid rgba(212,175,55,0.30);border-radius:10px;padding:12px;margin-bottom:14px;">
-                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">GANAMOS no tiene API: acá caen las operaciones que el sistema generó <strong style="color:#ffd479;">solo</strong> (transferencia hgcash detectada, premio de la ruleta, fueguito, nivel VIP, lote, devolución…) y que <strong style="color:#25d366;">un agente tiene que hacer a mano en el panel de GANAMOS</strong>. Hacela allá y marcala ✅ <strong>Hecha</strong>: el cliente recibe el aviso automático (<code>/sys_ganamos_acreditado</code>). Las cargas, retiros y bonificaciones que hacés desde este panel NO pasan por acá (tu clic ya confirma que las hiciste).</p>
+                    <p style="margin:0;color:#bbb;font-size:11.5px;line-height:1.6;">GANAMOS no tiene API: acá caen las operaciones que el sistema generó <strong style="color:#ffd479;">solo</strong> (transferencia hgcash detectada, premio de la ruleta, fueguito, nivel VIP, lote, devolución… y, con "Alta por LANDING" prendida en COMANDOS → Funciones nuevas, <strong style="color:#ffd479;">👤 CREAR USUARIO</strong>: el cliente se registró en la landing y hay que crear ese usuario con esa clave en GANAMOS; el botón pide 2 toques y "✏️ Cambiar usuario" sirve si el nombre ya existe) y que <strong style="color:#25d366;">un agente tiene que hacer a mano en el panel de GANAMOS</strong>. Hacela allá y marcala ✅ <strong>Hecha</strong>: el cliente recibe el aviso automático (<code>/sys_ganamos_acreditado</code>). Las cargas, retiros y bonificaciones que hacés desde este panel NO pasan por acá (tu clic ya confirma que las hiciste).</p>
                 </div>
                 <div style="display:flex;gap:8px;margin-bottom:14px;flex-wrap:wrap;align-items:center;">
                     <button class="pt-filter-btn" data-f="pending" onclick="platformTasksSetFilter('pending')" style="padding:7px 14px;border-radius:8px;border:1px solid rgba(212,175,55,0.45);background:rgba(212,175,55,0.15);color:#d4af37;font-weight:800;font-size:12px;cursor:pointer;">Pendientes</button>

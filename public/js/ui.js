@@ -983,6 +983,11 @@ VIP.ui.enterCasino = async function() {
   // #231 mijoker: hay API pero no SSO → también en pestaña.
   if (VIP.platform && (VIP.platform.isManual() || VIP.platform.noSso())) {
     VIP.ui.closePlatformModal();
+    // #242 alta por landing: el usuario todavía NO existe en GANAMOS (lo crea un agente).
+    if (VIP.state.currentUser && VIP.state.currentUser.platformAccountPending === true) {
+      try { VIP.ui.showToast('⏳ Un agente está creando tu usuario en GANAMOS. Te avisamos por el chat en unos minutos.', 'error'); } catch (e) {}
+      return;
+    }
     VIP.ui._openInNewTab(VIP.platform.playUrl());
     return;
   }
