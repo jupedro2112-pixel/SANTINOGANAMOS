@@ -6,7 +6,8 @@
     window.VIP = window.VIP || {};
     let _timer = null, _last = 0;
     function _installed() { try { return window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true; } catch (_) { return false; } }
-    // Modo del menú del inicio: esta página no lo guarda (no hay selector de modos) ⇒ null salvo que algún día exista 'homePanelMode'.
+    // Modo del menú del inicio (#244): 'full' | 'refunds' | 'closed' según lo último que eligió el cliente en la barra de modos
+    // (app.js guarda localStorage.homePanelMode al tocar un botón). null mientras nunca cambió el modo (arranca en 'refunds').
     function _mode() { try { return localStorage.getItem('homePanelMode') || null; } catch (_) { return null; } }
     let _off = false; // el server responde { off:true } si Datos IA está apagado en COMANDOS ⇒ no se pinguea más en esta sesión
     // #952 (owner): "el posible duplicado hacelo por teléfono y que tome algo del celular": el navegador no da el IMEI, así que se genera UNA

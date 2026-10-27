@@ -269,7 +269,7 @@ mano por WhatsApp, calculado con una planilla semanal y un Apps Script: ahora vi
     admin, depositor, comunidad (`_canSettlePlatformTask(role,'gift')`).
 - **PWA:** `public/js/weeklyrefund.js` (`VIP.weeklyRefund`): barra `#weeklyRefundBanner`
   SIEMPRE visible arriba del chat, FUERA de `#homePanel` (#217: "$0 para reclamar" hasta
-  que haya un reembolso; después verde con el monto + RECLAMAR; "reclamado" mientras el
+  que haya un reembolso; por eso se ve en los 3 modos del menú del inicio, #244; después verde con el monto + RECLAMAR; "reclamado" mientras el
   agente lo carga), ítem "Reembolso semanal" del menú ☰ (con el monto), pantalla con
   "disponible para reclamar", el detalle de cada semana + RECLAMAR + "cómo funciona"
   (rangos y plazo). Se autoarranca (espera la
@@ -1495,6 +1495,31 @@ COMANDOS → "🔗 Webhooks salientes". Worker `outboundWebhook.startWorker()` (
   VIP con barra de progreso + botón de rakeback semanal + reembolsos por período
   (solo %) + escalera completa (viene de `GET /api/vip/status`, no se duplica). El
   rótulo del recuadro muestra la medalla del nivel (`updateDashVipBadge`).
+
+- **Panel del home con 3 modos** (#244, réplica de CARGASGIROX #199/#201/#202/#203/#205): la barra
+  `#homePanelToggle` (3 botones `.hpt-seg[data-mode]`: `▼ Menú completo` · `🎁 Reembolsos` ·
+  `▲ Menú cerrado`) pone `#homePanel.mode-full|mode-refunds|mode-closed` (CSS en index.html;
+  lógica `applyHomePanel` en app.js). `full` = todo; `refunds` = `.dash-top` SIN `.dash-user`
+  (ruleta + banner GANAMOS) + `.dash-play` (PÁGINA CASINO AQUÍ; el saldo lo esconde
+  platformmode.js en manual) — se esconden USUARIO, `#installBonusBanner` y `#promoBonusCard`;
+  `closed` = SOLO `.dash-play`. ⚠️ Acá el reembolso semanal (`#weeklyRefundBanner`) y RETIRAR
+  viven FUERA de `#homePanel` y se ven en los TRES modos (en el gemelo la fila de reembolsos
+  está adentro: por eso "Reembolsos" acá es "lo mínimo + el reembolso semanal"). La PRIMERA vez
+  arranca en `refunds`; al tocar otro botón se guarda `localStorage.homePanelMode` (por
+  dispositivo, no viaja al server) y es el modo de arranque siguiente; `activity.js` manda ese
+  valor en el ping de Datos IA (`null` = nunca lo cambió). `VIP.ui.setHomePanelMode(mode)` queda
+  expuesto. El cartel `#verifyPhoneBanner` sólo se restauraría en `full`, pero está APAGADO (#222).
+- **Modales SIEMPRE cerrables (#244, réplica de CARGASGIROX #204):** `VIP.ui.showModal` pasa por
+  `_ensureModalClosable`: inyecta un ✕ sticky (`.modal-xbar > .modal-x`, modals.css) si el
+  `.modal-content` no trae un ✕/× propio, cierra al tocar el fondo (`e.target === modal`) y con
+  Escape. Excepciones: `MODAL_NO_CLOSE` (hoy solo `changePasswordModal`, que además se protege en
+  `hideModal` mientras `passwordChangePending`); un modal puede optar con `data-no-x` /
+  `data-no-backdrop`. `.modal` lleva padding con `env(safe-area-inset-top/bottom)` y
+  `.modal-content` tope **84dvh** (también `#infoModal`): nunca tapan toda la pantalla y el ✕ no
+  queda bajo la muesca del iPhone con la app instalada. Los overlays que no usan `.modal`
+  (`#reviewModalOverlay`, `#rouletteNeedsAppModal`, `#appTestHelpOverlay`, `#notifBlockedModal`)
+  reciben el mismo margen/tope por id con `!important`. Un modal nuevo ⇒ nace cerrable sin hacer
+  nada; si tiene que ser obligatorio, sumarlo a `MODAL_NO_CLOSE`.
 
 ### Panel admin (`public/adminprivado2026/`)
 - `admin.js` (~12k líneas), auth mixta: login → Bearer en memoria + cookies httpOnly;

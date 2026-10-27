@@ -638,9 +638,12 @@
             </div>
         </div>
 
-        <!-- Cartel de atención: cuenta sin teléfono verificado. Visible para
+        <!-- Cartel de atención: cuenta sin teléfono verificado. Antes visible para
              todo usuario con phoneVerified !== true. VIP.auth.refreshVerifyPhoneBanner()
-             lo muestra/oculta. Empuja a verificar el teléfono porque el retiro lo exige. -->
+             lo muestra/oculta. Empuja a verificar el teléfono porque el retiro lo exige.
+             #222 (= CARGASGIROX #200): APAGADO — refreshVerifyPhoneBanner() lo fuerza
+             oculto siempre; el SMS se exige al RETIRAR. El markup se conserva para poder
+             volver a encenderlo restaurando la condición en auth.js. -->
         <div id="verifyPhoneBanner" style="display:none; background: linear-gradient(135deg, #d4af37 0%, #b8860b 100%); color: #1a0033; padding: 12px 16px; border-radius: 12px; margin: 8px 12px; box-shadow: 0 4px 15px rgba(212,175,55,0.45); border: 1px solid rgba(255,255,255,0.25);">
             <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
                 <span style="font-size: 22px;">⚠️</span>
@@ -899,39 +902,56 @@
                     overflow-y:auto; overflow-x:hidden;
                     transition:max-height .3s ease;
                 }
-                /* "Ocultar menú" deja SÓLO la fila de reembolsos + el perfil
-                   (.dash-top). Se esconde el resto: casino/saldo, comunidad,
-                   bono de instalación, promos y ganadores de la ruleta.
-                   El botón RETIRAR MI PREMIO vive FUERA de #homePanel, así que
-                   sigue visible solo. El cartel de verificar teléfono también está
-                   afuera y lo oculta el JS (ver app.js applyHomePanel).
+                /* Panel del home con TRES modos (#244, réplica de CARGASGIROX
+                   #199/#201/#202/#203/#205), elegidos desde la barra de abajo
+                   (#homePanelToggle). La PRIMERA vez se entra en "reembolsos";
+                   después queda el último modo que eligió el cliente
+                   (localStorage homePanelMode, por dispositivo; app.js).
+                     - mode-full     → todo el panel.
+                     - mode-refunds  → la fila superior SIN la tarjeta USUARIO
+                                       (ruleta + banner GANAMOS) + PÁGINA CASINO
+                                       AQUÍ. Se esconden USUARIO, el bono por
+                                       instalar y los lotes/promos.
+                     - mode-closed   → SOLO PÁGINA CASINO AQUÍ (#205 del gemelo:
+                                       el casino siempre a mano) arriba de la barra.
+                   ⚠️ Acá el REEMBOLSO SEMANAL (#weeklyRefundBanner) y RETIRAR MI
+                   PREMIO viven FUERA de #homePanel (#217): se ven en los TRES
+                   modos. Por eso "🎁 Reembolsos" acá = "lo mínimo + el reembolso
+                   semanal" (en el gemelo la fila de reembolsos está adentro).
+                   El cartel de verificar teléfono también está afuera y hoy está
+                   APAGADO (#222; app.js lo respeta igual).
 
-                   ⚠️ OJO con la jerarquía: .dash-top NO es hijo directo de
-                   #homePanel, está dentro de .home-dash. Por eso hacen falta las
-                   DOS reglas: si se esconde .home-dash (que es lo que pasaba antes)
-                   se van los reembolsos con ella. */
-                /* (owner 2026-08-05: antes el colapsado dejaba .dash-top —
-                   reembolsos + usuario; ahora deja SOLO .dash-play — el botón
-                   del casino centrado + el saldo del cliente.) */
-                #homePanel.collapsed > *:not(.home-dash) { display:none !important; }
-                #homePanel.collapsed .home-dash > *:not(.dash-play) { display:none !important; }
-                /* Sin el margen de abajo el bloque queda pegado al botón. */
-                #homePanel.collapsed .dash-play { margin-bottom:0; }
+                   ⚠️ OJO con la jerarquía: .dash-top y .dash-play NO son hijos
+                   directos de #homePanel, están dentro de .home-dash. Por eso hacen
+                   falta las DOS reglas por modo: si se esconde .home-dash entera se
+                   va el casino con ella. */
+                #homePanel.mode-refunds > *:not(.home-dash) { display:none !important; }
+                #homePanel.mode-refunds .home-dash > *:not(.dash-top):not(.dash-play) { display:none !important; }
+                #homePanel.mode-refunds .dash-top .dash-user { display:none !important; }
+                #homePanel.mode-refunds .dash-play { margin-bottom:0; }
+                #homePanel.mode-closed > *:not(.home-dash) { display:none !important; }
+                #homePanel.mode-closed .home-dash > *:not(.dash-play) { display:none !important; }
+                /* Sin el margen de abajo el bloque queda pegado a la barra. */
+                #homePanel.mode-closed .dash-play { margin-bottom:0; }
                 #homePanelToggle {
-                    flex:0 0 auto; display:flex; align-items:center; justify-content:center;
-                    gap:8px; margin:3px 8px 0; padding:5px 12px; cursor:pointer;
-                    background:linear-gradient(135deg,#2d0052,#1a0033); color:#d4af37;
+                    flex:0 0 auto; display:flex; align-items:stretch; gap:4px;
+                    margin:3px 8px 0; padding:3px;
+                    background:linear-gradient(135deg,#2d0052,#1a0033);
                     border:1px solid #d4af37; border-radius:9px;
-                    font-size:11px; font-weight:800; letter-spacing:.4px;
+                }
+                #homePanelToggle .hpt-seg {
+                    flex:1 1 0; min-width:0; padding:5px 4px; cursor:pointer;
+                    background:transparent; color:#d4af37; border:none; border-radius:7px;
+                    font-size:10.5px; font-weight:800; letter-spacing:.3px; white-space:nowrap;
+                    overflow:hidden; text-overflow:ellipsis;
                     -webkit-tap-highlight-color:rgba(212,175,55,.3); touch-action:manipulation;
                 }
-                #homePanelToggle:active { transform:scale(.99); }
-                #homePanelToggle .hpt-grip {
-                    width:30px; height:3px; border-radius:3px; background:rgba(212,175,55,.5);
+                #homePanelToggle .hpt-seg:active { transform:scale(.98); }
+                #homePanelToggle .hpt-seg.active {
+                    background:linear-gradient(135deg,#d4af37,#ffd700); color:#1a0033;
                 }
-                #homePanelToggle .hpt-chevron { font-size:9px; }
             </style>
-            <!-- Panel del home (colapsable con #homePanelToggle). -->
+            <!-- Panel del home (3 modos, elegidos con #homePanelToggle; #244). -->
             <div id="homePanel">
             <div class="home-dash">
                 <div class="dash-top">
@@ -1003,12 +1023,14 @@
                  de ganadores DENTRO del modal de la ruleta sigue existiendo. -->
             </div><!-- /#homePanel -->
 
-            <!-- Barra para subir/bajar el panel del home y agrandar el chat. -->
-            <button id="homePanelToggle" type="button" aria-expanded="true" title="Mostrar u ocultar el menú">
-                <span class="hpt-grip"></span>
-                <span class="hpt-chevron">▲</span>
-                <span class="hpt-label">Ocultar menú</span>
-            </button>
+            <!-- Barra de MODOS del panel del home (#244, réplica de CARGASGIROX #199/#202/#203):
+                 completo / reembolsos / cerrado. Primera vez "reembolsos"; después el último
+                 elegido (localStorage homePanelMode). La lógica vive en app.js (applyHomePanel). -->
+            <div id="homePanelToggle" role="group" aria-label="Menú del inicio" title="Elegí cuánto menú ver">
+                <button type="button" class="hpt-seg" data-mode="full">▼ Menú completo</button>
+                <button type="button" class="hpt-seg active" data-mode="refunds">🎁 Reembolsos</button>
+                <button type="button" class="hpt-seg" data-mode="closed">▲ Menú cerrado</button>
+            </div>
 
             <!-- #217 REEMBOLSO SEMANAL (el único de GANAMOS): barra SIEMPRE visible arriba del
                  chat, FUERA de #homePanel (sigue aunque se oculte el menú). Marca "$0 para

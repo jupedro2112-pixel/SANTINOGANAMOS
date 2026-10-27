@@ -8,15 +8,56 @@ VIP.ui = (function () {
 
     // ---- Modal helpers ----
 
+    // #244 (réplica de CARGASGIROX #204, owner 2026-10-20): TODO modal tiene que poder
+    // cerrarse en Android e iPhone, con o sin app instalada: (a) tocando AFUERA del
+    // recuadro, (b) con un ✕ siempre a la vista (sticky, se inyecta si el modal no trae
+    // uno propio) y (c) con Escape en desktop. Excepciones: modales obligatorios (lista
+    // MODAL_NO_CLOSE) — hoy solo el cambio de contraseña forzado, que ya se protege en
+    // hideModal. Opt-out por modal: atributos `data-no-x` / `data-no-backdrop`.
+    const MODAL_NO_CLOSE = ['changePasswordModal'];
+    function _hasOwnCloseX(content) {
+        return Array.from(content.querySelectorAll('button, a, span')).some(function (el) {
+            return /^[✕×✖]$/.test((el.textContent || '').trim());
+        });
+    }
+    function _ensureModalClosable(modal, modalId) {
+        if (!modal || modal.dataset.closableReady) return;
+        modal.dataset.closableReady = '1';
+        if (MODAL_NO_CLOSE.indexOf(modalId) !== -1) return;
+        const content = modal.querySelector('.modal-content');
+        if (content && !modal.hasAttribute('data-no-x') && !_hasOwnCloseX(content)) {
+            const bar = document.createElement('div');
+            bar.className = 'modal-xbar';
+            const x = document.createElement('button');
+            x.type = 'button'; x.className = 'modal-x'; x.setAttribute('aria-label', 'Cerrar'); x.textContent = '✕';
+            x.addEventListener('click', function (e) { e.stopPropagation(); hideModal(modalId); });
+            bar.appendChild(x);
+            content.insertBefore(bar, content.firstChild);
+        }
+        modal.addEventListener('click', function (e) {
+            if (e.target === modal && !modal.hasAttribute('data-no-backdrop')) hideModal(modalId);
+        });
+    }
+    document.addEventListener('keydown', function (e) {
+        if (e.key !== 'Escape') return;
+        const open = Array.from(document.querySelectorAll('.modal:not(.hidden)'));
+        const top = open[open.length - 1];
+        if (top && top.id && MODAL_NO_CLOSE.indexOf(top.id) === -1) hideModal(top.id);
+    });
+
     function showModal(modalId) {
-        document.getElementById(modalId).classList.remove('hidden');
+        const modal = document.getElementById(modalId);
+        if (!modal) return;
+        _ensureModalClosable(modal, modalId);
+        modal.classList.remove('hidden');
     }
 
     function hideModal(modalId) {
         if (modalId === 'changePasswordModal' && VIP.state.passwordChangePending) {
             return;
         }
-        document.getElementById(modalId).classList.add('hidden');
+        const modal = document.getElementById(modalId);
+        if (modal) modal.classList.add('hidden');
 
         // Reset OTP step states when closing modals
         if (modalId === 'resetPassModal') {

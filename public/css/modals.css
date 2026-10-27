@@ -40,8 +40,8 @@
 
 /* MODAL INFO - RESPONSIVE PARA MÓVILES */
 #infoModal .modal-content {
-    max-height: 90dvh;
-    max-height: 90vh;
+    max-height: 84vh;  /* #244 (=#204 del gemelo): que se vea el fondo y se pueda tocar afuera */
+    max-height: 84dvh;
     overflow-y: auto;
     -webkit-overflow-scrolling: touch;
     padding-bottom: 20px;
@@ -60,6 +60,11 @@
     justify-content: center;
     z-index: 10000;
     backdrop-filter: blur(5px);
+    /* #244 (=#204 del gemelo): margen que respeta la muesca/barra de iPhone (app
+       instalada) y la barra de gestos de abajo → el ✕ y los botones siempre quedan
+       tocables, y alrededor del recuadro queda FONDO para tocar afuera y cerrar. */
+    box-sizing: border-box;
+    padding: calc(14px + env(safe-area-inset-top, 0px)) 10px calc(14px + env(safe-area-inset-bottom, 0px));
 }
 
 .modal-content {
@@ -70,9 +75,55 @@
     padding-bottom: max(25px, env(safe-area-inset-bottom));
     width: 90%;
     max-width: 400px;
+    /* #244: nunca toda la pantalla — como mucho 84% del alto visible. */
     max-height: calc(100dvh - 40px);
+    max-height: min(84dvh, calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px) - 44px));
     overflow-y: auto;
     animation: modalSlide 0.3s ease;
+    position: relative;
+}
+
+/* #244: ✕ genérico que ui.js (_ensureModalClosable) inyecta en todo modal que no
+   tenga uno propio. Barra sticky de alto 0: el botón queda SIEMPRE a la vista aunque
+   el contenido scrollee, y no empuja nada. */
+.modal-xbar {
+    position: sticky;
+    top: 0;
+    height: 0;
+    display: flex;
+    justify-content: flex-end;
+    z-index: 20;
+}
+.modal-x {
+    margin: -14px -14px 0 0;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.6);
+    color: #fff;
+    border: 1px solid rgba(255, 255, 255, 0.28);
+    font-size: 17px;
+    line-height: 1;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    -webkit-tap-highlight-color: rgba(255, 255, 255, 0.2);
+    touch-action: manipulation;
+}
+.modal-x:active { transform: scale(0.94); }
+
+/* #244: overlays armados por JS o estáticos que no usan .modal — mismo margen de
+   zona segura y mismo tope de alto. !important porque traen estilos inline.
+   (Acá no existen #profileModal ni #cashbackModal: GANAMOS no tiene perfil VIP ni
+   reembolso en vivo, #196.) */
+#reviewModalOverlay, #rouletteNeedsAppModal, #appTestHelpOverlay, #notifBlockedModal {
+    padding-top: calc(16px + env(safe-area-inset-top, 0px)) !important;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom, 0px)) !important;
+}
+#reviewModalOverlay > div, #rouletteNeedsAppModal > div, #notifBlockedModal > div {
+    max-height: 84dvh !important;
+    overflow-y: auto !important;
 }
 
 @keyframes modalSlide {
@@ -221,8 +272,8 @@
         max-width: 96%;
         margin: 4px;
         padding: 16px 14px 18px;
-        max-height: 92dvh;
-        max-height: 92vh;
+        max-height: 84vh;  /* #244 */
+        max-height: 84dvh;
         border-radius: 14px;
     }
 

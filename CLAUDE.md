@@ -316,6 +316,14 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   HgcashCharge.chargeKey, RecordatorioFire.fireKey, DailyRouletteSpin
   userId+dateKey+seq, RefundBatch.activeKey, WeeklyRefund batchId+usernameLower, Story.autoKey,
   ScheduledCampaign.autoKey) y de los locks `_cronClaim` (#238). No quitar esos índices.
+- **PWA: menú del inicio con 3 modos + modales cerrables (#244, réplica de CARGASGIROX #199–#205):**
+  `#homePanel.mode-full|mode-refunds|mode-closed` desde la barra `#homePanelToggle` (app.js
+  `applyHomePanel`; primera vez `refunds`, después `localStorage.homePanelMode`). Un bloque nuevo del
+  inicio que tenga que verse en TODOS los modos va FUERA de `#homePanel` (como el reembolso semanal y
+  RETIRAR); si va adentro, decidir en qué modo se ve (CSS de index.html). **Todo `.modal` abierto por
+  `VIP.ui.showModal` nace cerrable** (✕ inyectado si no trae uno, tocar afuera, Escape:
+  `_ensureModalClosable` en ui.js); un modal obligatorio va en `MODAL_NO_CLOSE`, y el opt-out fino es
+  `data-no-x` / `data-no-backdrop`. `.modal-content` nunca pasa de 84dvh.
 - **Front frágil:** cientos de `onclick` inline dependen de funciones en `window.*`
   (no renombrar exports sin actualizar el HTML/strings). Tabla de usuarios del panel
   acoplada a `USERS_LIST_FIELDS` del backend (columna nueva ⇒ sumar campo al select).

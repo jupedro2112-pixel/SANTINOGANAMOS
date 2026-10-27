@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-27** (última entrada: #243)
+> **Última actualización: 2026-10-27** (última entrada: #244)
 
 ---
 
@@ -71,6 +71,62 @@
 ---
 
 ## Sesión 2026-10-27
+
+### 244. 📱 PWA: menú del inicio con 3 modos (arranca en "Reembolsos" y recuerda el último) + todos los pop-ups cerrables (réplica de CARGASGIROX #199–#205)
+- **Owner:** replicar acá "los últimos cambios de la PWA de CARGASGIROX sobre el menú que aparece al abrir la app la primera
+  vez, el menú de reembolsos, etc." (entradas #199–#205 del gemelo, sesión 2026-10-19/20). Se portó el código real de esos
+  commits (`8a72c1c`, `f76c93a`, `f509627`, `08337cf`, `1d7c9f0`, `21dbeaa`, `86cadd6`) adaptado al markup de acá.
+- **#199 + #201 + #202(4) + #203 + #205 → barra de MODOS del inicio.** La barra "Ocultar menú / Ver menú" (`#homePanelToggle`,
+  antes un `<button>` con `collapsed`) pasó a ser un `<div role=group>` con 3 botones `.hpt-seg[data-mode]`:
+  `▼ Menú completo` · `🎁 Reembolsos` · `▲ Menú cerrado`. CSS `#homePanel.mode-full|mode-refunds|mode-closed` en index.html,
+  lógica `applyHomePanel` en app.js (misma animación de alto de antes), `VIP.ui.setHomePanelMode(mode)` expuesto.
+  - `full` → todo el panel. `refunds` → fila superior `.dash-top` SIN la tarjeta USUARIO (quedan la celda de la ruleta, si
+    está activa, y el banner GANAMOS) + `.dash-play` (PÁGINA CASINO AQUÍ; el "saldo" de `.dash-play` ya lo esconde
+    `platformmode.js` en modo manual, no se tocó). Se esconden USUARIO, el cartel del bono por instalar y los lotes/promos.
+    `closed` → SOLO `.dash-play` arriba de la barra (#205 del gemelo: "PÁGINA CASINO AQUÍ siempre disponible").
+  - **Adaptación al markup de acá:** en el gemelo la fila de reembolsos vive DENTRO de `#homePanel` (`.dash-refunds` en
+    `.dash-top`); acá el ÚNICO reembolso es el semanal y su barra `#weeklyRefundBanner` está FUERA del panel, debajo de la
+    barra de modos (#217, "siempre visible"), igual que RETIRAR MI PREMIO. Por eso **el reembolso semanal se ve en los 3
+    modos** y "🎁 Reembolsos" acá significa "lo mínimo + el reembolso semanal": casino + ruleta/banner arriba, reembolso
+    semanal + RETIRAR + chat abajo. Si se hubiera escondido `.dash-top` entera, "Reembolsos" y "Menú cerrado" quedaban
+    idénticos. Primera vez → `refunds`; `#homePanel.collapsed` ya no existe (sin restos en CSS/JS).
+  - **#203:** al tocar otro botón se guarda `localStorage.homePanelMode` y es el modo de arranque siguiente (por
+    dispositivo/navegador, no viaja al server). `activity.js` (#236) ya leía esa clave y mandaba `null`: ahora manda el
+    modo real cuando el cliente lo cambió (`null` sigue significando "nunca lo tocó" = arrancó en reembolsos); se actualizó
+    su comentario, nada más.
+- **#200 (cartel "¡Atención! Verificá tu teléfono"):** acá YA estaba apagado desde #222 (SW v130): `refreshVerifyPhoneBanner`
+  fuerza `display:none` siempre y el SMS se pide al retirar. No se tocó la función; sólo se dejó el comentario del markup
+  acorde (el HTML se conserva para poder volver a encenderlo). `applyHomePanel` mantiene la lógica "sólo en modo completo"
+  del gemelo, hoy inerte.
+- **#204 (todos los pop-ups cerrables):** `ui.js` → `_ensureModalClosable` llamado desde `showModal`: ✕ sticky inyectado
+  (`.modal-xbar > .modal-x`) si el `.modal-content` no trae un ✕/×/✖ propio, cierre tocando el fondo y con Escape;
+  excepción `MODAL_NO_CLOSE = ['changePasswordModal']` (obligatorio; `hideModal` lo sigue protegiendo con
+  `passwordChangePending`); opt-out por modal `data-no-x` / `data-no-backdrop`. `showModal`/`hideModal` ya no explotan si
+  el id no existe. **Auditoría de acá (18 `.modal` estáticos, todos se abren por `showModal`):** 5 no tenían ✕ propio —
+  `depositModal`, `appCheckModal`, `notifTestModal`, `settingsModal`, `publisherWelcomeModal` (cerraban sólo con botones
+  internos) — y 11 no cerraban tocando afuera (`registerModal`, `depositModal`, `withdrawModal`, `appCheckModal`,
+  `settingsModal`, `publisherWelcomeModal`, `notifSurveyModal`, `verifyPhoneModal`, `smsOfferModal`, `loginFeedModal`,
+  `resetPassModal`); los 7 restantes ya tenían `onclick` de fondo (se les suma el listener genérico, inocuo).
+  `modals.css`: `.modal` con padding `env(safe-area-inset-top/bottom)` (la ✕ nunca bajo la muesca del iPhone con la app
+  instalada), `.modal-content` tope **84dvh** (antes `calc(100dvh - 40px)`; `#infoModal` 90/92 → 84) para que quede fondo
+  alrededor y se pueda tocar afuera; mismo margen/tope por id para los overlays que no usan `.modal` y existen acá
+  (`#reviewModalOverlay`, `#rouletteNeedsAppModal`, `#appTestHelpOverlay`, `#notifBlockedModal`; acá no hay `#profileModal`
+  ni `#cashbackModal`, #196). Cartel del bono por instalar: en ≤600px apila ícono+título, línea de la regla y botón a todo
+  el ancho (`responsive.css`; se agregó `flex-wrap` porque el markup de acá no lo tenía). El aviso "única vez" de acá
+  (`installBonusDirectNotice`, compacto desde #211) NO repetía la regla, así que ese fix del gemelo no aplicaba.
+- **NO aplica acá (sin casino embebido, PLATFORM_MODE manual: PÁGINA CASINO AQUÍ abre `GANAMOS_PLAY_URL` en pestaña, #221):**
+  #202 items 1–3 (agarradera `#casinoDrawerGrip` del widget, globos del chat del widget, "Volver al MENÚ PRINCIPAL") y lo
+  de #205 sobre el casino (selector solo casino / casino + chat `openCasinoChooser`, ✕ sobre el iframe). De #205 sólo se tomó
+  "Menú cerrado deja PÁGINA CASINO AQUÍ". **#201 (landing → inicio) NO se tocó:** acá la landing tiene su propio flujo (#242,
+  cuenta por crear por un agente); de #201 sólo se aplicó que el modo Reembolsos muestre `.dash-play`.
+- **Validado:** `node --check` en app.js, ui.js, activity.js y el SW; index.html con los divs balanceados (337/337; +1 porque la
+  barra pasó de `<button>` a `<div>`); sin restos de `collapsed`/`hpt-label`/`hpt-grip`. SW **v138**. No se tocó server.js.
+- **Probar tras el deploy (Android y iPhone con la app instalada):** entrar por primera vez → arriba del chat: casino (+
+  ruleta/banner), la barra de 3 botones con "🎁 Reembolsos" encendido, el reembolso semanal y RETIRAR; tocar "Menú completo"
+  → aparecen USUARIO, bono por instalar y promos; "Menú cerrado" → sólo PÁGINA CASINO AQUÍ arriba de la barra; recargar →
+  vuelve al último elegido (borrar `homePanelMode` del localStorage vuelve a Reembolsos). Abrir Depositar / Configuración /
+  Retirar → aparece la ✕ arriba a la derecha y cierran tocando afuera; Información del Servicio → se ve fondo arriba y
+  abajo; el modal de cambio de contraseña obligatorio NO cierra ni con ✕ ni afuera; cartel del bono a 393px → 3 filas.
 
 ### 243. 📣 Píxeles de Meta por publicista desde el PANEL + 🔗 Webhooks salientes a publicistas (réplica de CARGASGIROX #214–#216 y #197)
 - **Owner:** "replicá todo lo de los webhooks url para cargar a un publicista que uso en CARGASGIROX, ya sea para publicista por Meta que se
