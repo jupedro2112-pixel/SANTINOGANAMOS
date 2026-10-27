@@ -85,6 +85,10 @@
   `onerror` que los borraba; un src vacío dispara error al instante y, si el navegador lo procesaba antes del script, la imagen se
   eliminaba antes de recibir la URL real (de a ratos sí, de a ratos no; los juegos no fallaban porque se crean desde el script). Ahora el
   HTML no lleva src ni onerror y `setImg()` asigna la URL y recién ahí el manejador de error. No poner `src=""` en imágenes de la landing.
+- **Banners lentos (misma noche):** las imágenes se pedían a `API_BASE` (la app en Elastic Beanstalk): otra conexión TLS a otro dominio y un
+  servidor sin CDN ⇒ varios segundos (más por Tor). Ahora viven en **`landing/img/`** (copias de `public/images` y `public/icons`: 3 banners,
+  logo, soporte y 10 juegos, ~500 KB) con rutas absolutas `/img/...` (Vercel sirve los archivos antes que el rewrite), preload del primer
+  banner, preconnect al backend y caché de 7 días para `/img/*` en `landing/vercel.json`. Si cambia un banner de la app, copiarlo también acá.
 - Numeración: el commit `86e5699` dice "#244" porque otra sesión tomó ese número a la vez (PWA, `3965a14`); la entrada correcta es esta, #245.
 
 ### 244. 📱 PWA: menú del inicio con 3 modos (arranca en "Reembolsos" y recuerda el último) + todos los pop-ups cerrables (réplica de CARGASGIROX #199–#205)

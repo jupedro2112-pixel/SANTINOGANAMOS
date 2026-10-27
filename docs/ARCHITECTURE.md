@@ -1073,6 +1073,8 @@ depositor, comunidad. Seeds: `/sys_landing_cuenta_pendiente`, `/sys_ganamos_cuen
 
 **Bono de la landing (#245):** `GET /api/landing/config` (público, CORS reflejado) devuelve `{ bonus: { big, sub, extra } }` desde
 las 3 líneas del comando `/sys_landing_bonus`; vacío ⇒ la landing oculta la card. Tiene que ser la oferta real.
+Las imágenes de la landing (banners, logo, soporte, juegos) son COPIAS en `landing/img/` servidas por Vercel (no se piden a la
+app: era lento); al cambiar una imagen en `public/images` o `public/icons`, copiarla también ahí.
 
 ### 4.10.1 Píxeles de Meta por publicista (panel) + píxel del navegador de la landing (#243, 2026-10-27, réplica de CARGASGIROX #214–#216/#198)
 

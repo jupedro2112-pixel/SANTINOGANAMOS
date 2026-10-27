@@ -6,6 +6,8 @@
 <title>GANAMOS — Creá tu usuario y jugá</title>
 <meta name="description" content="Creá tu usuario de GANAMOS en segundos. Cargás por transferencia, jugás a los mejores slots y retirás rápido. Soporte 24/7.">
 <meta name="theme-color" content="#0d0d1a">
+<link rel="preload" as="image" href="/img/banner-inicio-ganamos.jpg">
+<link rel="preconnect" href="https://www.cargasganamos.com" crossorigin>
 <!--
   LANDING PUENTE de conversión de GANAMOS (archivo suelto — NO va en public/).
   Se sube al dominio puente (Vercel / Cloudflare Pages / dominio final). Sólo este
@@ -43,7 +45,7 @@
   .brand .name { font-size:24px; font-weight:900; letter-spacing:1px; color:#f5d76e; }
   /* Banners de GANAMOS (rotan solos, mismas imágenes que la app) */
   .hero { position:relative; border-radius:14px; overflow:hidden; aspect-ratio:800/213; background:#16162a; margin-bottom:14px; border:1px solid rgba(212,175,55,0.25); }
-  .hero img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity .6s ease; }
+  .hero img { position:absolute; inset:0; width:100%; height:100%; object-fit:contain; opacity:0; transition:opacity .6s ease; color:transparent; font-size:0; }
   .hero img.on { opacity:1; }
   .hero .dots { position:absolute; bottom:6px; left:0; right:0; display:flex; justify-content:center; gap:5px; }
   .hero .dots i { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.4); }
@@ -232,10 +234,13 @@ function setImg(id, url, onFail) {
   el.onerror = onFail;
   el.src = url;
 }
-setImg('logoImg', API_BASE + '/icons/icon-192x192.png', function () { this.style.display = 'none'; });
-setImg('soporteImg', API_BASE + '/images/soporte-ganamos.png', function () { this.style.display = 'none'; });
-var HERO = ['/images/banner-inicio-ganamos.jpg', '/images/banner-jackpots-ganamos.jpg', '/images/banner-futbol-ganamos.jpg'];
-HERO.forEach(function (p, i) { setImg('hero' + i, API_BASE + p, function () { this.remove(); heroShow(0); }); });
+// Las imágenes viven en landing/img (copias de public/images y public/icons): Vercel las sirve desde su CDN y
+// en el MISMO dominio. Antes se pedían a API_BASE (la app en Elastic Beanstalk): otra conexión TLS + servidor sin
+// CDN ⇒ los banners tardaban varios segundos (mucho más por Tor). Si se cambia un banner de la app, copiarlo acá.
+setImg('logoImg', '/img/logo.png', function () { this.style.display = 'none'; });
+setImg('soporteImg', '/img/soporte-ganamos.png', function () { this.style.display = 'none'; });
+var HERO = ['/img/banner-inicio-ganamos.jpg', '/img/banner-jackpots-ganamos.jpg', '/img/banner-futbol-ganamos.jpg'];
+HERO.forEach(function (p, i) { setImg('hero' + i, p, function () { this.remove(); heroShow(0); }); });
 var heroIdx = 0;
 function heroShow(i) {
   var imgs = document.querySelectorAll('#hero img');
@@ -249,7 +254,7 @@ heroShow(0);
 setInterval(function () { heroShow(heroIdx + 1); }, 4000);
 var GAMES = ['sweet-bonanza-2500', 'gates-of-olympus-1000', 'sugar-rush-1000', 'starlight-princess-1000', 'big-bass-bonanza', 'buffalo-king-untamed', 'jokers-jewels-hold-spin', 'zeus-rush-fever', 'mines', 'jokers-jewels'];
 document.getElementById('gamesRow').innerHTML = GAMES.map(function (g) {
-  return '<img src="' + API_BASE + '/images/games/' + g + '.jpg" alt="' + g.replace(/-/g, ' ') + '" loading="lazy" onerror="this.remove()">';
+  return '<img src="/img/games/' + g + '.jpg" alt="' + g.replace(/-/g, ' ') + '" loading="lazy" onerror="this.remove()">';
 }).join('');
 
 function campaignCode() {
