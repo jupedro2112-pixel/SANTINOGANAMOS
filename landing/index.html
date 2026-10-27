@@ -100,7 +100,9 @@
     padding:12px; text-align:center; margin-top:10px;
   }
   .creds .dato .k { font-size:12px; color:#888; }
-  .creds .dato .v { font-size:24px; font-weight:900; color:#f5d76e; letter-spacing:1px; font-family:monospace; }
+  .creds .dato .v { font-size:24px; font-weight:900; color:#f5d76e; letter-spacing:1px; font-family:monospace; word-break:break-all; }
+  .creds .dato .v.site { font-size:16px; letter-spacing:0; }
+  .creds .dato .v.site a { color:#00e676; text-decoration:underline; }
   .warn { color:#ffb74d; font-size:13px; text-align:center; margin-top:10px; }
   /* Popup de enganche */
   #hookPop {
@@ -139,7 +141,8 @@
     <h2 style="text-align:center;color:#00e676;font-size:19px;" id="credsTitle">✅ ¡Tu usuario está listo!</h2>
     <div class="dato"><div class="k">TU USUARIO</div><div class="v" id="credUser"></div></div>
     <div class="dato"><div class="k">TU CLAVE</div><div class="v" id="credPass"></div></div>
-    <p class="warn">📌 Sacale captura o anotalos: con esto entrás desde cualquier dispositivo.</p>
+    <div class="dato" id="credSiteBox" style="display:none;"><div class="k">PÁGINA PARA CARGAR Y JUGAR</div><div class="v site"><a id="credSite" href="#" target="_blank" rel="noopener"></a></div></div>
+    <p class="warn">📌 Sacale captura o anotalos: con tu usuario, tu clave y esa página entrás desde cualquier dispositivo.</p>
     <button class="btn" id="enterBtn" onclick="entrar()">🎰 ENTRAR A MI CUENTA</button>
   </div>
 
@@ -290,6 +293,13 @@ async function crearCuenta() {
     accessUrl = data.accessUrl;
     document.getElementById('credUser').textContent = data.username;
     document.getElementById('credPass').textContent = data.password;
+    // Link de la página de cargas (PUBLIC_BASE_URL del backend): va en la captura.
+    var site = data.siteUrl || API_BASE;
+    if (site) {
+      var a = document.getElementById('credSite');
+      a.href = site; a.textContent = site.replace(/^https?:\/\//, '');
+      document.getElementById('credSiteBox').style.display = 'block';
+    }
     // #242 modo manual: un agente lo crea en GANAMOS a mano, pero el cliente NO se entera
     // (decisión del owner): misma pantalla "tu usuario está listo"; el access-link lo deja en el chat.
     document.getElementById('formCard').style.display = 'none';

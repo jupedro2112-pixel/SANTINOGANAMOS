@@ -101,6 +101,12 @@
   `platformAccount.status:'rejected'`. Roles: `_canSettlePlatformTask(role,'signup')` → admin, depositor (cargas) y comunidad (como las
   cargas). Tabla Usuarios: badge "👤 POR CREAR EN GANAMOS" (`platformAccount.status` sumado a `USERS_LIST_FIELDS`). Socket
   `platform_task` con `kind:'signup'` o `event:'renamed'` refresca el cartel del chat abierto.
+- **Usuario y clave (pedido del owner, misma tarde, ya probado en producción):** en modo manual **usuario = PREFIJO + nombre + 3
+  dígitos** (`_deriveLandingUsernameManual`: nombre saneado sin acentos/espacios, hasta 12 intentos con 3 dígitos y 6 más con 4,
+  único contra la base local CI, máx. 30) y **clave = nombre + 3 dígitos**. El prefijo se edita en COMANDOS → `/sys_landing_prefix`
+  (`getLandingPrefix()`, sólo letras/números/_, máx. 10, vacío = sin prefijo, cache 30 s). La respuesta suma `siteUrl`
+  (`getPublicBaseUrl()`) y la landing lo muestra en la tarjeta de credenciales como "PÁGINA PARA CARGAR Y JUGAR" (va en la captura).
+  Los otros modos siguen con base + sufijo largo y PIN de 6 dígitos. El rename del panel acepta hasta 30 caracteres (regla GANAMOS).
 - **Landing (`landing/index.html`):** título y textos GANAMOS (sin ninguna pista de la creación manual), logo (`/icons/icon-192x192.png`), 3 banners rotando
   (`/images/banner-inicio|jackpots|futbol-ganamos.jpg`), tira de 10 juegos (`/images/games/*.jpg`), avatar de soporte: todo se carga
   desde `API_BASE` (`https://www.cargasganamos.com`, pisable con `?api=`), así no hay que copiar imágenes al dominio puente. Sellos

@@ -4306,14 +4306,40 @@ app.post('/api/auth/register-quick', authLimiter, registerIpLimiter, async (req,
 // Base de username a partir del nombre real: sin acentos (NFD), minúsculas,
 // solo [a-z0-9], máx 12 chars (deja lugar al sufijo numérico), prefijo "gx" si
 // queda demasiado corto.
-function _sanitizeUsernameBase(name) {
+function _sanitizeUsernameBase(name, { pad = true } = {}) {
   let base = String(name || '')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '') // saca acentos/diacríticos
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '')
     .slice(0, 12);
-  if (base.length < 3) base = ('gx' + base).slice(0, 12);
+  if (pad && base.length < 3) base = ('gx' + base).slice(0, 12); // #242 modo manual: sin relleno (los 3 dígitos ya dan el largo)
   return base;
+}
+
+// #242 Prefijo del usuario de la landing (modo manual): comando `/sys_landing_prefix` (COMANDOS),
+// vacío = sin prefijo. Sólo letras, números y _ (se sanea), máximo 10. Cache 30 s.
+let _landingPrefixCache = { v: null, at: 0 };
+async function getLandingPrefix() {
+  if (_landingPrefixCache.v != null && Date.now() - _landingPrefixCache.at < 30000) return _landingPrefixCache.v;
+  let v = '';
+  try {
+    const cmd = await Command.findOne({ name: '/sys_landing_prefix', isActive: true }).lean();
+    v = String((cmd && cmd.response) || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^A-Za-z0-9_]/g, '').slice(0, 10);
+  } catch (_) {}
+  _landingPrefixCache = { v, at: Date.now() };
+  return v;
+}
+// #242 Modo manual: usuario = PREFIJO + nombre + 3 dígitos al azar (hasta 12 intentos; si el nombre
+// está muy repetido, 6 intentos más con 4 dígitos), único contra la base local (case-insensitive).
+async function _deriveLandingUsernameManual(base, prefix) {
+  for (let attempt = 0; attempt < 18; attempt++) {
+    const digits = attempt < 12 ? crypto.randomInt(100, 1000) : crypto.randomInt(1000, 10000);
+    const candidate = `${prefix}${base}${digits}`.slice(0, 30);
+    if (!girox.validateUsername(candidate).valid) continue;
+    const collision = await findUserByUsernameCI(candidate, { lean: true });
+    if (!collision) return candidate;
+  }
+  return null;
 }
 
 // Deriva un username ÚNICO: hasta 12 intentos de base + sufijo aleatorio,
@@ -4357,15 +4383,17 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
       return res.status(400).json({ error: 'Código de campaña inválido o inactivo.' });
     }
 
-    const base = _sanitizeUsernameBase(cleanName);
-    const username = await _deriveUniqueUsername(base);
+    const base = _sanitizeUsernameBase(cleanName, { pad: !_landingManual });
+    // #242 modo manual: usuario = prefijo (/sys_landing_prefix) + nombre + 3 dígitos; clave = nombre + 3 dígitos.
+    // Otros modos: base + sufijo aleatorio (reglas 1girox) y PIN de 6 dígitos.
+    const username = _landingManual ? await _deriveLandingUsernameManual(base, await getLandingPrefix()) : await _deriveUniqueUsername(base);
     if (!username) {
       return res.status(500).json({ error: 'No pudimos generar tu usuario. Probá de nuevo.' });
     }
 
     // PIN de 6 dígitos: cumple el mínimo ≥6 de 1girox y se DEVUELVE en la
     // respuesta para mostrárselo al cliente.
-    const password = String(crypto.randomInt(100000, 1000000));
+    const password = _landingManual ? `${base}${crypto.randomInt(100, 1000)}` : String(crypto.randomInt(100000, 1000000));
 
     // 1girox PRIMERO (si falla, NO queda cuenta local huérfana). Si la campaña
     // tiene key propia, el jugador nace bajo SU sub-agente (y sus operaciones se
@@ -4485,7 +4513,7 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
     const accessUrl = (await issueAccessLinkFor(newUser.id)) + (_landingManual ? '' : '&ir=casino');
 
     logger.info(`[landing-signup] ${username} creado (campaña ${normalizedCode}${ownerCampaign ? ', key publicista' : ''}${_landingManual ? ', PENDIENTE de crear en GANAMOS' : ''})`);
-    res.status(201).json({ success: true, accessUrl, username, password, pendingAgent: _landingManual });
+    res.status(201).json({ success: true, accessUrl, username, password, pendingAgent: _landingManual, siteUrl: getPublicBaseUrl() });
   } catch (error) {
     // Stack a stdout: el winston va solo a archivo y los 500 eran invisibles en EB.
     console.error('[landing-signup] error:', error && error.stack ? error.stack : error);
@@ -11302,6 +11330,13 @@ async function initializeData() {
       response: '🧾 ¡Recibimos tu comprobante de ${amount}! ✅ Lo estamos verificando: en 1 minuto vas a tener tu carga. 🙌'
     },
     {
+      // #242 NO es un mensaje: prefijo del usuario que se arma en la landing (modo manual).
+      name: '/sys_landing_prefix',
+      description: 'ALTA POR LANDING — PREFIJO DEL USUARIO (no es un mensaje). Escribí SOLO el prefijo que va adelante del usuario que se arma en la landing: usuario = PREFIJO + nombre + 3 números (ej. prefijo "gan" y nombre Pedro → ganpedro482). Sólo letras, números y _ (máx. 10). Vacío = sin prefijo. La clave es el nombre + 3 números. Tarda hasta 30 s en aplicarse.',
+      type: 'info',
+      response: ''
+    },
+    {
       // #242 alta por LANDING en modo manual: bienvenida con usuario y clave mientras el agente lo crea en GANAMOS.
       name: '/sys_landing_cuenta_pendiente',
       description: 'ALTA POR LANDING (GANAMOS sin API): primer mensaje al cliente que se registró desde la landing. ⚠️ El cliente NO tiene que enterarse de que un agente le crea el usuario a mano (decisión del owner): no escribir "te lo estamos creando" ni "un agente". Variables: {name} (nombre que escribió), {username}, {password} (la clave que vio en la landing). Si lo dejás vacío, no se envía.',
@@ -15410,7 +15445,7 @@ app.post('/api/admin/users/:userId/rename', authMiddleware, adminMiddleware, asy
     if (!(user.platformAccount && user.platformAccount.status === 'pending_agent')) {
       return res.status(400).json({ error: 'Sólo se puede cambiar el usuario mientras la cuenta está POR CREAR en GANAMOS (alta por landing).' });
     }
-    if (!/^[a-zA-Z0-9_]{3,18}$/.test(wanted)) return res.status(400).json({ error: 'Usuario inválido: 3 a 18 caracteres, sólo letras, números y guión bajo.' });
+    if (!/^[a-zA-Z0-9_]{3,30}$/.test(wanted)) return res.status(400).json({ error: 'Usuario inválido: 3 a 30 caracteres, sólo letras, números y guión bajo.' });
     const check = girox.validateUsername(wanted);
     if (!check.valid) return res.status(400).json({ error: `Usuario inválido para la plataforma: ${check.reason}` });
     const old = user.username;

@@ -1049,7 +1049,10 @@ antes del `app.use(cors(...))` en server.js. Conversión: CompleteRegistration
 a Meta CAPI (`signup_landing`) + webhook fb-ads.
 
 **Modo manual (#242, 2026-10-27):** con `features.landingSignup` ON (si no, 410) el
-alta NO toca ninguna plataforma: `syncStatus:'pending'`, `platformAccount:{status:
+alta NO toca ninguna plataforma. Usuario = prefijo `/sys_landing_prefix` (COMANDOS,
+`getLandingPrefix`) + nombre saneado + 3 dígitos (`_deriveLandingUsernameManual`, único
+en la base local, máx. 30); clave = nombre + 3 dígitos; la respuesta trae `siteUrl`
+(`PUBLIC_BASE_URL`) que la landing muestra en la tarjeta. Además: `syncStatus:'pending'`, `platformAccount:{status:
 'pending_agent', pin, name, requestedAt, taskId}`, tarea `signup` para el agente
 (`requestAccountCreation`), `ChatStatus` abierto, bienvenida
 `/sys_landing_cuenta_pendiente` y respuesta `{ accessUrl (sin ir=casino), username,

@@ -15625,7 +15625,7 @@ function platformTaskDoneTwice(id, btn) {
 // #242 Cambiar el usuario (GANAMOS dijo que el nombre ya existe). Sólo mientras la cuenta está por crear.
 async function platformAccountRename(userId, currentName) {
     if (!userId) { showToast('No se encontró la cuenta de este cliente', 'error'); return; }
-    const wanted = prompt(`Usuario NUEVO para ${currentName} (3 a 18 caracteres: letras, números y _). El cliente recibe el aviso con el usuario nuevo; la clave no cambia:`, currentName);
+    const wanted = prompt(`Usuario NUEVO para ${currentName} (3 a 30 caracteres: letras, números y _). El cliente recibe el aviso con el usuario nuevo; la clave no cambia:`, currentName);
     if (wanted == null) return;
     const u = wanted.trim();
     if (!u) { showToast('Escribí el usuario nuevo', 'error'); return; }
