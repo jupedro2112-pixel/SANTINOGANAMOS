@@ -1057,7 +1057,10 @@ password, pendingAgent:true }`. La landing (`landing/index.html`, marca GANAMOS;
 logo/banners/juegos los toma de `API_BASE` = la app) muestra "tu usuario está listo"
 como siempre: **el cliente nunca se entera de que un agente lo crea a mano** (decisión
 del owner): ningún texto al cliente (bienvenida, `/sys_ganamos_cuenta_creada`,
-`/sys_username_changed`, toast de CASINO) menciona agente/creación. Endpoints del panel: `GET /api/admin/users/:id/platform-account`
+`/sys_username_changed`, toast de CASINO) menciona agente/creación. Deploy de la landing en Vercel:
+importar el repo con Root Directory `landing` (ahí vive `landing/vercel.json`, estático con
+`/:code` → `index.html`); el `vercel.json` de la raíz se borró el 2026-10-27 (era inválido y
+rompía el import). Endpoints del panel: `GET /api/admin/users/:id/platform-account`
 (estado + PIN sólo si pendiente + tarea + `canSettle`) y `POST …/rename {username}`.
 Roles que resuelven la tarea: `_canSettlePlatformTask(role,'signup')` = admin,
 depositor, comunidad. Seeds: `/sys_landing_cuenta_pendiente`, `/sys_ganamos_cuenta_creada`,

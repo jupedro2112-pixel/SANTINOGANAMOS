@@ -9,8 +9,8 @@
 <!--
   LANDING PUENTE de conversión de GANAMOS (archivo suelto — NO va en public/).
   Se sube al dominio puente (Vercel / Cloudflare Pages / dominio final). Sólo este
-  archivo: NO importar el repo entero en Vercel (el vercel.json de la raíz es un
-  resto viejo que rutea todo a server.js).
+  archivo. En Vercel: importar el repo con Root Directory = `landing` (el
+  `vercel.json` de esta carpeta deja `/CODIGO` → index.html para la campaña).
 
   #242 MODO MANUAL (GANAMOS sin API): el backend crea la cuenta LOCAL (usuario + clave
   que se le muestran acá) y un agente crea ese mismo usuario en GANAMOS a mano. El

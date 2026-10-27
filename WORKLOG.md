@@ -105,7 +105,10 @@
   (`/images/banner-inicio|jackpots|futbol-ganamos.jpg`), tira de 10 juegos (`/images/games/*.jpg`), avatar de soporte: todo se carga
   desde `API_BASE` (`https://www.cargasganamos.com`, pisable con `?api=`), así no hay que copiar imágenes al dominio puente. Sellos
   "Cargás por transferencia / Retiros rápidos / Soporte 24/7"; sin bono en %, sin rollover/VIP/reembolsos. Responde a `pendingAgent:true`
-  sólo para no cambiar nada visible (misma pantalla de "usuario listo"). Vercel: subir SOLO este archivo (el `vercel.json` de la raíz es un resto viejo).
+  sólo para no cambiar nada visible (misma pantalla de "usuario listo"). **Vercel (2026-10-27):** el `vercel.json` de la RAÍZ (resto
+  de 2025, JSON inválido con coma final, ruteaba todo a server.js) se BORRÓ: hacía fallar el import con "Invalid vercel.json file
+  provided" aunque el Root Directory fuera `landing`. Ahora hay `landing/vercel.json` (estático, `cleanUrls`, `/CODIGO` → index.html
+  para que la campaña salga del path, sin caché). Import en Vercel: repo + Root Directory `landing` + preset Other. Vercel: subir SOLO este archivo (el `vercel.json` de la raíz es un resto viejo).
 - **Decisiones / trampas:** el PIN queda en claro en `User.platformAccount.pin` y en `PlatformTask.meta.pin` SÓLO mientras está
   pendiente (el agente lo necesita para crear la cuenta); al marcar creado se borra del User (en la tarea `done` queda en meta: si se
   quiere, limpiar también ahí). El cambio de usuario sólo está permitido antes de crearlo en GANAMOS (después, el nombre tiene que ser
