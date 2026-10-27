@@ -5,7 +5,8 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-26** — #239: trampa de globales del panel (`window.X` que pisa una función
+> Última actualización: **2026-10-27** — #241: la auto-carga hgcash manda `Purchase` a Meta (§5); #240: alertas de
+> estafa con tope de 15 s para las stats de 1girox (§10.1). Antes: **2026-10-26** — #239: trampa de globales del panel (`window.X` que pisa una función
 > global `X`; test `scripts/test-admin-panel-login.js`; §9). Antes: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
 > clientes en TANDAS con plazo propio (`WeeklyRefund.availableAt`, `RefundBatch.partsPlan`,
 > `release-next`, #230; §0.1, §7, §9). Antes: **2026-10-11** — banco: Depositar/Asignar toman también un movimiento en
@@ -1134,7 +1135,12 @@ a Meta CAPI (`signup_landing`) + webhook fb-ads.
   Transaction + mensaje + SLA. Fallo → se BORRA el HgcashCharge y es reintentable hasta
   3 veces (la reference estable impide que el reintento duplique la carga).
   **Fan-out** (#94): reenvía el webhook crudo+firma a autoreembolsos.com
-  (`HGCASH_FANOUT_URL`, 'off' para apagar).
+  (`HGCASH_FANOUT_URL`, 'off' para apagar). **Meta (#241):** el camino de éxito de
+  `hgcashAutoCarga` (auto y asignada) manda `Purchase` (`content_name 'deposit_hgcash'`, IP y
+  navegador del REGISTRO del jugador vía `userInfo.clientIp/clientUserAgent` de
+  `metaCapiService.buildUserData`, `eventSourceUrl` = su landing) + `fbAdsWebhook.notify`, igual
+  que la carga manual; fire-and-forget, nunca frena la acreditación. Se manda en CADA carga (no
+  hay filtro FTD acá).
   **BANDEJA DEL BANCO (#183, réplica del #155 del gemelo):** manda el MOVIMIENTO, no
   la foto. Todo entrante `done` termina en un estado: cargado auto (foto matcheó) ·
   **asignado** por un agente desde panel→🏦 Banco (`POST /api/admin/bank/movements/:id/
@@ -1739,7 +1745,9 @@ El backfill de `usernameLower` corre en CADA arranque (idempotente) y setea
   `/api/admin/fraud/alerts|case/:id|review/:id`, gate `_fraudGate` (flag `fraudRadar` + admin general). Campos de
   `User`: `fraudFlags`, `fraudNotes`, `fraudReview{status legit|watch|null,by,at,note}`, `lastDevice`, `deviceIds`.
   Un cliente `legit` no vuelve a aparecer. Usa `PendingPayout`, `BankMovement`, `Transaction` y `girox.getPlayersStatsBatch`
-  del adaptador activo (manual/mijoker ⇒ sin stats, las reglas de juego no suman).
+  del adaptador activo (manual/mijoker ⇒ sin stats, las reglas de juego no suman). **#240:** la ruta pide las stats con
+  `retryable:false` y un tope de 15 s (`Promise.race`); si 1girox no llega, el escaneo sigue sin las reglas de juego y
+  responde `playStats {ok, note}` (el panel avisa en amarillo). Antes nginx cortaba a los 60 s con un 504 en HTML.
 - **Datos IA:** `src/services/datosIaService.js` (`analyze`, `compare`, `project`, `review`, `dailyRetained`,
   `dayTotals`, `dateKeyART`; cache 5 min por proceso), modelos `AppSession` (TTL 180 d) y `DatosIaSnapshot` (TTL 2 años).
   `app.use('/api/admin/datos-ia')` = flag `datosIa` → admin general → clave (`Config['datosIaPinHash']`, header

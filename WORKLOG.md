@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-26** (última entrada: #239)
+> **Última actualización: 2026-10-27** (última entrada: #241)
 
 ---
 
@@ -70,9 +70,9 @@
 
 ---
 
-## Sesión 2026-10-26
+## Sesión 2026-10-27
 
-### 240. 📣 Meta: la CARGA AUTOMÁTICA del banco ahora manda el `Purchase` (antes el píxel recibía el registro pero no la venta)
+### 241. 📣 Meta: la CARGA AUTOMÁTICA del banco ahora manda el `Purchase` (antes el píxel recibía el registro pero no la venta)
 - **Qué pasaba:** `hgcashAutoCarga` (transferís y se acredita sola, y la carga asignada desde la bandeja) no llamaba a `metaCapi.track('Purchase')` ni al aviso de fb-ads:
   sólo lo hacían la carga manual del agente y la autogestionada. Como casi todas las cargas entran por el banco, Meta (píxel propio y
   píxeles de publicistas) veía registros y casi ninguna compra. PAUTANUEVAsantino lo había arreglado el 2026-08-24; acá nunca se pasó.
@@ -84,7 +84,9 @@
 - **Ojo (Meta):** si un píxel tiene cargado un "código de prueba" (`META_TEST_EVENT_CODE_n` o el campo del panel), TODOS sus eventos salen como
   prueba y no cuentan como conversiones: dejarlo vacío fuera de las pruebas.
 
-### 239. FIX Alertas de estafa: "No se pudo cargar: JSON.parse: unexpected character" (504 de nginx por las stats de 1girox)
+## Sesión 2026-10-26
+
+### 240. FIX Alertas de estafa: "No se pudo cargar: JSON.parse: unexpected character" (504 de nginx por las stats de 1girox)
 - **Qué pasaba (primera prueba en producción, 2026-10-26):** `GET /api/admin/fraud/alerts` pedía las estadísticas de juego a 1girox
   (`getPlayersStatsBatch`, 56 jugadores, 30 días) y la Partner API no respondía: timeout de 20 s + reintentos 2/5/15 s ≈ 100 s.
   nginx corta a los 60 s y devuelve un 504 en HTML ⇒ el panel intentaba parsear JSON y mostraba ese error. El radar en sí andaba.

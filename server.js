@@ -2774,7 +2774,7 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
       : assign
       ? `🏦 ✅ CARGA ASIGNADA desde la bandeja del banco por ${agentLabel} — ${dataDesc}. Acreditado.${_hgBonusNote}`
       : `🏦 ✅ CARGA AUTOMÁTICA hgcash — ${dataDesc}. Acreditado.${_hgBonusNote}`);
-    // #240 (réplica del fix del 2026-08-24 de PAUTANUEVAsantino): la AUTO-CARGA no disparaba el Purchase a Meta ⇒ el píxel propio y los de los
+    // #241 (réplica del fix del 2026-08-24 de PAUTANUEVAsantino): la AUTO-CARGA no disparaba el Purchase a Meta ⇒ el píxel propio y los de los
     // publicistas recibían el registro pero NO la venta (acá casi todas las cargas entran por el banco). Mismo evento que la carga manual, con la
     // IP/navegador del registro del jugador (mejor matcheo) y la URL de la landing. Fire-and-forget: nunca frena la carga.
     try {
@@ -16306,7 +16306,7 @@ app.get('/api/admin/fraud/alerts', authMiddleware, adminMiddleware, _fraudGate, 
     if (_fraudCache.data && _fraudCache.days === days && Date.now() - _fraudCache.at < (req.query.fresh ? 60 * 1000 : 5 * 60 * 1000)) return res.json(Object.assign({ cached: true }, _fraudCache.data));
     // Cuánto apostó / ganó cada uno (stats batch de la plataforma activa; sólo para quienes retiran, máx. 100). netwin positivo = perdió.
     // En GANAMOS manual / mijoker el adaptador responde success:false ⇒ mapa vacío y las reglas de juego quedan sin datos (no fallan).
-    // #239: las stats de juego de 1girox tardaban (20 s × 4 intentos ≈ 100 s) ⇒ nginx cortaba a los 60 s con un 504 en HTML y el panel
+    // #240: las stats de juego de 1girox tardaban (20 s × 4 intentos ≈ 100 s) ⇒ nginx cortaba a los 60 s con un 504 en HTML y el panel
     // mostraba "JSON.parse: unexpected character". Ahora: UNA pasada sin reintentos y tope total de 15 s; si no llega, el radar corre
     // igual sin las reglas de juego (el servicio lo soporta) y el panel avisa.
     const playStats = { ok: false, note: null };

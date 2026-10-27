@@ -6328,7 +6328,7 @@ async function loadFraud(fresh) {
     const days = (document.getElementById('frDays') || {}).value || 30;
     try {
         const r = await authFetch('/api/admin/fraud/alerts?days=' + days + (fresh ? '&fresh=1' : ''));
-        let j; try { j = await r.json(); } catch (_) { throw new Error(r.status === 504 || r.status === 502 ? 'el servidor tardó demasiado (' + r.status + '). Probá de nuevo en un minuto.' : 'respuesta inválida (' + r.status + ')'); } // #239
+        let j; try { j = await r.json(); } catch (_) { throw new Error(r.status === 504 || r.status === 502 ? 'el servidor tardó demasiado (' + r.status + '). Probá de nuevo en un minuto.' : 'respuesta inválida (' + r.status + ')'); } // #240
         if (!r.ok) throw new Error(j.error || 'error');
         _frData = j; renderFraud();
     } catch (e) { box.innerHTML = '<span style="color:#f87171">No se pudo cargar: ' + escapeHtml(e.message) + '</span>'; }

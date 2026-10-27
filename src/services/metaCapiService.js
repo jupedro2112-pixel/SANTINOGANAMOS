@@ -115,7 +115,7 @@ function buildUserData(userInfo = {}, requestCtx = {}) {
   const dobHash = sha256(userInfo.dateOfBirth);
   if (dobHash) user_data.db = [dobHash];
 
-  // #240: sin request (auto-carga del banco, crons) se usa la IP/navegador del JUGADOR persistidos en su registro (userInfo.clientIp / clientUserAgent).
+  // #241: sin request (auto-carga del banco, crons) se usa la IP/navegador del JUGADOR persistidos en su registro (userInfo.clientIp / clientUserAgent).
   const clientIp = requestCtx.ip || userInfo.clientIp;
   const clientUa = requestCtx.userAgent || userInfo.clientUserAgent;
   if (clientIp) user_data.client_ip_address = clientIp;

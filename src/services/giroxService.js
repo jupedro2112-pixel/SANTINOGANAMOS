@@ -1487,7 +1487,7 @@ async function getPlayerStats(username, fromDate, toDate, label = 'stats', opts 
  * @param {string[]} usernames  1 a 100
  * @returns {{success, players:{[username]: stats}, notFound:string[]}} | {success:false,...}
  */
-async function getPlayersStatsBatch(usernames, fromDate, toDate, label = 'stats-batch', opts = {}) { // #239: opts.retryable=false ⇒ sin reintentos (una sola pasada de 20 s)
+async function getPlayersStatsBatch(usernames, fromDate, toDate, label = 'stats-batch', opts = {}) { // #240: opts.retryable=false ⇒ sin reintentos (una sola pasada de 20 s)
   const list = (Array.isArray(usernames) ? usernames : []).map((u) => String(u).trim()).filter(Boolean);
   if (list.length === 0) return { success: true, players: {}, notFound: [] };
   if (list.length > 100) {
