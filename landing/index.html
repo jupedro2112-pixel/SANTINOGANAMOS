@@ -297,7 +297,10 @@ async function crearCuenta() {
     document.getElementById('gamesStrip').style.display = 'none';
     window.scrollTo(0, 0);
   } catch (e) {
-    errEl.textContent = 'Error de conexión. Revisá tu internet y probá de nuevo.';
+    // "Error de conexión" = el fetch ni llegó a responder (CORS bloqueado, Cloudflare/desafío,
+    // Tor, dominio caído). Con ?debug=1 se muestra el detalle técnico para diagnosticar.
+    try { console.error('[landing] signup fetch failed', API_BASE, e); } catch (_) {}
+    errEl.textContent = 'Error de conexión. Revisá tu internet y probá de nuevo.' + (qs.get('debug') ? ' [' + API_BASE + ' · ' + (e && e.message) + ']' : '');
     errEl.style.display = 'block';
     btn.disabled = false;
     btn.textContent = BTN_TXT;
