@@ -996,7 +996,7 @@ app.use(securityHeaders);
 // SIN Allow-Credentials), protegido por código de campaña + límite por IP.
 // Se refleja el Origin (no '*') y se corta el preflight acá mismo.
 // #243: /api/meta-pixel-id también es público para la landing (qué píxel cargar en el navegador).
-const LANDING_OPEN_CORS_PATHS = new Set(['/api/landing/signup', '/api/meta-pixel-id']);
+const LANDING_OPEN_CORS_PATHS = new Set(['/api/landing/signup', '/api/meta-pixel-id', '/api/landing/config']);
 app.use((req, res, next) => {
   if (LANDING_OPEN_CORS_PATHS.has(req.path)) {
     const origin = req.headers.origin;
@@ -11452,6 +11452,13 @@ async function initializeData() {
       response: '🧾 ¡Recibimos tu comprobante de ${amount}! ✅ Lo estamos verificando: en 1 minuto vas a tener tu carga. 🙌'
     },
     {
+      // #244 NO es un mensaje: textos del bono que muestra la landing externa.
+      name: '/sys_landing_bonus',
+      description: 'LANDING — BONO QUE MUESTRA (no es un mensaje). Tres líneas: 1) el texto GRANDE (ej. 100%), 2) el de abajo (ej. EN TU PRIMERA CARGA), 3) extra chico opcional (ej. +50% EXTRA instalando la app). Dejalo VACÍO para que la landing no muestre bono. ⚠️ Tiene que ser la oferta REAL que después se cumple: Meta ve lo mismo que el visitante. Tarda hasta 2 min en verse.',
+      type: 'info',
+      response: '100%\nEN TU PRIMERA CARGA\n'
+    },
+    {
       // #242 NO es un mensaje: prefijo del usuario que se arma en la landing (modo manual).
       name: '/sys_landing_prefix',
       description: 'ALTA POR LANDING — PREFIJO DEL USUARIO (no es un mensaje). Escribí SOLO el prefijo que va adelante del usuario que se arma en la landing: usuario = PREFIJO + nombre + 3 números (ej. prefijo "gan" y nombre Pedro → ganpedro482). Sólo letras, números y _ (máx. 10). Vacío = sin prefijo. La clave es el nombre + 3 números. Tarda hasta 30 s en aplicarse.',
@@ -18123,6 +18130,23 @@ app.post('/api/admin/cbu', authMiddleware, adminMiddleware, async (req, res) => 
 // CORS reflejado (LANDING_OPEN_CORS_PATHS). El pixel PROPIO nunca va al navegador de la
 // landing (recibe registro/compra por CAPI); solo van los pixels de publicistas con
 // alcance (SSM `META_PIXEL_PUBLISHER_n` o los cargados en el panel). Sin código → ninguno.
+// #244 Textos del BONO de la landing externa (público, CORS reflejado): salen del comando
+// `/sys_landing_bonus` (COMANDOS; 3 líneas: grande / debajo / extra). Vacío = la landing no
+// muestra bono. Es lo que ve el visitante y lo que ve Meta: tiene que ser la oferta REAL.
+app.get('/api/landing/config', async (req, res) => {
+  try {
+    let lines = [];
+    try {
+      const cmd = await Command.findOne({ name: '/sys_landing_bonus', isActive: true }).lean();
+      lines = String((cmd && cmd.response) || '').split(/\r?\n/).map((l) => l.trim());
+    } catch (_) {}
+    res.set('Cache-Control', 'public, max-age=120');
+    res.json({ bonus: { big: lines[0] || '', sub: lines[1] || '', extra: lines[2] || '' } });
+  } catch (e) {
+    res.json({ bonus: { big: '', sub: '', extra: '' } });
+  }
+});
+
 app.get('/api/meta-pixel-id', async (req, res) => {
   try {
     const raw = String((req.query && req.query.c) || '').trim();

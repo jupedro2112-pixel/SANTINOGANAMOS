@@ -49,12 +49,14 @@
   .hero .dots i { width:6px; height:6px; border-radius:50%; background:rgba(255,255,255,0.4); }
   .hero .dots i.on { background:#f5d76e; }
   .bonus {
-    background:linear-gradient(135deg,#d4af37,#f5d76e);
-    color:#1a1a2e; border-radius:14px; padding:14px 16px; text-align:center;
-    box-shadow:0 6px 24px rgba(212,175,55,0.35); margin-bottom:14px;
+    display:none; background:linear-gradient(180deg,rgba(0,200,83,0.14),rgba(0,200,83,0.05));
+    border:1.5px solid rgba(0,230,118,0.55); border-radius:14px; padding:12px 14px; text-align:center;
+    box-shadow:0 6px 24px rgba(0,200,83,0.18); margin-bottom:12px;
   }
-  .bonus .big { font-size:22px; font-weight:900; letter-spacing:0.5px; }
-  .bonus .sub { font-size:13.5px; font-weight:600; margin-top:3px; }
+  .bonus .lbl { font-size:11.5px; font-weight:800; letter-spacing:2px; color:#00e676; }
+  .bonus .big { font-size:38px; line-height:1.05; font-weight:900; color:#f5d76e; margin-top:2px; }
+  .bonus .sub { font-size:14px; font-weight:800; margin-top:2px; color:#fff; letter-spacing:0.5px; }
+  .bonus .extra { font-size:11.5px; color:#cfe9d6; margin-top:5px; }
   h1 { font-size:21px; text-align:center; margin-bottom:6px; color:#fff; }
   .pitch { text-align:center; color:#cfcfe0; font-size:14.5px; line-height:1.5; margin-bottom:14px; }
   .card {
@@ -128,6 +130,14 @@
   <h1>🎰 Creá tu usuario de GANAMOS</h1>
   <p class="pitch">Decinos tu nombre y te damos <strong>usuario y clave</strong> al toque.</p>
 
+  <!-- Bono: textos de COMANDOS → /sys_landing_bonus (vacío = no se muestra). Oferta REAL (ver nota de cloaking). -->
+  <div class="bonus" id="bonusBox">
+    <div class="lbl">BONO DE BIENVENIDA</div>
+    <div class="big" id="bonusBig"></div>
+    <div class="sub" id="bonusSub"></div>
+    <div class="extra" id="bonusExtra"></div>
+  </div>
+
   <!-- FORM -->
   <div class="card" id="formCard">
     <label for="nameInput">¿Cómo te llamás?</label>
@@ -153,11 +163,6 @@
     <div class="dots" id="heroDots"><i class="on"></i><i></i><i></i></div>
   </div>
 
-  <div class="bonus">
-    <div class="big" id="bonusBig"></div>
-    <div class="sub" id="bonusSub"></div>
-  </div>
-
   <p class="pitch">Cargás por transferencia desde la app y jugás a los mejores slots.</p>
 
   <div class="sellos">
@@ -176,7 +181,7 @@
     <div class="tx"><b>Atención por chat las 24 hs.</b><br>Cargas, retiros y cualquier duda, por la app.</div>
   </div>
 
-  <p class="legal">Juego para mayores de 18 años (+18). Jugá con responsabilidad.<br>Al crear el usuario aceptás los términos y condiciones del servicio.</p>
+  <p class="legal"><span id="bonusLegal" style="display:none;">Bono sujeto a términos: aplica sobre la primera carga. Solo nuevos jugadores.<br></span>Juego para mayores de 18 años (+18). Jugá con responsabilidad.<br>Al crear el usuario aceptás los términos y condiciones del servicio.</p>
 </div>
 
 <!-- Popup de enganche (una sola vez: intento de salida o 12s) -->
@@ -195,15 +200,28 @@
 var API_BASE_DEFAULT = 'https://www.cargasganamos.com'; // backend de producción (app de GANAMOS)
 var CAMPAIGN_CODE = ''; // fijo, o vacío = tomar de ?p= / ?campaign= / path
 // ⚠️ Oferta REAL (ver nota de cloaking arriba). Sin rollover/rakeback/VIP/reembolsos.
-var BONUS_BIG = '🎁 USUARIO GRATIS EN SEGUNDOS';
-var BONUS_SUB = 'Cargá por transferencia y jugá en GANAMOS';
+// Lo que se muestra sale del backend (COMANDOS → /sys_landing_bonus); estos son el respaldo
+// si el backend no responde. Vacío = sin bono.
+var BONUS_BIG = '100%';
+var BONUS_SUB = 'EN TU PRIMERA CARGA';
+var BONUS_EXTRA = '';
 
 // Override para pruebas: ?api=https://otro-backend pisa API_BASE sin editar el archivo.
 var qs = new URLSearchParams(location.search);
 var API_BASE = (qs.get('api') || API_BASE_DEFAULT).replace(/\/+$/, '');
 
-document.getElementById('bonusBig').textContent = BONUS_BIG;
-document.getElementById('bonusSub').textContent = BONUS_SUB;
+function pintarBono(b) {
+  var big = (b && b.big) || '', sub = (b && b.sub) || '', extra = (b && b.extra) || '';
+  var box = document.getElementById('bonusBox');
+  if (!big && !sub) { box.style.display = 'none'; document.getElementById('bonusLegal').style.display = 'none'; return; }
+  document.getElementById('bonusBig').textContent = big;
+  document.getElementById('bonusSub').textContent = sub;
+  var ex = document.getElementById('bonusExtra'); ex.textContent = extra; ex.style.display = extra ? '' : 'none';
+  box.style.display = 'block';
+  document.getElementById('bonusLegal').style.display = '';
+}
+pintarBono({ big: BONUS_BIG, sub: BONUS_SUB, extra: BONUS_EXTRA });
+fetch(API_BASE + '/api/landing/config').then(function (r) { return r.json(); }).then(function (d) { if (d && d.bonus) pintarBono(d.bonus); }).catch(function () {});
 
 // ── Imágenes de GANAMOS: las mismas que sirve la app (public/icons, public/images) ──
 document.getElementById('logoImg').src = API_BASE + '/icons/icon-192x192.png';
