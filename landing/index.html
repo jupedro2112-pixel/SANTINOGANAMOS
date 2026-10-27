@@ -123,7 +123,7 @@
 <div class="wrap">
 
   <div class="brand">
-    <img id="logoImg" alt="GANAMOS" src="" onerror="this.style.display='none'">
+    <img id="logoImg" alt="GANAMOS">
     <span class="name">GANAMOS</span>
   </div>
 
@@ -157,9 +157,9 @@
   </div>
 
   <div class="hero" id="hero">
-    <img id="hero0" alt="GANAMOS" src="" onerror="this.remove()">
-    <img id="hero1" alt="Jackpots GANAMOS" src="" onerror="this.remove()">
-    <img id="hero2" alt="Fútbol GANAMOS" src="" onerror="this.remove()">
+    <img id="hero0" alt="GANAMOS">
+    <img id="hero1" alt="Jackpots GANAMOS">
+    <img id="hero2" alt="Fútbol GANAMOS">
     <div class="dots" id="heroDots"><i class="on"></i><i></i><i></i></div>
   </div>
 
@@ -177,7 +177,7 @@
   </div>
 
   <div class="soporte">
-    <img id="soporteImg" alt="" src="" onerror="this.style.display='none'">
+    <img id="soporteImg" alt="">
     <div class="tx"><b>Atención por chat las 24 hs.</b><br>Cargas, retiros y cualquier duda, por la app.</div>
   </div>
 
@@ -224,10 +224,18 @@ pintarBono({ big: BONUS_BIG, sub: BONUS_SUB, extra: BONUS_EXTRA });
 fetch(API_BASE + '/api/landing/config').then(function (r) { return r.json(); }).then(function (d) { if (d && d.bonus) pintarBono(d.bonus); }).catch(function () {});
 
 // ── Imágenes de GANAMOS: las mismas que sirve la app (public/icons, public/images) ──
-document.getElementById('logoImg').src = API_BASE + '/icons/icon-192x192.png';
-document.getElementById('soporteImg').src = API_BASE + '/images/soporte-ganamos.png';
+// El HTML NO lleva src="" ni onerror: un src vacío dispara error al instante y, si el navegador lo
+// procesaba antes de este script, el onerror borraba la imagen ANTES de recibir la URL (banners que
+// desaparecían de a ratos). El manejador de error se pone acá, recién después de asignar la URL real.
+function setImg(id, url, onFail) {
+  var el = document.getElementById(id); if (!el) return;
+  el.onerror = onFail;
+  el.src = url;
+}
+setImg('logoImg', API_BASE + '/icons/icon-192x192.png', function () { this.style.display = 'none'; });
+setImg('soporteImg', API_BASE + '/images/soporte-ganamos.png', function () { this.style.display = 'none'; });
 var HERO = ['/images/banner-inicio-ganamos.jpg', '/images/banner-jackpots-ganamos.jpg', '/images/banner-futbol-ganamos.jpg'];
-HERO.forEach(function (p, i) { var el = document.getElementById('hero' + i); if (el) el.src = API_BASE + p; });
+HERO.forEach(function (p, i) { setImg('hero' + i, API_BASE + p, function () { this.remove(); heroShow(0); }); });
 var heroIdx = 0;
 function heroShow(i) {
   var imgs = document.querySelectorAll('#hero img');

@@ -81,6 +81,10 @@
   cache 2 min). Vacío = sin bono. Si el backend no responde, la landing usa el respaldo fijo (`BONUS_BIG/SUB/EXTRA`, mismos valores). Se quitó
   la card dorada "USUARIO GRATIS EN SEGUNDOS".
 - ⚠️ Tiene que ser la oferta REAL que el agente cumple en la primera carga (Meta ve lo mismo que el visitante: cloaking = baneo).
+- **Fix (misma noche): los banners, el logo y el avatar de soporte desaparecían.** Nacían en el HTML con `src=""` +
+  `onerror` que los borraba; un src vacío dispara error al instante y, si el navegador lo procesaba antes del script, la imagen se
+  eliminaba antes de recibir la URL real (de a ratos sí, de a ratos no; los juegos no fallaban porque se crean desde el script). Ahora el
+  HTML no lleva src ni onerror y `setImg()` asigna la URL y recién ahí el manejador de error. No poner `src=""` en imágenes de la landing.
 - Numeración: el commit `86e5699` dice "#244" porque otra sesión tomó ese número a la vez (PWA, `3965a14`); la entrada correcta es esta, #245.
 
 ### 244. 📱 PWA: menú del inicio con 3 modos (arranca en "Reembolsos" y recuerda el último) + todos los pop-ups cerrables (réplica de CARGASGIROX #199–#205)
