@@ -1000,6 +1000,7 @@ tenían los 4 clientes viejos.
 | `LANDING_SIGNUP_MAX_PER_IP_HOUR` | `8` | Límite de altas por landing por IP/hora (§4.10) |
 | `LANDING_SIGNUP_DISABLED` | — | `true` = apaga el alta por landing (410) |
 | `SSM_SKIP_KEYS` | — | Claves que SSM NO pisa (solo entornos clon; `loadSecrets.js`) |
+| `META_PIXEL_ID_n` / `META_CAPI_ACCESS_TOKEN_n` / `META_PIXEL_PUBLISHER_n` / `META_PIXEL_CAPIONLY_n` (n=2..9) | — | #243: píxel de un publicista con alcance (códigos de campaña / nombre / `*`); alternativa sin SSM: panel → COMANDOS → Píxeles de Meta (§4.10.1) |
 | `META_PIXEL_ID_2` / `META_CAPI_ACCESS_TOKEN_2` / `META_TEST_EVENT_CODE_2` | — | 2º pixel CAPI del partner de tracking (mismo `event_id`, envío en paralelo) |
 | `GIROX_GIFT_AS_BONUS` | (on) | `0`/`false`/`off` = los regalos vuelven a depósito libre en vez de bono 0 (§4.5). Kill switch sin deploy |
 | `TELEGRAM_ALERT_BOT_TOKEN` / `TELEGRAM_ALERT_CHAT_ID` | — | Bot + grupo de Telegram para las BAJADAS y el CIERRE DIARIO del banco (#183, `src/services/telegramAlertService.js`). Sin ambos, no se manda nada |
@@ -1069,6 +1070,32 @@ rompía el import). Endpoints del panel: `GET /api/admin/users/:id/platform-acco
 Roles que resuelven la tarea: `_canSettlePlatformTask(role,'signup')` = admin,
 depositor, comunidad. Seeds: `/sys_landing_cuenta_pendiente`, `/sys_ganamos_cuenta_creada`,
 `/sys_username_changed`.
+
+### 4.10.1 Píxeles de Meta por publicista (panel) + píxel del navegador de la landing (#243, 2026-10-27, réplica de CARGASGIROX #214–#216/#198)
+
+`src/services/metaCapiService.js` es la versión del gemelo: `listPixels()` = SSM (`META_PIXEL_ID` n=1 propio, recibe todo;
+`META_PIXEL_ID_n` + `META_CAPI_ACCESS_TOKEN_n` + `META_PIXEL_PUBLISHER_n` n=2..9) + los cargados en el **panel** (`Config['metaPixels']`,
+token cifrado con `_credEncrypt`; `_metaPixelsLoad()` al arrancar / cada 5 min / al guardar → `setConfigPixels`). `_capiDestinations(scopeInfo)`:
+un píxel con token recibe por CAPI SÓLO los eventos de los clientes de su alcance (`resolveEventScope` → publicista/campaña del usuario por
+`acquisitionCampaign → giroxOwnerCampaign`), `*` o sin alcance = todo; mismo píxel en SSM y panel ⇒ un solo envío (gana el del panel).
+`pixelIdsForCampaign(code)` = píxeles para el NAVEGADOR de la landing (nunca el propio ni los `capiOnly`): `GET /api/meta-pixel-id?c=CODIGO`
+(público, CORS reflejado por `LANDING_OPEN_CORS_PATHS`). La landing carga fbevents con esos ids, PageView, y `CompleteRegistration` con
+`eventID = metaEventId` (= `reg_<id>`, mismo `event_id` de la CAPI en `/api/landing/signup`) → dedupe. Panel: COMANDOS → "📣 Píxeles de Meta por
+publicista" (`GET/POST /api/admin/meta-pixels`, `DELETE /:id`, `POST /:n/test` manda `GanamosTest`; `stats()` por instancia).
+
+### 4.10.2 Webhooks salientes a publicistas (#243, 2026-10-27, réplica de CARGASGIROX #197 / AUTOGIROXcompartido #334–#346)
+
+`src/services/outboundWebhookService.js` + `src/models/OutboundWebhookQueue.js` (copiados tal cual). Destinos en
+`Config['outboundWebhooks'].destinations[]` (hasta 10; secreto cifrado con la clave de #223; helpers `_normalizeOutboundDest /
+_getOutboundWebhooks / _saveOutboundWebhooks / _outboundDestPublic` junto al fan-out de hgcash). Cada destino: nombre, URL https, secreto,
+activo, alcance `all | publishers` (nombres de `Campaign.publisher` o códigos), eventos (`registro` y `primera_carga` siempre; `carga` y
+`retiro` opcionales), campos opcionales `attribution` / `contact`, auth `hmac_ts` (default: `X-Webhook-Signature` = HMAC-SHA256 de
+`"{ts}.{body}"`) | `hmac_body` | `bearer` | `header`. Headers siempre `X-Webhook-Event/Id/Timestamp/Signature`; `event_id` estable por evento
+(idempotencia del receptor); el payload NO lleva username (`user.id`). Entrega fire-and-forget: 3 reintentos (1/4/16 s) → cola Mongo cada 5 min
+hasta 10 intentos; 4xx (salvo 408/429) no se reintenta. **Hooks:** los 3 registros, carga manual (`_depTxId`), auto-carga hgcash / asignada
+(`txId`), autogestión (`selfServiceOrderId`, FTD con `unrecorded:true`) y `notifyPayoutPaid` (`retiro`); `_isFirstDeposit(userId)` = exactamente
+1 depósito real (excluye `payout_refund`). Rutas `GET/POST /api/admin/webhooks`, `DELETE /:id`, `POST /:id/test` (solo admin general). Panel:
+COMANDOS → "🔗 Webhooks salientes". Worker `outboundWebhook.startWorker()` (tabla §7).
 
 ### 4.11 Novedades del manual Partner API v1.11 (2026-08-13) — contexto, sin código
 
@@ -1562,6 +1589,8 @@ depositor, comunidad. Seeds: `/sys_landing_cuenta_pendiente`, `/sys_ganamos_cuen
 | `_processNotifBatchQueue` (lotes con regalo) | 45 s (+ setImmediate al crear un lote) | activo | claim atómico por recipient (`findOneAndUpdate` posicional a 'sending'; un 'sending' colgado >10 min se re-reclama solo) + reference `vip-nbatch-*` — reanudable tras deploy y multi-instancia safe |
 | `_processWeeklyRefundNotifyQueue` (avisos del reembolso semanal, #215/#230) | 60 s (+ setImmediate al publicar una semana o soltar una tanda) | activo (sólo filas con `availableAt` pasado o null; las tandas futuras esperan su hora) | claim atómico por destinatario (`WeeklyRefund.notifyState` null → sending; un `sending` colgado >10 min se re-reclama) |
 | `fbAdsWebhook.startWorker` | 5 min | activo | nextRetryAt |
+| `outboundWebhook.startWorker` (webhooks salientes, #243) | 5 min (primer pase al minuto) | activo | nextRetryAt + MAX 10 intentos; descarta si el destino ya no existe |
+| `_metaPixelsLoad` (píxeles del panel, #243) | 5 min | activo | sólo lectura de Config → memoria |
 | Limpieza mensajes >3d | 6 h | activo (red de seguridad del TTL) | deleteMany |
 
 Migraciones one-shot: patrón flag en Config (`migration_*_done`) en `initializeData()`.

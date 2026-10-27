@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-27** (última entrada: #242)
+> **Última actualización: 2026-10-27** (última entrada: #243)
 
 ---
 
@@ -71,6 +71,46 @@
 ---
 
 ## Sesión 2026-10-27
+
+### 243. 📣 Píxeles de Meta por publicista desde el PANEL + 🔗 Webhooks salientes a publicistas (réplica de CARGASGIROX #214–#216 y #197)
+- **Owner:** "replicá todo lo de los webhooks url para cargar a un publicista que uso en CARGASGIROX, ya sea para publicista por Meta que se
+  carga el píxel y el token en el panel, como el de webhooks url a una página personalizada. Todo prolijo sin romper nada."
+- **Qué se copió (código real de CARGASGIROX, no la espec):** `src/services/outboundWebhookService.js` y `src/models/OutboundWebhookQueue.js`
+  TAL CUAL (User-Agent `ganamos-webhook/1.0`); `src/services/metaCapiService.js` REEMPLAZADO por la versión del gemelo (superset: conserva el
+  #241 de la IP/navegador del registro y suma `listPixels` SSM n=1..9 + panel, `_capiDestinations(scopeInfo)` con alcance y dedupe por ID de
+  píxel, `resolveEventScope`, `pixelIdsForCampaign`, `stats`, `testPixel` con evento `GanamosTest`, `setConfigPixels`).
+- **Píxeles por publicista (`Config['metaPixels']`, token cifrado con `_credEncrypt`/JWT_SECRET):** panel → COMANDOS → card
+  "📣 Píxeles de Meta por publicista" (solo admin general): lista SSM + panel (id enmascarado, token sí/no, alcance, qué recibe, últimos
+  envíos de la instancia), alta/edición/baja, 🧪 Probar (respuesta de Meta; código 190 = token inválido). Rutas `GET/POST /api/admin/meta-pixels`,
+  `DELETE /:id`, `POST /:n/test`, `GET ?campaign=XXXX`. `_metaPixelsLoad()` al arrancar, cada 5 min y al guardar → `metaCapi.setConfigPixels`.
+  **Cambio de comportamiento:** un píxel con token recibe por CAPI SÓLO los eventos de los clientes de su alcance (campaña/publicista; `*` =
+  todos); el `_2` de SSM sin `META_PIXEL_PUBLISHER_2` sigue recibiendo todo (partner). El mismo píxel en SSM y en el panel manda una sola vez.
+- **Píxel del NAVEGADOR en la landing (#198 del gemelo):** `GET /api/meta-pixel-id?c=CODIGO` (público, CORS reflejado vía
+  `LANDING_OPEN_CORS_PATHS`, que ahora es un Set con `/api/landing/signup` y `/api/meta-pixel-id`) devuelve los píxeles del publicista de esa
+  campaña (nunca el propio ni los "sólo servidor"); `landing/index.html` carga fbevents.js con esos ids, dispara PageView y, al registrarse,
+  `CompleteRegistration` con `eventID = metaEventId` (= `reg_<id>`, el mismo `event_id` que ahora usa la CAPI en `/api/landing/signup`) → Meta
+  deduplica navegador + servidor.
+- **Webhooks salientes (`Config['outboundWebhooks'].destinations[]`, secreto cifrado):** eventos `registro` y `primera_carga` siempre,
+  `carga` y `retiro` opcionales por destino; campos `attribution` y `contact` opcionales; alcance TODOS o lista de publicistas
+  (`Campaign.distinct('publisher')` o códigos); auth `hmac_ts` (default, `X-Webhook-Signature` = HMAC de `ts.body`) | `hmac_body` | `bearer` |
+  `header`; headers `X-Webhook-Event/Id/Timestamp/Signature`; payload SIN username (`user.id` = UUID interno). Entrega fire-and-forget con 3
+  reintentos inmediatos y cola Mongo reintentada cada 5 min hasta 10 intentos (4xx salvo 408/429 no se reintenta). Helpers
+  `_normalizeOutboundDest / _getOutboundWebhooks / _saveOutboundWebhooks / _outboundDestPublic` al lado del fan-out de hgcash; rutas
+  `GET/POST /api/admin/webhooks`, `DELETE /:id`, `POST /:id/test` (solo admin general). **Hooks:** los 3 registros (`registro`), carga manual
+  del agente (`carga`, `firstDeposit = _isFirstDeposit(user.id)`, `transactionId = _depTxId`), auto-carga hgcash y carga asignada desde la
+  bandeja (`transactionId = txId`), autogestión `/api/movements/deposit` (`unrecorded:true`, `transactionId = selfServiceOrderId`) y
+  `notifyPayoutPaid` (`retiro`). `_isFirstDeposit` es nuevo acá (excluye `payout_refund`). Worker `outboundWebhook.startWorker()` junto al de
+  fb-ads (los dos arranques). Panel → COMANDOS → card "🔗 Webhooks salientes (avisos a publicistas)": lista con último resultado / en cola,
+  editor, "Enviar prueba" (evento `prueba`, `test:true`), "📋 Copiar formato para pasarle" (sólo lo que ese destino recibe) y el formato
+  completo plegado (uso interno).
+- **No se copió:** el prefijo de usuarios por `Config['usernamePrefix']` (acá ya está `/sys_landing_prefix`, #242) ni `lastTouchCampaign`
+  (`resolveEventScope` resuelve por `acquisitionCampaign → giroxOwnerCampaign`; si algún día se agrega el campo, el select ya lo contempla).
+  El píxel y fb-ads NO dependen de GANAMOS: salen de eventos de esta web (registro, carga del agente o del banco, retiro pagado).
+- **Validado:** `node --check` en server.js, los 3 servicios/modelo, admin.js, landing (script); `check-tdz` OK; `test-admin-panel-login` OK;
+  HTML del panel con el mismo balance de divs que antes. admin-sw **v69**. **Back necesita deploy.** PROBAR: COMANDOS → card 📣 → cargar el
+  píxel + token de un publicista con su código de campaña → 🧪 Probar (debe decir que Meta aceptó) → abrir la landing con `?p=CODIGO` y ver en
+  Meta "Probar eventos" el PageView del navegador; card 🔗 → "+ Nuevo destino" con una URL de prueba (webhook.site) → "Enviar prueba" responde
+  200 → registrar un usuario por la landing y cargarle → llegan `registro` y `primera_carga`.
 
 ### 242. 👤 Alta por LANDING sin API: la landing crea la cuenta en la web y un agente crea el usuario en GANAMOS a mano (cartel de 2 toques + cambiar usuario) · landing con la marca GANAMOS
 - **Pedido del owner:** que la landing cree las "cuentas fantasma" igual, que al agente le salga un cartel para crear ese usuario en

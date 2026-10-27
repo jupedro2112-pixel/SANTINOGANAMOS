@@ -759,6 +759,16 @@ const publisherAnalytics = require('./src/services/publisherAnalyticsService');
 const refunds = require('./models/refunds');
 const metaCapi = require('./src/services/metaCapiService');
 const fbAdsWebhook = require('./src/services/fbAdsWebhookService');
+// #243 (réplica del #197 de CARGASGIROX / #334 de AUTOGIROXcompartido): webhooks SALIENTES
+// configurables desde el panel (registro / primera carga / carga / retiro) a uno,
+// varios o todos los publicistas. En PARALELO al pixel de Meta y a fb-ads.
+const outboundWebhook = require('./src/services/outboundWebhookService');
+const OutboundWebhookQueue = require('./src/models/OutboundWebhookQueue');
+outboundWebhook.configure({
+  getDestinations: () => _getOutboundWebhooks(),
+  resolveScope: (userInfo, opts) => metaCapi.resolveEventScope(userInfo, opts),
+  publicBaseUrl: () => getPublicBaseUrl()
+});
 
 // Valida y normaliza un valor de cookie _fbc / _fbp de Meta antes de
 // persistirlo o reenviarlo a Conversions API. El formato real es
@@ -985,13 +995,15 @@ app.use(securityHeaders);
 // host nuevo. Es seguro: endpoint público, sin credenciales (no manda cookies —
 // SIN Allow-Credentials), protegido por código de campaña + límite por IP.
 // Se refleja el Origin (no '*') y se corta el preflight acá mismo.
+// #243: /api/meta-pixel-id también es público para la landing (qué píxel cargar en el navegador).
+const LANDING_OPEN_CORS_PATHS = new Set(['/api/landing/signup', '/api/meta-pixel-id']);
 app.use((req, res, next) => {
-  if (req.path === '/api/landing/signup') {
+  if (LANDING_OPEN_CORS_PATHS.has(req.path)) {
     const origin = req.headers.origin;
     if (origin) {
       res.setHeader('Access-Control-Allow-Origin', origin);
       res.setHeader('Vary', 'Origin');
-      res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+      res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     }
     if (req.method === 'OPTIONS') return res.status(204).end();
@@ -1016,7 +1028,7 @@ const _strictCors = cors((req, cb) => {
   return cb(new Error('No autorizado por CORS'));
 });
 app.use((req, res, next) => {
-  if (req.path === '/api/landing/signup') return next();
+  if (LANDING_OPEN_CORS_PATHS.has(req.path)) return next();
   return _strictCors(req, res, next);
 });
 app.use('/api/', generalLimiter);
@@ -2309,9 +2321,32 @@ async function ensureHgcashAccountIdSaved(accountId) {
   } catch (_) {}
 }
 
+// ¿Es la PRIMERA carga real del cliente (FTD)? Se llama DESPUÉS de crear el
+// Transaction del depósito, así que la primera carga = exactamente 1 depósito
+// real. Excluye devoluciones de retiro (payout_refund), que no son cargas
+// genuinas. Lo usan los webhooks salientes (#243): el destino recibe 'carga' con
+// firstDeposit como 'primera_carga'. `opts.unrecorded` = el flujo que llama NO
+// escribe Transaction (self-service): entonces FTD = ningún depósito previo.
+// Ante error → false (no marcar FTD de más).
+async function _isFirstDeposit(userId, opts) {
+  try {
+    const n = await Transaction.countDocuments({
+      userId: String(userId),
+      type: 'deposit',
+      'metadata.source': { $ne: 'payout_refund' }
+    });
+    return opts && opts.unrecorded ? n === 0 : n === 1;
+  } catch (e) {
+    logger.warn(`[webhooks] _isFirstDeposit falló: ${e.message}`);
+    return false;
+  }
+}
+
 // Avisa al cliente (y a los admins) que su retiro fue pagado. El texto es editable
 // desde COMANDOS (/sys_payout_paid); si se vacía ese comando, no se envía nada.
 async function notifyPayoutPaid(payout) {
+  // #243: aviso saliente 'retiro' (solo a los destinos que lo pidieron).
+  try { if (payout && payout.userId) outboundWebhook.notify('retiro', { id: payout.userId }, { amount: Number(payout.amount), payoutId: payout.id, occurredAt: payout.paidAt || new Date() }); } catch (_) {}
   try {
     const content = await renderSystemCommand(
       '/sys_payout_paid',
@@ -2820,6 +2855,11 @@ async function hgcashAutoCarga({ movement, comprobante, mode, assign = null }) {
       );
       fbAdsWebhook.notify('Purchase', user, { value: Number(amount), currency: 'ARS' });
     } catch (_) {}
+    // #243: webhook saliente 'carga' (primera_carga si es el FTD). Fire-and-forget.
+    try {
+      const _hgFTD = await _isFirstDeposit(user.id);
+      outboundWebhook.notify('carga', user, { amount: Number(amount), firstDeposit: _hgFTD, transactionId: txId });
+    } catch (_) {}
     _emitHgcashUpdate('cargado', movement.movementId);
     logger.info(`[hgcash] ${assign ? 'carga asignada por ' + agentLabel : 'auto-carga'} OK user=${user.username} amount=$${amount} movement=${movement.movementId}${result.duplicate ? ' (duplicate: la plataforma ya la tenía)' : ''}`);
     return { ok: true, txId };
@@ -3035,6 +3075,77 @@ function _normalizeFanoutUrl(raw) {
   p.hash = '';
   return p.toString();
 }
+// ===== #243 Webhooks salientes (Config['outboundWebhooks']) — réplica del #197 de CARGASGIROX (#334/#346 del gemelo) =====
+// Lista de destinos; el secreto se guarda cifrado (misma clave que las credenciales
+// de hgcash, #223: _credEncrypt/_credDecrypt) y se descifra sólo en memoria para firmar.
+const OUTBOUND_WEBHOOKS_KEY = 'outboundWebhooks';
+const OUTBOUND_WEBHOOKS_MAX = 10;
+const OUTBOUND_WEBHOOKS_TTL_MS = 60 * 1000;
+let _outboundWebhooksCache = null;
+function _normalizeOutboundDest(d, cur) {
+  const c = cur || {};
+  const events = d.events && typeof d.events === 'object' ? d.events : (c.events || {});
+  const fields = d.fields && typeof d.fields === 'object' ? d.fields : (c.fields || {});
+  const url = d.url !== undefined ? String(d.url || '').trim() : (c.url || '');
+  return {
+    id: c.id || d.id || ('wh_' + crypto.randomBytes(5).toString('hex')),
+    name: d.name !== undefined ? String(d.name || '').trim().slice(0, 60) : (c.name || ''),
+    url,
+    secretEnc: (typeof d.secret === 'string' && d.secret.trim()) ? _credEncrypt(d.secret.trim()) : (c.secretEnc || null),
+    enabled: typeof d.enabled === 'boolean' ? d.enabled : (c.enabled !== false),
+    scope: d.scope === 'publishers' ? 'publishers' : (d.scope === 'all' ? 'all' : (c.scope || 'all')),
+    publishers: Array.isArray(d.publishers) ? d.publishers.map((p) => String(p || '').trim()).filter(Boolean).slice(0, 50) : (c.publishers || []),
+    events: {
+      registro: events.registro !== false,           // siempre por defecto
+      primera_carga: events.primera_carga !== false, // siempre por defecto
+      carga: events.carga === true,                  // OPCIONAL
+      retiro: events.retiro === true                 // OPCIONAL
+    },
+    fields: { atribucion: fields.atribucion === true, contacto: fields.contacto === true }, // OPCIONALES
+    // Cómo se autentica el aviso ante el receptor. Siempre van los headers
+    // X-Webhook-*; `auth` agrega lo que pide cada plataforma:
+    //   hmac_ts   (default) X-Webhook-Signature = HMAC(ts.body)  — nuestro esquema
+    //   hmac_body <header> = <prefix>HMAC-SHA256 hex del body solo (estilo GitHub/Shopify)
+    //   bearer    Authorization: Bearer <secreto>
+    //   header    <header>: <secreto>  (API key fija)
+    auth: (() => {
+      const a = d.auth && typeof d.auth === 'object' ? d.auth : (c.auth || {});
+      const mode = ['hmac_ts', 'hmac_body', 'bearer', 'header'].includes(a.mode) ? a.mode : 'hmac_ts';
+      const header = String(a.header || '').trim().replace(/[^A-Za-z0-9-]/g, '').slice(0, 60);
+      const prefix = String(a.prefix || '').trim().slice(0, 20);
+      return { mode, header: header || null, prefix: prefix || null };
+    })(),
+    createdAt: c.createdAt || new Date().toISOString(),
+    updatedAt: new Date().toISOString()
+  };
+}
+async function _getOutboundWebhooks(opts) {
+  const now = Date.now();
+  if (!(opts && opts.fresh) && _outboundWebhooksCache && (now - _outboundWebhooksCache.at) < OUTBOUND_WEBHOOKS_TTL_MS) return _outboundWebhooksCache.value;
+  const raw = await getConfig(OUTBOUND_WEBHOOKS_KEY, null);
+  const list = raw && Array.isArray(raw.destinations) ? raw.destinations : [];
+  const value = list.map((d) => {
+    let secret = null, decryptError = false;
+    if (d.secretEnc) { try { secret = _credDecrypt(d.secretEnc); } catch (_) { decryptError = true; } }
+    return Object.assign({}, d, { secret, decryptError });
+  });
+  _outboundWebhooksCache = { at: now, value };
+  return value;
+}
+async function _saveOutboundWebhooks(list, by) {
+  const clean = list.map((d) => { const o = Object.assign({}, d); delete o.secret; delete o.decryptError; return o; });
+  await Config.set(OUTBOUND_WEBHOOKS_KEY, { destinations: clean }, by);
+  _outboundWebhooksCache = null;
+}
+function _outboundDestPublic(d, stats, pending) {
+  const o = Object.assign({}, d);
+  delete o.secretEnc; delete o.secret;
+  o.hasSecret = !!d.secretEnc;
+  o.stats = stats || null;
+  o.pending = pending || 0;
+  return o;
+}
+
 async function _getHgcashFanout(opts) {
   const now = Date.now();
   if (!(opts && opts.fresh) && _hgcashFanoutCache && (now - _hgcashFanoutCache.at) < HGCASH_FANOUT_TTL_MS) {
@@ -4082,6 +4193,7 @@ app.post('/api/auth/register', authLimiter, registerIpLimiter, async (req, res) 
 
     // Webhook a fb-ads: conversión clave del embudo. Fire-and-forget.
     fbAdsWebhook.notify('CompleteRegistration', newUser);
+    try { outboundWebhook.notify('registro', newUser); } catch (_) {} // #243
 
     res.status(201).json({
       message: 'Usuario creado exitosamente',
@@ -4263,6 +4375,7 @@ app.post('/api/auth/register-quick', authLimiter, registerIpLimiter, async (req,
 
     // Webhook a fb-ads: conversión clave del embudo. Fire-and-forget.
     fbAdsWebhook.notify('CompleteRegistration', newUser);
+    try { outboundWebhook.notify('registro', newUser); } catch (_) {} // #243
 
     res.status(201).json({
       message: 'Cuenta creada. Ya podes ingresar a jugar — para retirar tendrás que verificar un teléfono.',
@@ -4502,9 +4615,12 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
         utm_source: newUser.acquisitionUtm?.source || null,
         utm_campaign: newUser.acquisitionUtm?.campaign || null
       },
-      { req }
+      // #243: event_id FIJO `reg_<id>` — la landing dispara el CompleteRegistration del
+      // navegador con el MISMO id (metaEventId de la respuesta) y Meta deduplica.
+      { req, eventId: 'reg_' + newUser.id }
     );
     fbAdsWebhook.notify('CompleteRegistration', newUser);
+    try { outboundWebhook.notify('registro', newUser); } catch (_) {} // #243
 
     // Link de acceso de un solo uso + ir=casino: la PWA abre el casino directo
     // al loguear. (El canje NO fuerza cambio de clave para cuentas de landing:
@@ -4513,7 +4629,8 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
     const accessUrl = (await issueAccessLinkFor(newUser.id)) + (_landingManual ? '' : '&ir=casino');
 
     logger.info(`[landing-signup] ${username} creado (campaña ${normalizedCode}${ownerCampaign ? ', key publicista' : ''}${_landingManual ? ', PENDIENTE de crear en GANAMOS' : ''})`);
-    res.status(201).json({ success: true, accessUrl, username, password, pendingAgent: _landingManual, siteUrl: getPublicBaseUrl() });
+    // metaEventId = el MISMO event_id que usó la CAPI (reg_<id>) para que el píxel del navegador deduplique (#243).
+    res.status(201).json({ success: true, accessUrl, username, password, pendingAgent: _landingManual, siteUrl: getPublicBaseUrl(), metaEventId: 'reg_' + newUser.id });
   } catch (error) {
     // Stack a stdout: el winston va solo a archivo y los 500 eran invisibles en EB.
     console.error('[landing-signup] error:', error && error.stack ? error.stack : error);
@@ -9678,6 +9795,11 @@ app.post('/api/admin/deposit', authMiddleware, depositorMiddleware, async (req, 
 
       // Webhook a fb-ads: conversión Purchase para aprendizaje por anuncio.
       fbAdsWebhook.notify('Purchase', user, { value: parseFloat(amount), currency: 'ARS' });
+      // #243: webhook saliente 'carga' / 'primera_carga' (el Transaction del depósito ya existe).
+      try {
+        const _isFTD = await _isFirstDeposit(user.id);
+        outboundWebhook.notify('carga', user, { amount: parseFloat(amount), firstDeposit: _isFTD, transactionId: _depTxId });
+      } catch (_) {}
 
       logger.info(
         `[deposit] OK admin=${req.user?.username} user=${user.username} amount=$${amount} ` +
@@ -11650,6 +11772,9 @@ app.post('/api/movements/deposit', authMiddleware, depositorMiddleware, async (r
         );
         // Webhook a fb-ads: conversión Purchase para aprendizaje por anuncio.
         fbAdsWebhook.notify('Purchase', u, { value: parseFloat(amount), currency: 'ARS' });
+        // #243: webhook saliente. Este flujo NO escribe Transaction → FTD = sin depósitos previos.
+        const _isFTD = await _isFirstDeposit(req.user.userId, { unrecorded: true });
+        outboundWebhook.notify('carga', u, { amount: parseFloat(amount), firstDeposit: _isFTD, transactionId: selfServiceOrderId });
       } catch (e) { /* tracking nunca bloquea */ }
 
       res.json({
@@ -17993,6 +18118,148 @@ app.post('/api/admin/cbu', authMiddleware, adminMiddleware, async (req, res) => 
 // ============================================
 // BANCO AUTOMÁTICO (hgcash) — config y movimientos (solo admin general)
 // ============================================
+// PIXEL DEL NAVEGADOR de la landing externa (#243, réplica del #198 de CARGASGIROX): la
+// landing pregunta qué Pixel IDs cargar según la campaña del visitante. Público, con
+// CORS reflejado (LANDING_OPEN_CORS_PATHS). El pixel PROPIO nunca va al navegador de la
+// landing (recibe registro/compra por CAPI); solo van los pixels de publicistas con
+// alcance (SSM `META_PIXEL_PUBLISHER_n` o los cargados en el panel). Sin código → ninguno.
+app.get('/api/meta-pixel-id', async (req, res) => {
+  try {
+    const raw = String((req.query && req.query.c) || '').trim();
+    const code = /^[A-Za-z0-9_-]{3,40}$/.test(raw) ? raw.toUpperCase() : '';
+    const ids = await metaCapi.pixelIdsForCampaign(code);
+    res.set('Cache-Control', 'public, max-age=300');
+    res.json({ pixelIds: ids, campaign: code || null });
+  } catch (e) {
+    res.json({ pixelIds: [], campaign: null });
+  }
+});
+
+// #243 (réplica del #214 de CARGASGIROX / #990 de PICA ROJA): PÍXELES DE META POR PUBLICISTA cargados desde el PANEL (COMANDOS →
+// "📣 Píxeles de Meta por publicista"), sin tocar SSM (los META_PIXEL_ID_n de SSM siguen valiendo). Config['metaPixels'] = [{ id, label,
+// pixelId, tokenEnc, tokenLast4, scope:[...], testCode, capiOnly, updatedAt, updatedBy }]. El token se guarda cifrado con JWT_SECRET (como las
+// credenciales de hgcash); rotar JWT_SECRET ⇒ recargarlos. Se descifran al arrancar, cada 5 min y al guardar, y van al servicio
+// (`metaCapi.setConfigPixels`). Un píxel con token recibe por CAPI sólo los eventos de los clientes de su alcance (código de campaña /
+// nombre del publicista / * = todos); sin token = sólo navegador.
+//   GET  /api/admin/meta-pixels                 → cada píxel (id enmascarado, token sí/no, alcance, qué recibe, últimos envíos de esta instancia)
+//   GET  /api/admin/meta-pixels?campaign=XXXX   → además, qué píxeles reciben los eventos de esa campaña (navegador y CAPI)
+//   POST /api/admin/meta-pixels · DELETE /:id   → alta/edición/baja (sólo admin general)
+//   POST /api/admin/meta-pixels/:n/test         → manda un evento de prueba "GanamosTest" y devuelve la respuesta de Meta (código 190 = token inválido)
+async function _metaPixelsLoad() {
+  try {
+    const list = (await getConfig('metaPixels', [])) || [];
+    const dec = list.map((p) => { let token = ''; try { token = p.tokenEnc ? (_credDecrypt(p.tokenEnc) || '') : ''; } catch (_) { token = ''; }
+      return { id: String(p.id), label: p.label || '', pixelId: String(p.pixelId || ''), token, scope: Array.isArray(p.scope) ? p.scope : [], testCode: p.testCode || '', capiOnly: !!p.capiOnly }; });
+    metaCapi.setConfigPixels(dec); return dec.length;
+  } catch (e) { logger.warn('[meta-pixels] no se pudieron cargar los del panel: ' + e.message); return 0; }
+}
+setInterval(() => { _metaPixelsLoad(); }, 5 * 60 * 1000);
+app.post('/api/admin/meta-pixels', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Sólo el administrador general.' });
+    const b = req.body || {};
+    const pixelId = String(b.pixelId || '').replace(/\D/g, ''); if (!/^\d{10,20}$/.test(pixelId)) return res.status(400).json({ error: 'El ID del píxel son 15 o 16 números (Administrador de eventos → el píxel → ID del conjunto de datos).' });
+    const scope = String(b.scope || '').split(',').map((x) => x.trim()).filter(Boolean).slice(0, 20); if (!scope.length) return res.status(400).json({ error: 'Poné a quién pertenece: el código de la campaña, el nombre del publicista, o * para todos.' });
+    const token = String(b.token || '').trim(); const list = (await getConfig('metaPixels', [])) || [];
+    const id = String(b.id || '').trim() || ('p' + Date.now().toString(36)); const cur = list.find((p) => String(p.id) === id) || null;
+    if (!token && !(cur && cur.tokenEnc)) return res.status(400).json({ error: 'Falta el token de la API de conversiones de ese píxel (Eventos → Configuración → API de conversiones → Generar token).' });
+    if (token && !_credKey()) return res.status(503).json({ error: 'No se puede cifrar ahora (falta JWT_SECRET).' });
+    const next = { id, label: String(b.label || scope[0]).slice(0, 60), pixelId, scope, testCode: String(b.testEventCode || '').trim().slice(0, 40), capiOnly: !!b.capiOnly, updatedAt: new Date().toISOString(), updatedBy: req.user.username,
+      tokenEnc: token ? _credEncrypt(token) : cur.tokenEnc, tokenLast4: token ? token.slice(-4) : cur.tokenLast4 };
+    const out = cur ? list.map((p) => (String(p.id) === id ? next : p)) : list.concat([next]);
+    await Config.set('metaPixels', out, req.user.username); await _metaPixelsLoad();
+    logger.info('[meta-pixels] ' + (cur ? 'editado' : 'nuevo') + ' ' + id + ' (' + scope.join('/') + ') por ' + req.user.username);
+    res.json({ success: true, id });
+  } catch (e) { res.status(500).json({ error: 'Error del servidor', detalle: e.message }); }
+});
+app.delete('/api/admin/meta-pixels/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Sólo el administrador general.' });
+    const list = (await getConfig('metaPixels', [])) || []; const out = list.filter((p) => String(p.id) !== String(req.params.id));
+    if (out.length === list.length) return res.status(404).json({ error: 'No existe' });
+    await Config.set('metaPixels', out, req.user.username); await _metaPixelsLoad(); res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.get('/api/admin/meta-pixels', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Sólo el administrador general.' });
+    const mask = (id) => String(id || '').replace(/^(\d{4})\d+(\d{3})$/, '$1…$2');
+    const st = metaCapi.stats();
+    const list = metaCapi.listPixels().map((p) => ({ n: p.n, id: p.id || null, origen: p.source || 'ssm', etiqueta: p.label, pixel: mask(p.pixelId), pixelId: p.source === 'panel' ? p.pixelId : undefined, token: p.token ? 'sí' : 'NO (sólo navegador)', alcance: p.scope, soloCapi: p.capiOnly, testEventCode: p.testCode ? 'sí' : 'no',
+      recibePorCapi: p.token ? (p.scope.includes('*') ? 'todos los clientes' : 'clientes de ' + p.scope.join(', ')) : 'nada', ultimosEnvios: st[p.n] || null }));
+    const out = { pixels: list, nota: 'Ids enmascarados. Los de Amazon salen de META_PIXEL_ID(_n) / META_PIXEL_PUBLISHER_n en SSM. Los contadores son de esta instancia desde el último arranque.' };
+    const camp = String(req.query.campaign || '').trim().toUpperCase();
+    if (camp) {
+      const info = await metaCapi.resolveEventScope({}, { campaignCode: camp });
+      out.campania = { codigo: camp, publicista: info && info.publisher, navegador: await metaCapi.pixelIdsForCampaign(camp).then((a) => a.map(mask)), capi: metaCapi._capiDestinations(info).map((d) => '#' + d.n + ' ' + mask(d.pixelId)) };
+    }
+    res.json(out);
+  } catch (e) { res.status(500).json({ error: 'Error del servidor', detalle: e.message }); }
+});
+app.post('/api/admin/meta-pixels/:n/test', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Sólo el administrador general.' });
+    const r = await metaCapi.testPixel(req.params.n, String((req.body && req.body.testEventCode) || (req.query && req.query.testEventCode) || '').trim() || null);
+    logger.info('[meta-pixels] prueba #' + req.params.n + ' por ' + req.user.username + ': ' + (r.ok ? 'OK' : 'ERROR ' + JSON.stringify(r.error).slice(0, 200)));
+    res.json(r);
+  } catch (e) { res.status(500).json({ error: 'Error del servidor', detalle: e.message }); }
+});
+
+// #243 Webhooks salientes — CRUD desde el panel (solo admin general).
+app.get('/api/admin/webhooks', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin general' });
+    const list = await _getOutboundWebhooks({ fresh: true });
+    const out = [];
+    for (const d of list) out.push(_outboundDestPublic(d, outboundWebhook.getStats(d.id), await outboundWebhook.pendingCount(d.id)));
+    let publishers = [];
+    try { publishers = (await Campaign.distinct('publisher')).map((p) => String(p || '').trim()).filter(Boolean).sort(); } catch (_) {}
+    res.json({ destinations: out, publishers, max: OUTBOUND_WEBHOOKS_MAX });
+  } catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.post('/api/admin/webhooks', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin general' });
+    if (!_credKey()) return res.status(503).json({ error: 'No se puede cifrar ahora (falta JWT_SECRET).' });
+    const b = req.body || {};
+    const list = await _getOutboundWebhooks({ fresh: true });
+    const idx = b.id ? list.findIndex((d) => d.id === b.id) : -1;
+    const cur = idx >= 0 ? list[idx] : null;
+    if (!cur && list.length >= OUTBOUND_WEBHOOKS_MAX) return res.status(400).json({ error: `Máximo ${OUTBOUND_WEBHOOKS_MAX} destinos` });
+    const next = _normalizeOutboundDest(b, cur);
+    if (!/^https:\/\/[^\s]+$/i.test(next.url)) return res.status(400).json({ error: 'La URL tiene que empezar con https://' });
+    if (!next.name) return res.status(400).json({ error: 'Poné un nombre (ej: el publicista o el sistema que recibe)' });
+    if (!next.secretEnc) return res.status(400).json({ error: 'Falta el secreto: con él el receptor comprueba que el aviso es tuyo' });
+    if (next.scope === 'publishers' && !next.publishers.length) return res.status(400).json({ error: 'Elegí al menos un publicista, o marcá TODOS' });
+    if (idx >= 0) list[idx] = next; else list.push(next);
+    await _saveOutboundWebhooks(list, req.user.username);
+    logger.info(`[webhooks] ${req.user.username} ${cur ? 'editó' : 'creó'} destino ${next.name} (${next.id}) scope=${next.scope}`);
+    res.json({ success: true, destination: _outboundDestPublic(next) });
+  } catch (e) { logger.error(`[webhooks] guardar: ${e.message}`); res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.delete('/api/admin/webhooks/:id', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin general' });
+    const list = await _getOutboundWebhooks({ fresh: true });
+    const next = list.filter((d) => d.id !== req.params.id);
+    if (next.length === list.length) return res.status(404).json({ error: 'No existe' });
+    await _saveOutboundWebhooks(next, req.user.username);
+    try { await OutboundWebhookQueue.deleteMany({ destId: req.params.id }); } catch (_) {}
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+app.post('/api/admin/webhooks/:id/test', authMiddleware, adminMiddleware, async (req, res) => {
+  try {
+    if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin general' });
+    const list = await _getOutboundWebhooks({ fresh: true });
+    const d = list.find((x) => x.id === req.params.id);
+    if (!d) return res.status(404).json({ error: 'No existe' });
+    if (d.decryptError) return res.status(400).json({ error: 'El secreto guardado no se pudo leer (¿cambió JWT_SECRET?). Volvé a cargarlo.' });
+    const r = await outboundWebhook.sendTest(d);
+    res.json({ ok: r.ok, status: r.status || null, error: r.error || null, payload: r.payload });
+  } catch (e) { res.status(500).json({ error: 'Error del servidor' }); }
+});
+
 app.get('/api/admin/hgcash/config', authMiddleware, adminMiddleware, async (req, res) => {
   try {
     if (req.user.role !== 'admin') return res.status(403).json({ error: 'Solo admin general' });
@@ -25515,6 +25782,7 @@ if (process.env.VERCEL) {
     logger.info('Data initialized for Vercel');
     // Worker periódico que reprocesa la cola de webhooks a fb-ads.
     fbAdsWebhook.startWorker();
+    outboundWebhook.startWorker(); // #243 cola de webhooks salientes
   });
   
   module.exports = app;
@@ -25555,6 +25823,7 @@ if (process.env.VERCEL) {
     } catch (e) {
       console.warn('[girox] radiografía de config falló:', e.message);
     }
+    try { const _np = await _metaPixelsLoad(); if (_np) console.log(`[meta-pixels] ${_np} píxel(es) del panel cargados`); } catch (_) {} // #243
     try {
       console.log(`[MetaCAPI] pixels: ${metaCapi.destinationsSummary()}`);
     } catch (e) {
@@ -25565,6 +25834,7 @@ if (process.env.VERCEL) {
     await setupRedisAdapter();
     // Worker periódico que reprocesa la cola de webhooks a fb-ads.
     fbAdsWebhook.startWorker();
+    outboundWebhook.startWorker(); // #243 cola de webhooks salientes
     server.listen(PORT, () => {
       logger.info(`Server started on port ${PORT} (${process.env.NODE_ENV || 'development'})`);
     });

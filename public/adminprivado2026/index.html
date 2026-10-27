@@ -820,6 +820,122 @@ document.addEventListener('change', function (ev) {
                             </div>
                         </div>
 
+                        <!-- #243 (réplica del #214 de CARGASGIROX / #990 de PICA ROJA): PÍXELES DE META POR PUBLICISTA (sólo admin general). Reemplaza tener que cargar META_PIXEL_ID_n en SSM. -->
+                        <div class="panel-subheader" style="margin-top: 24px;" id="metaPixelsHeader">
+                            <h3>📣 Píxeles de Meta por publicista</h3>
+                        </div>
+                        <div class="cbu-form" id="metaPixelsForm">
+                            <p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">
+                                Cada publicista recibe en SU píxel los eventos de SUS clientes: PageView y registro en la landing (navegador) y registro, cargas (Purchase) y
+                                desde el servidor (API de conversiones). Pedile al publicista: <b>ID del píxel</b> (Administrador de eventos → su píxel → ID del
+                                conjunto de datos) y el <b>token de la API de conversiones</b> (Eventos → Configuración → API de conversiones → Generar token). El token
+                                se guarda cifrado y toma efecto al minuto, sin redeploy. "Probar" manda un evento <code>GanamosTest</code> y muestra lo que contesta Meta.
+                                Los píxeles cargados en Amazon (SSM) siguen valiendo y aparecen en la lista. <b>Dejá vacío el "código de prueba"</b> salvo mientras probás: con
+                                código, los eventos reales salen como prueba y no cuentan como conversiones.
+                            </p>
+                            <div id="metaPixelsList" style="margin:0 0 10px;font-size:12.5px;">Cargando…</div>
+                            <div style="display:flex;gap:10px;flex-wrap:wrap;align-items:flex-end;">
+                                <input type="hidden" id="mpId">
+                                <div class="form-group" style="flex:1;min-width:170px;margin:0;"><label>Publicista o campaña</label><input type="text" id="mpScope" placeholder="CODIGO (o varios por coma, o *)" maxlength="200" style="width:100%;"></div>
+                                <div class="form-group" style="flex:1;min-width:170px;margin:0;"><label>ID del píxel</label><input type="text" id="mpPixel" placeholder="15-16 números" maxlength="24" inputmode="numeric" style="width:100%;"></div>
+                                <div class="form-group" style="flex:2;min-width:220px;margin:0;"><label>Token API de conversiones</label><input type="password" id="mpToken" placeholder="EAAB… (al editar, vacío = no cambiar)" autocomplete="new-password" style="width:100%;"></div>
+                                <div class="form-group" style="flex:0 0 150px;margin:0;"><label>Código de prueba (opc.)</label><input type="text" id="mpTest" placeholder="TEST12345" maxlength="40" style="width:100%;"></div>
+                                <label style="display:flex;align-items:center;gap:6px;margin:0 0 6px;font-size:12px;cursor:pointer;"><input type="checkbox" id="mpCapiOnly" style="width:auto;"> Sólo servidor (no cargar en la landing)</label>
+                            </div>
+                            <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;">
+                                <button type="button" class="btn btn-primary" id="mpSaveBtn" onclick="saveMetaPixel()">💾 Guardar píxel</button>
+                                <button type="button" class="btn btn-secondary" onclick="clearMetaPixelForm()">Limpiar</button>
+                                <span id="mpMsg" style="font-size:12px;color:#aaa;"></span>
+                            </div>
+                        </div>
+
+                        <!-- #243 WEBHOOKS SALIENTES (réplica del #197 de CARGASGIROX / #334/#346 del gemelo): registro / primera carga / carga / retiro a publicistas (solo admin general) -->
+                        <div class="panel-subheader" style="margin-top: 24px;" id="webhooksHeader">
+                            <h3>🔗 Webhooks salientes (avisos a publicistas)</h3>
+                        </div>
+                        <div class="cbu-form" id="webhooksForm">
+                            <p style="color:#aaa;font-size:12px;line-height:1.5;margin:0 0 10px;">
+                                Además del pixel (que sigue igual, en paralelo), el sistema puede avisar por <b>webhook</b> (un POST con JSON firmado)
+                                cada <b>registro</b> y <b>primera carga</b>, y si lo marcás, también cada <b>carga</b> y cada <b>retiro</b>. Cada destino
+                                recibe solo lo de <b>sus publicistas</b> o de <b>todos</b>, y vos elegís por destino si van los datos de atribución
+                                (fbclid / UTM) y el mail/teléfono. Si el receptor está caído se reintenta solo (hasta 10 veces, cada 5 min).
+                            </p>
+                            <div id="webhooksList" style="display:grid;gap:8px;margin-bottom:12px;">Cargando…</div>
+                            <button type="button" class="btn-primary btn-small" onclick="webhookEdit()">+ Nuevo destino</button>
+                            <div id="webhookEditor" style="display:none;margin-top:12px;padding:12px;border:1px solid rgba(212,175,55,0.35);border-radius:10px;background:rgba(255,255,255,0.03);">
+                                <input type="hidden" id="whId">
+                                <div style="display:flex;gap:10px;flex-wrap:wrap;">
+                                    <div class="form-group" style="flex:1;min-width:200px;">
+                                        <label>Nombre (para vos):</label>
+                                        <input type="text" id="whName" placeholder="Ej: Publicista Juan / CRM propio" style="width:100%;">
+                                    </div>
+                                    <div class="form-group" style="flex:2;min-width:260px;">
+                                        <label>URL que recibe (https):</label>
+                                        <input type="text" id="whUrl" placeholder="https://..." style="width:100%;">
+                                    </div>
+                                </div>
+                                <div class="form-group">
+                                    <label>Secreto (lo compartís con quien recibe; firma cada aviso):</label>
+                                    <input type="password" id="whSecret" placeholder="Dejá vacío para no cambiarlo" style="width:100%;" autocomplete="new-password">
+                                    <small style="color:#aaa;font-size:11px;">Se guarda cifrado y no se vuelve a mostrar. <a href="#" onclick="webhookGenSecret();return false;" style="color:#d4af37;">Generar uno al azar</a></small>
+                                </div>
+                                <div class="form-group" id="whAuthBox">
+                                    <label>Cómo se autentica el aviso (lo que pida la plataforma que recibe):</label>
+                                    <select id="whAuthMode" style="width:100%;" onchange="webhookAuthChanged()">
+                                        <option value="hmac_ts">Firma HMAC de "{timestamp}.{body}" en X-Webhook-Signature (nuestro formato, default)</option>
+                                        <option value="hmac_body">Firma HMAC-SHA256 del body solo, en un header a elección (estilo GitHub / Shopify)</option>
+                                        <option value="bearer">Token fijo: Authorization: Bearer &lt;secreto&gt;</option>
+                                        <option value="header">Token fijo en un header a elección (API key)</option>
+                                    </select>
+                                    <div id="whAuthExtra" style="display:none;gap:12px;flex-wrap:wrap;margin-top:8px;">
+                                        <div style="flex:1;min-width:200px;"><label style="font-size:12px;">Nombre del header</label><input type="text" id="whAuthHeader" placeholder="ej. X-Signature o X-Api-Key" style="width:100%;"></div>
+                                        <div style="flex:1;min-width:160px;"><label style="font-size:12px;">Prefijo del valor (opcional)</label><input type="text" id="whAuthPrefix" placeholder="ej. sha256=" style="width:100%;"></div>
+                                    </div>
+                                    <small style="color:#aaa;font-size:11px;">Si el receptor responde 401 "firma inválida" aunque ya cargó el secreto, es que calcula la firma de otra forma: pedile cómo (header y qué firma) y elegilo acá. Los headers X-Webhook-* van siempre, además.</small>
+                                </div>
+                                <div style="display:flex;gap:12px;flex-wrap:wrap;">
+                                    <div style="flex:1;min-width:240px;">
+                                        <div style="font-weight:bold;font-size:13px;margin-bottom:6px;">👥 Recibe los eventos de</div>
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="radio" name="whScope" value="all" style="width:auto;" onchange="webhookScopeChanged()"> <b>TODOS</b> los usuarios (también orgánicos)</label>
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="radio" name="whScope" value="publishers" style="width:auto;" onchange="webhookScopeChanged()"> Solo estos publicistas:</label>
+                                        <div id="whPublishers" style="margin-left:24px;display:grid;gap:2px;max-height:160px;overflow:auto;font-size:12px;"></div>
+                                        <small style="color:#aaa;font-size:11px;display:block;margin-left:24px;margin-top:4px;">Un usuario pertenece al publicista de la campaña por la que entró.</small>
+                                    </div>
+                                    <div style="flex:1;min-width:240px;">
+                                        <div style="font-weight:bold;font-size:13px;margin-bottom:6px;">📨 Qué avisos manda</div>
+                                        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;color:#aaa;"><input type="checkbox" checked disabled style="width:auto;"> Registro (siempre)</label>
+                                        <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;color:#aaa;"><input type="checkbox" checked disabled style="width:auto;"> Primera carga (siempre)</label>
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whEvCarga" style="width:auto;"> Todas las cargas (opcional)</label>
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whEvRetiro" style="width:auto;"> Retiros pagados (opcional)</label>
+                                        <div style="font-weight:bold;font-size:13px;margin:10px 0 6px;">🧩 Datos extra (opcionales)</div>
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whFAtrib" style="width:auto;"> Atribución (fbclid, _fbc/_fbp, UTM, landing, IP)</label>
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whFContacto" style="width:auto;"> Mail y teléfono del usuario</label>
+                                    </div>
+                                </div>
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:10px 0;"><input type="checkbox" id="whEnabled" checked style="width:auto;"> Destino activo</label>
+                                <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+                                    <button type="button" class="btn-primary" onclick="webhookSave()">💾 Guardar destino</button>
+                                    <button type="button" class="btn-secondary" onclick="webhookCancel()">Cancelar</button>
+                                    <span id="whMsg" style="font-size:12px;color:#aaa;"></span>
+                                </div>
+                            </div>
+                            <details style="margin-top:12px;font-size:12px;color:#aaa;">
+                                <summary style="cursor:pointer;color:#d4af37;">📄 Formato completo (TODO lo que el sistema puede mandar — uso interno)</summary>
+                                <div style="margin-top:6px;color:#ffb74d;">⚠️ No le pases este bloque al publicista: lista también lo que NO le mandás (teléfono, atribución, retiros…). Usá el botón <b>📋 Copiar formato para pasarle</b> del destino: arma el texto solo con lo que ese destino recibe.</div>
+                                <pre style="white-space:pre-wrap;background:rgba(0,0,0,0.35);padding:10px;border-radius:8px;font-size:11px;line-height:1.45;margin-top:8px;">POST {URL}   Content-Type: application/json
+Headers: X-Webhook-Event (registro | primera_carga | carga | retiro | prueba)
+         X-Webhook-Id (único por evento: si se repite, ignorar)
+         X-Webhook-Timestamp (unix, segundos)
+         X-Webhook-Signature = HMAC-SHA256 hex de "{timestamp}.{body}" con el secreto
+Body: { "event", "event_id", "sent_at", "site", "test",
+        "user": { "id", "created_at", "campaign", "publisher", "influencer", "source", "channel" },   (id = UUID interno, NUNCA va el username; source = URL completa de origen; channel = landing | panel…)
+        "amount", "currency", "first_deposit", "transaction_id", "occurred_at",
+        "attribution": { "fbclid", "fbc", "fbp", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "landing_url", "registration_ip" },   (si está marcado)
+        "contact": { "email", "phone", "phone_verified" } }   (si está marcado)
+Responder 2xx. Con 5xx / timeout se reintenta; con 4xx no.</pre>
+                            </details>
+                        </div>
+
                         <!-- #235 REGISTRO de clientes: abierto o sólo con invitación (réplica #748 de PICA ROJA; solo admin general) -->
                         <div class="panel-subheader" style="margin-top: 24px;" id="registrationModeHeader">
                             <h3>👤 Registro de clientes</h3>

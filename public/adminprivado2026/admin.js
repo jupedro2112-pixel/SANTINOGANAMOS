@@ -467,6 +467,241 @@ async function handleLogin(e) {
     }
 }
 
+// ====== #243 WEBHOOKS SALIENTES (réplica del #197 de CARGASGIROX; COMANDOS, solo admin general) ======
+let _whDests = [];
+let _whPublishers = [];
+function _whEvTxt(d) {
+    const ev = d.events || {}; const out = ['registro', 'primera carga'];
+    if (ev.carga) out.push('cargas'); if (ev.retiro) out.push('retiros');
+    return out.join(' · ');
+}
+// Texto del formato SOLO con lo que ese destino recibe (eventos y campos marcados): es lo
+// que se le pasa al publicista. El bloque genérico de la card lista TODO lo posible y no
+// se comparte (si el publicista ve que podemos mandar teléfono/atribución, lo pide).
+function _whFormatText(d) {
+    const ev = d.events || {}; const f = d.fields || {};
+    const events = ['registro', 'primera_carga']; if (ev.carga) events.push('carga'); if (ev.retiro) events.push('retiro'); events.push('prueba');
+    const lines = [];
+    lines.push('WEBHOOK — ' + (d.name || '') + '\nURL: ' + d.url + '\n');
+    lines.push('Cada aviso es un POST con JSON (Content-Type: application/json).');
+    lines.push('Eventos: ' + events.join(' | ') + ' (el "prueba" es solo para verificar la recepcion).\n');
+    const au = d.auth || {}; const am = au.mode || 'hmac_ts';
+    lines.push('Headers:');
+    lines.push('  X-Webhook-Event      tipo de evento');
+    lines.push('  X-Webhook-Id         id unico del evento (si se repite, es un reintento: ignorar)');
+    lines.push('  X-Webhook-Timestamp  unix time en segundos');
+    lines.push('  X-Webhook-Signature  HMAC-SHA256 hex de "{timestamp}.{body crudo}" con el secreto compartido');
+    if (am === 'hmac_body') lines.push('  ' + (au.header || 'X-Signature') + '  ' + (au.prefix || '') + 'HMAC-SHA256 hex del body crudo con el secreto compartido');
+    if (am === 'bearer') lines.push('  Authorization        Bearer <token acordado>');
+    if (am === 'header' && au.header) lines.push('  ' + au.header + '  ' + (au.prefix || '') + '<token acordado>');
+    lines.push('');
+    if (am === 'hmac_ts') {
+        lines.push('Validacion: tomar el body tal cual llega (sin reformatear), armar timestamp + "." + body,');
+        lines.push('calcular HMAC-SHA256 con el secreto y comparar con X-Webhook-Signature. Rechazar si el');
+        lines.push('timestamp tiene mas de 5 minutos.\n');
+    } else if (am === 'hmac_body') {
+        lines.push('Validacion: HMAC-SHA256 del body crudo con el secreto, comparar con el header ' + (au.header || 'X-Signature') + '.\n');
+    } else {
+        lines.push('Validacion: comparar el token del header con el acordado.\n');
+    }
+    lines.push('Body:');
+    lines.push('  event, event_id, sent_at, site, test');
+    lines.push('  user: { id, created_at, campaign, publisher, influencer, source, channel }');
+    lines.push('    id = identificador unico y estable del jugador; source = URL completa de origen (dominio, ruta y parametros) con la que entro el jugador');
+    lines.push('  (en primera_carga' + (ev.carga ? ' / carga' : '') + (ev.retiro ? ' / retiro' : '') + ') amount, currency, first_deposit, transaction_id, occurred_at');
+    if (f.atribucion) lines.push('  attribution: { fbclid, fbc, fbp, utm_source, utm_medium, utm_campaign, utm_content, utm_term, landing_url, registration_ip }');
+    if (f.contacto) lines.push('  contact: { email, phone, phone_verified }');
+    lines.push('\nResponder 2xx. Con 5xx o timeout se reintenta (hasta 10 veces); con 4xx no se reintenta.');
+    return lines.join('\n');
+}
+async function webhookCopyFormat(id) {
+    const d = _whDests.find(function (x) { return x.id === id; }); if (!d) return;
+    const txt = _whFormatText(d);
+    try { await navigator.clipboard.writeText(txt); showToast('📋 Formato copiado: solo lo que recibe ' + (d.name || 'ese destino'), 'success'); }
+    catch (_) { window.prompt('Copiá el formato:', txt); }
+}
+function _whRenderList() {
+    const box = document.getElementById('webhooksList'); if (!box) return;
+    if (!_whDests.length) { box.innerHTML = '<span style="color:#aaa;font-size:12px;">Todavía no hay destinos. Agregá uno con "+ Nuevo destino".</span>'; return; }
+    box.innerHTML = _whDests.map(function (d) {
+        const st = d.stats;
+        const scope = d.scope === 'publishers' ? '👥 ' + escapeHtml((d.publishers || []).join(', ')) : '👥 <b>TODOS</b>';
+        const extra = [d.fields && d.fields.atribucion ? 'atribución' : null, d.fields && d.fields.contacto ? 'mail/tel' : null].filter(Boolean).join(' + ');
+        const am = (d.auth && d.auth.mode) || 'hmac_ts';
+        const authTxt = am === 'hmac_body' ? '🔑 HMAC del body en ' + escapeHtml((d.auth.header || 'X-Signature')) : am === 'bearer' ? '🔑 Bearer' : am === 'header' ? '🔑 token en ' + escapeHtml(d.auth.header || '?') : '';
+        let last = '';
+        if (st && st.lastAt) last = (st.lastOk ? '<span style="color:#66ff99;">✅ último OK</span>' : '<span style="color:#ff8080;">❌ ' + escapeHtml(st.lastError || 'falló') + '</span>') + ' (' + escapeHtml(st.lastEvent || '') + ', ' + fmtFechaHoraAR(st.lastAt) + ') · ' + st.ok + ' ok / ' + st.fail + ' fallos desde el arranque';
+        if (d.pending) last += ' · <span style="color:#ffb74d;">' + d.pending + ' en cola</span>';
+        if (d.decryptError) last += ' · <span style="color:#ff8080;">⚠️ secreto ilegible (¿cambió JWT_SECRET?): volvé a cargarlo</span>';
+        return '<div style="padding:10px;border-radius:8px;background:rgba(255,255,255,0.04);border-left:4px solid ' + (d.enabled ? '#66ff99' : '#777') + ';font-size:12px;line-height:1.6;">' +
+            '<div><b>' + escapeHtml(d.name || '(sin nombre)') + '</b> ' + (d.enabled ? '' : '<span style="color:#aaa;">(apagado)</span>') + ' · <code style="font-size:11px;">' + escapeHtml(d.url) + '</code></div>' +
+            '<div>' + scope + ' · 📨 ' + _whEvTxt(d) + (extra ? ' · 🧩 ' + extra : '') + (authTxt ? ' · ' + authTxt : '') + '</div>' +
+            (last ? '<div style="color:#aaa;">' + last + '</div>' : '') +
+            '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">' +
+            '<button type="button" class="btn-secondary btn-small" onclick="webhookEdit(\'' + d.id + '\')">✏️ Editar</button>' +
+            '<button type="button" class="btn-secondary btn-small" onclick="webhookTest(\'' + d.id + '\')">📤 Enviar prueba</button>' +
+            '<button type="button" class="btn-secondary btn-small" onclick="webhookCopyFormat(\'' + d.id + '\')" title="Copia el formato con SOLO los eventos y campos marcados para este destino">📋 Copiar formato para pasarle</button>' +
+            '<button type="button" class="btn-secondary btn-small" onclick="webhookDelete(\'' + d.id + '\')" style="color:#ff8080;">🗑 Borrar</button>' +
+            '</div></div>';
+    }).join('');
+}
+async function loadWebhooksCard() {
+    const form = document.getElementById('webhooksForm'); const header = document.getElementById('webhooksHeader');
+    try {
+        const r = await authFetch('/api/admin/webhooks');
+        if (!r.ok) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; return; }
+        if (form) form.style.display = ''; if (header) header.style.display = '';
+        const j = await r.json();
+        _whDests = j.destinations || []; _whPublishers = j.publishers || [];
+        _whRenderList();
+    } catch (_) {}
+}
+function _whRenderPublishers(selected) {
+    const box = document.getElementById('whPublishers'); if (!box) return;
+    const sel = (selected || []).map(function (x) { return String(x).toLowerCase(); });
+    if (!_whPublishers.length) { box.innerHTML = '<span style="color:#aaa;">No hay campañas con publicista todavía (creá una en PUBLICISTAS Y PAUTAS).</span>'; return; }
+    box.innerHTML = _whPublishers.map(function (pub) {
+        return '<label style="display:flex;align-items:center;gap:6px;cursor:pointer;"><input type="checkbox" class="whPub" value="' + escapeHtml(pub) + '" style="width:auto;"' + (sel.indexOf(pub.toLowerCase()) >= 0 ? ' checked' : '') + '> ' + escapeHtml(pub) + '</label>';
+    }).join('');
+}
+function webhookScopeChanged() {
+    const pubs = document.querySelector('input[name="whScope"]:checked');
+    const box = document.getElementById('whPublishers');
+    if (box) box.style.opacity = pubs && pubs.value === 'publishers' ? '1' : '0.45';
+}
+function webhookEdit(id) {
+    const d = id ? _whDests.find(function (x) { return x.id === id; }) : null;
+    const ed = document.getElementById('webhookEditor'); if (!ed) return;
+    document.getElementById('whId').value = d ? d.id : '';
+    document.getElementById('whName').value = d ? (d.name || '') : '';
+    document.getElementById('whUrl').value = d ? (d.url || '') : '';
+    document.getElementById('whSecret').value = '';
+    document.getElementById('whSecret').placeholder = d && d.hasSecret ? 'Dejá vacío para no cambiarlo' : 'Pegá o generá un secreto';
+    const scope = d ? (d.scope || 'all') : 'all';
+    const rb = document.querySelector('input[name="whScope"][value="' + scope + '"]'); if (rb) rb.checked = true;
+    _whRenderPublishers(d ? d.publishers : []);
+    webhookScopeChanged();
+    document.getElementById('whEvCarga').checked = !!(d && d.events && d.events.carga);
+    document.getElementById('whEvRetiro').checked = !!(d && d.events && d.events.retiro);
+    document.getElementById('whFAtrib').checked = !!(d && d.fields && d.fields.atribucion);
+    document.getElementById('whFContacto').checked = !!(d && d.fields && d.fields.contacto);
+    document.getElementById('whEnabled').checked = d ? d.enabled !== false : true;
+    const au = (d && d.auth) || {};
+    document.getElementById('whAuthMode').value = au.mode || 'hmac_ts';
+    document.getElementById('whAuthHeader').value = au.header || '';
+    document.getElementById('whAuthPrefix').value = au.prefix || '';
+    webhookAuthChanged();
+    const m = document.getElementById('whMsg'); if (m) m.textContent = '';
+    ed.style.display = '';
+    ed.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+}
+function webhookAuthChanged() {
+    const mode = document.getElementById('whAuthMode').value;
+    const extra = document.getElementById('whAuthExtra'); if (!extra) return;
+    const show = mode === 'hmac_body' || mode === 'header';
+    extra.style.display = show ? 'flex' : 'none';
+    const pr = document.getElementById('whAuthPrefix'); if (pr) pr.placeholder = mode === 'header' ? 'ej. Bearer ' : 'ej. sha256=';
+}
+function webhookCancel() { const ed = document.getElementById('webhookEditor'); if (ed) ed.style.display = 'none'; }
+function webhookGenSecret() {
+    const a = new Uint8Array(24); (window.crypto || window.msCrypto).getRandomValues(a);
+    const hex = Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
+    const el = document.getElementById('whSecret'); el.type = 'text'; el.value = 'whsec_' + hex;
+    showToast('Secreto generado: copialo AHORA y pasáselo a quien recibe (no se vuelve a mostrar)', 'success');
+}
+async function webhookSave() {
+    const m = document.getElementById('whMsg');
+    const scope = (document.querySelector('input[name="whScope"]:checked') || {}).value || 'all';
+    const publishers = Array.prototype.map.call(document.querySelectorAll('.whPub:checked'), function (c) { return c.value; });
+    const body = {
+        id: document.getElementById('whId').value || undefined,
+        name: document.getElementById('whName').value, url: document.getElementById('whUrl').value.trim(),
+        secret: document.getElementById('whSecret').value, scope, publishers,
+        events: { registro: true, primera_carga: true, carga: document.getElementById('whEvCarga').checked, retiro: document.getElementById('whEvRetiro').checked },
+        fields: { atribucion: document.getElementById('whFAtrib').checked, contacto: document.getElementById('whFContacto').checked },
+        enabled: document.getElementById('whEnabled').checked,
+        auth: { mode: document.getElementById('whAuthMode').value, header: document.getElementById('whAuthHeader').value.trim(), prefix: document.getElementById('whAuthPrefix').value }
+    };
+    if ((body.auth.mode === 'header') && !body.auth.header) { if (m) { m.style.color = '#ff8080'; m.textContent = '❌ Poné el nombre del header para el token'; } return; }
+    if (body.fields.contacto && !confirm('Vas a mandar el MAIL y el TELÉFONO de los usuarios a ' + (body.name || body.url) + '. ¿Confirmás?')) return;
+    try {
+        const r = await authFetch('/api/admin/webhooks', { method: 'POST', body: JSON.stringify(body) });
+        const j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { if (m) { m.style.color = '#ff8080'; m.textContent = '❌ ' + (j.error || 'No se pudo guardar'); } return; }
+        showToast('Destino guardado', 'success');
+        webhookCancel(); loadWebhooksCard();
+    } catch (_) { if (m) { m.style.color = '#ff8080'; m.textContent = '❌ Error de conexión'; } }
+}
+async function webhookDelete(id) {
+    const d = _whDests.find(function (x) { return x.id === id; });
+    if (!confirm('¿Borrar el destino "' + (d ? d.name : id) + '"? Deja de recibir avisos y se descarta lo que tenga en cola.')) return;
+    try {
+        const r = await authFetch('/api/admin/webhooks/' + encodeURIComponent(id), { method: 'DELETE' });
+        const j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { showToast(j.error || 'No se pudo borrar', 'error'); return; }
+        showToast('Destino borrado', 'success'); loadWebhooksCard();
+    } catch (_) { showToast('Error de conexión', 'error'); }
+}
+async function webhookTest(id) {
+    showToast('Enviando aviso de prueba…', 'info');
+    try {
+        const r = await authFetch('/api/admin/webhooks/' + encodeURIComponent(id) + '/test', { method: 'POST' });
+        const j = await r.json().catch(function () { return {}; });
+        if (!r.ok) { showToast(j.error || 'No se pudo probar', 'error'); return; }
+        if (j.ok) showToast('✅ El receptor respondió ' + j.status, 'success');
+        else showToast('❌ No llegó: ' + (j.error || 'sin respuesta'), 'error');
+        loadWebhooksCard();
+    } catch (_) { showToast('Error de conexión', 'error'); }
+}
+window.loadWebhooksCard = loadWebhooksCard; window.webhookCopyFormat = webhookCopyFormat; window.webhookAuthChanged = webhookAuthChanged; window.webhookEdit = webhookEdit; window.webhookCancel = webhookCancel; window.webhookGenSecret = webhookGenSecret;
+window.webhookScopeChanged = webhookScopeChanged; window.webhookSave = webhookSave; window.webhookDelete = webhookDelete; window.webhookTest = webhookTest;
+
+// ===== #243 (réplica del #214 de CARGASGIROX): COMANDOS → "📣 Píxeles de Meta por publicista" (sólo admin general). GET/POST/DELETE /api/admin/meta-pixels, prueba /:n/test.
+async function loadMetaPixels() {
+    const box = document.getElementById('metaPixelsList'), form = document.getElementById('metaPixelsForm'), header = document.getElementById('metaPixelsHeader'); if (!box) return;
+    try {
+        const r = await authFetch('/api/admin/meta-pixels');
+        if (r.status === 403) { if (form) form.style.display = 'none'; if (header) header.style.display = 'none'; return; }
+        const j = await r.json(); const L = j.pixels || [];
+        if (!L.length) { box.innerHTML = '<div style="color:#aaa;">Todavía no hay píxeles cargados.</div>'; return; }
+        box.innerHTML = '<table style="width:100%;border-collapse:collapse;"><thead><tr style="color:#aaa;text-align:left;"><th style="padding:4px 6px;">Para</th><th style="padding:4px 6px;">Píxel</th><th style="padding:4px 6px;">Token</th><th style="padding:4px 6px;">Recibe por servidor</th><th style="padding:4px 6px;">Últimos envíos</th><th></th></tr></thead><tbody>' +
+            L.map((p) => { const u = p.ultimosEnvios; const last = u && u.last ? ((u.last.ok ? '✅ ' : '❌ ') + escapeHtml(u.last.event) + ' · ' + new Date(u.last.at).toLocaleString('es-AR', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) + (u.last.ok ? '' : ' · ' + escapeHtml(String(u.last.detail || '').slice(0, 90)))) : '—';
+                return '<tr style="border-top:1px solid rgba(255,255,255,.08);"><td style="padding:6px;"><b>' + escapeHtml((p.alcance || []).join(', ')) + '</b><br><small style="color:#888;">' + (p.origen === 'panel' ? 'cargado en el panel' : 'variable de Amazon #' + p.n) + '</small></td>' +
+                    '<td style="padding:6px;font-family:monospace;">' + escapeHtml(p.pixel) + '</td><td style="padding:6px;">' + (String(p.token).startsWith('sí') ? '✅ sí' : '❌ ' + escapeHtml(p.token)) + '</td><td style="padding:6px;">' + escapeHtml(p.recibePorCapi) + (u ? '<br><small style="color:#888;">' + u.ok + ' ok · ' + u.fail + ' con error</small>' : '') + '</td>' +
+                    '<td style="padding:6px;font-size:11.5px;">' + last + '</td><td style="padding:6px;white-space:nowrap;"><button class="btn btn-secondary btn-sm" title="Probar contra Meta" onclick="' + escapeHtml('testMetaPixel(' + JSON.stringify(String(p.n)) + ')') + '">🧪 Probar</button>' +
+                    (p.origen === 'panel' ? ' <button class="btn btn-secondary btn-sm" title="Editar" onclick="' + escapeHtml('editMetaPixel(' + JSON.stringify(p.id) + ',' + JSON.stringify((p.alcance || []).join(', ')) + ',' + JSON.stringify(p.pixelId || '') + ',' + JSON.stringify(!!p.soloCapi) + ')') + '">✏️</button> <button class="btn btn-secondary btn-sm" title="Borrar" onclick="' + escapeHtml('deleteMetaPixel(' + JSON.stringify(p.id) + ')') + '">🗑️</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table>';
+    } catch (_) { box.innerHTML = '<div style="color:#ff6b6b;">No se pudo cargar.</div>'; }
+}
+// #215: los onclick de la tabla van con escapeHtml: JSON.stringify mete comillas dobles adentro de un atributo con comillas dobles ⇒ el handler quedaba roto y los botones Probar/✏️/🗑️ no hacían nada.
+function clearMetaPixelForm() { ['mpId', 'mpScope', 'mpPixel', 'mpToken', 'mpTest'].forEach((id) => { const e = document.getElementById(id); if (e) e.value = ''; }); const c = document.getElementById('mpCapiOnly'); if (c) c.checked = false; const m = document.getElementById('mpMsg'); if (m) m.textContent = ''; }
+function editMetaPixel(id, scope, pixelId, capiOnly) { document.getElementById('mpId').value = id; document.getElementById('mpScope').value = scope; document.getElementById('mpPixel').value = pixelId; document.getElementById('mpToken').value = ''; document.getElementById('mpCapiOnly').checked = !!capiOnly; const m = document.getElementById('mpMsg'); if (m) m.textContent = 'Editando: el token vacío = se mantiene el guardado.'; try { document.getElementById('mpScope').scrollIntoView({ behavior: 'smooth', block: 'center' }); } catch (_) {} }
+async function saveMetaPixel() {
+    const msg = document.getElementById('mpMsg');
+    const body = { id: document.getElementById('mpId').value.trim(), scope: document.getElementById('mpScope').value.trim(), pixelId: document.getElementById('mpPixel').value.trim(), token: document.getElementById('mpToken').value.trim(), testEventCode: document.getElementById('mpTest').value.trim(), capiOnly: document.getElementById('mpCapiOnly').checked };
+    try {
+        const r = await authFetch('/api/admin/meta-pixels', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+        const j = await r.json().catch(() => ({}));
+        if (!r.ok) { if (msg) { msg.style.color = '#ff6b6b'; msg.textContent = j.error || 'No se pudo guardar'; } return; }
+        if (msg) { msg.style.color = '#26e07f'; msg.textContent = '✓ Guardado. Ya recibe eventos (sin redeploy). Tocá 🧪 Probar para confirmar con Meta.'; }
+        clearMetaPixelForm(); loadMetaPixels();
+    } catch (_) { if (msg) { msg.style.color = '#ff6b6b'; msg.textContent = 'Error de conexión'; } }
+}
+async function testMetaPixel(n) {
+    try {
+        const r = await authFetch('/api/admin/meta-pixels/' + encodeURIComponent(n) + '/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+        const j = await r.json().catch(() => ({}));
+        if (j.ok) alert('✅ Meta aceptó el evento de prueba en el píxel ' + (j.pixelId || '') + '.\n\nRespuesta: ' + JSON.stringify(j.response) + (j.testEventCode ? '\n\nMiralo en Administrador de eventos → Probar eventos (código ' + j.testEventCode + ').' : '\n\nEn 1-2 minutos aparece como "GanamosTest" en el Administrador de eventos del publicista.'));
+        else alert('❌ Meta rechazó la prueba.\n\n' + (typeof j.error === 'string' ? j.error : JSON.stringify(j.error)) + (j.pista ? '\n\n👉 ' + j.pista : ''));
+        loadMetaPixels();
+    } catch (_) { alert('Error de conexión'); }
+}
+async function deleteMetaPixel(id) {
+    if (!confirm('¿Borrar este píxel? Deja de recibir eventos al instante.')) return;
+    try { const r = await authFetch('/api/admin/meta-pixels/' + encodeURIComponent(id), { method: 'DELETE' }); if (!r.ok) { showToast('No se pudo borrar', 'error'); return; } showToast('Píxel borrado', 'success'); loadMetaPixels(); } catch (_) { showToast('Error de conexión', 'error'); }
+}
+window.loadMetaPixels = loadMetaPixels; window.saveMetaPixel = saveMetaPixel; window.testMetaPixel = testMetaPixel; window.deleteMetaPixel = deleteMetaPixel; window.editMetaPixel = editMetaPixel; window.clearMetaPixelForm = clearMetaPixelForm;
+
+
 async function checkAdminSession() {
     try {
         const response = await fetch(`${API_URL}/api/admin/me`, {
@@ -5918,6 +6153,8 @@ async function loadCBUConfig() {
     loadFeaturesCard();
     loadRegistrationMode();
     loadDatosIaPin(); // #236 clave propia de Datos IA
+    loadMetaPixels(); // #243 píxeles de Meta por publicista (solo admin general)
+    loadWebhooksCard(); // #243 webhooks salientes a publicistas (solo admin general)
     // Cargar la config del banco automático (hgcash)
     loadHgcashConfig();
     // #196 GANAMOS (manual): reembolsos, reembolso en vivo, rollover global y niveles VIP no existen

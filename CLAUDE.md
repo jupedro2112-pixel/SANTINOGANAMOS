@@ -338,6 +338,11 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `monthlyCap`, `dailyCap`, `rotGroup`) y respeta `User.notifPrefs` (`prefsFilter`, `data.kind` promo/personal). El aviso
   del reembolso es SÓLO el semanal por planilla (`WeeklyRefund.remindedAt`, `/sys_refund_reminder_weekly`). El piloto usa
   `ScheduledCampaign.autoKey` (único sparse). Un flag nuevo de notificaciones: sumar `_cronClaim` (multi-instancia).
+  **Píxeles de Meta por publicista + webhooks salientes (#243, réplica de CARGASGIROX #214/#197):** `Config['metaPixels']`
+  (token cifrado) y `Config['outboundWebhooks']` (secreto cifrado) se cargan en COMANDOS; `metaCapiService` es la versión del gemelo
+  (un píxel con token recibe por CAPI sólo SU alcance). Todo flujo nuevo de registro/carga/retiro pagado tiene que llamar a
+  `outboundWebhook.notify(...)` al lado de `fbAdsWebhook.notify(...)` (carga: `firstDeposit` con `_isFirstDeposit`). Nada de esto
+  depende de la API de GANAMOS. Detalle en ARCHITECTURE §4.10.1/§4.10.2.
 
 - **Lotes y Cronograma (#228):** el POST `/api/admin/notif-batches` es un wrapper de
   `_createNotifBatchFromBody(body, user)`; cualquier validación/efecto nuevo del lote va en esa

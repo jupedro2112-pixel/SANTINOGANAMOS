@@ -247,6 +247,32 @@ function fbcValue() {
   return fbclid ? 'fb.1.' + Date.now() + '.' + fbclid : null;
 }
 
+// PIXEL DEL NAVEGADOR de Meta (#243, réplica de CARGASGIROX #198): qué píxel carga la landing lo
+// decide el backend según la campaña del visitante (/api/meta-pixel-id?c=CODIGO): SOLO los píxeles
+// del publicista de esa campaña (cargados en el panel → COMANDOS → Píxeles de Meta, o en SSM).
+// Genera el _fbp REAL, dispara PageView y permite DEDUP navegador+servidor del CompleteRegistration
+// (mismo event_id `reg_<id>` que devuelve el backend como metaEventId). Sin campaña → sin píxel.
+(function loadMetaPixel() {
+  var _inited = false;
+  function initPixels(ids) {
+    if (_inited || !ids || !ids.length) return;
+    _inited = true;
+    try {
+      !function(f,b,e,v,n,t,s){if(f.fbq)return;n=f.fbq=function(){n.callMethod?n.callMethod.apply(n,arguments):n.queue.push(arguments)};if(!f._fbq)f._fbq=n;n.push=n;n.loaded=!0;n.version='2.0';n.queue=[];t=b.createElement(e);t.async=!0;t.src=v;s=b.getElementsByTagName(e)[0];s.parentNode.insertBefore(t,s)}(window,document,'script','https://connect.facebook.net/en_US/fbevents.js');
+    } catch (e) { return; }
+    ids.forEach(function (id) { try { fbq('init', id); } catch (e) {} });
+    try { fbq('track', 'PageView'); } catch (e) {}
+  }
+  try {
+    var c = campaignCode();
+    if (!c) return;
+    fetch(API_BASE + '/api/meta-pixel-id?c=' + encodeURIComponent(c))
+      .then(function (r) { return r.json(); })
+      .then(function (d) { initPixels(d && d.pixelIds ? d.pixelIds : []); })
+      .catch(function () {});
+  } catch (e) {}
+})();
+
 var accessUrl = null;
 var creado = false;
 var BTN_TXT = '🎁 CREAR MI USUARIO GRATIS';
@@ -291,6 +317,10 @@ async function crearCuenta() {
     }
     creado = true;
     accessUrl = data.accessUrl;
+    // Registro en el NAVEGADOR con el MISMO event_id que el servidor (reg_<id>) → Meta deduplica.
+    try {
+      if (window.fbq && data.metaEventId) fbq('track', 'CompleteRegistration', { content_name: 'signup_landing' }, { eventID: data.metaEventId });
+    } catch (e) {}
     document.getElementById('credUser').textContent = data.username;
     document.getElementById('credPass').textContent = data.password;
     // Link de la página de cargas (PUBLIC_BASE_URL del backend): va en la captura.
