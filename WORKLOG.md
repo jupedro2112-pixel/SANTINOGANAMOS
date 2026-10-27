@@ -88,7 +88,9 @@
   creado"; la bienvenida sólo da usuario/clave y lo invita a escribir para cargar; `/sys_ganamos_cuenta_creada` es un "¡Todo listo,
   ya podés entrar a jugar!" neutro; `/sys_username_changed` dice "el nombre anterior ya estaba en uso". En la PWA, mientras
   `platformAccountPending` (lo manda `/api/auth/verify`) CASINO no abre GANAMOS: toast neutro "tu acceso se está habilitando, probá
-  en unos minutos" (abrirlo haría fallar el login en GANAMOS y lo delataría). El chat le llega al agente solo: la bienvenida
+  en unos minutos" (abrirlo haría fallar el login en GANAMOS y lo delataría). **Y (misma tarde, tras verlo en producción): al
+  marcar creado NO se le manda nada al cliente**: `/sys_ganamos_cuenta_creada` arranca VACÍO (fallback '' en `_signupTaskSettled`;
+  si el owner escribe un texto en COMANDOS, se envía ese) + migración de boot que vacía el texto de seed ya sembrado. El chat le llega al agente solo: la bienvenida
   crea la conversación (`new_message` a admins) y la nota interna 👤 CREAR USUARIO queda arriba, más el toast y la tarea.
 - **Panel:** la tarea aparece en ⏳ Pendientes GANAMOS como 👤 CREAR USUARIO (usuario + **clave visible** + nombre) y en el chat del
   cliente como cartel dorado (`#chatPlatformAccountBanner`, `loadPlatformAccountBanner`, `GET /api/admin/users/:id/platform-account`).

@@ -638,9 +638,9 @@ async function _signupTaskSettled(event, task, userId) {
       'platformAccount.status': 'created', 'platformAccount.pin': null, 'platformAccount.createdBy': task.doneBy || null,
       'platformAccount.createdAt': new Date(), 'platformAccount.note': task.note || null, giroxSyncStatus: 'linked'
     } });
-    const text = await renderSystemCommand('/sys_ganamos_cuenta_creada',
-      '🎰 ¡Todo listo {username}! Ya podés entrar a jugar con tu usuario *{username}* y tu clave. Para cargar fichas escribinos por acá.',
-      { username: task.username });
+    // Decisión del owner (2026-10-27): por default NO se le manda nada al cliente (se supone que el usuario
+    // "se creó solo"); si el owner escribe un texto en COMANDOS → /sys_ganamos_cuenta_creada, se envía ese.
+    const text = await renderSystemCommand('/sys_ganamos_cuenta_creada', '', { username: task.username });
     if (text) { try { await _sendSystemMessageToUser(userId, task.username, text); } catch (e) { logger.warn(`[landing-signup] aviso al cliente de la tarea ${task._id}: ${e.message}`); } }
     logger.info(`[landing-signup] ${task.username} creado en GANAMOS por ${task.doneBy || 'agente'}`);
   } else {
@@ -706,7 +706,7 @@ if (PLATFORM_MANUAL) {
     }
     if (userId && isSignup) {
       await _emitAdminOnlyChatNote(userId, task.username, event === 'done'
-        ? `✅ USUARIO CREADO EN GANAMOS por ${task.doneBy || 'agente'} — "${task.username}". El cliente ya recibió el aviso.${task.note ? ' Nota: ' + task.note : ''}`
+        ? `✅ USUARIO CREADO EN GANAMOS por ${task.doneBy || 'agente'} — "${task.username}".${task.note ? ' Nota: ' + task.note : ''}`
         : `❌ ALTA RECHAZADA por ${task.doneBy || 'agente'} — "${task.username}" NO se creó en GANAMOS.${task.note ? ' Motivo: ' + task.note : ''}`);
     } else if (userId) {
       await _emitAdminOnlyChatNote(userId, task.username, event === 'done'
@@ -11346,9 +11346,9 @@ async function initializeData() {
     {
       // #242 el agente marcó ✅ (2 toques) que creó el usuario en GANAMOS.
       name: '/sys_ganamos_cuenta_creada',
-      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente marca que YA CREÓ su usuario en GANAMOS. ⚠️ Sin decir que recién se creó (el cliente no sabe que fue a mano). Variables: {username}. Si lo dejás vacío, no se envía.',
+      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente marca que YA CREÓ su usuario en GANAMOS. Arranca VACÍO = no se le manda nada (el cliente no sabe que fue a mano; se supone que se creó solo). Si escribís un texto acá, se envía ese. ⚠️ Sin decir que recién se creó. Variables: {username}.',
       type: 'message',
-      response: '🎰 ¡Todo listo {username}! Ya podés entrar a jugar con tu usuario *{username}* y tu clave. Para cargar fichas escribinos por acá.'
+      response: ''
     },
     {
       // #242 el agente cambió el usuario desde el panel porque el nombre ya existía en GANAMOS.
@@ -11556,6 +11556,16 @@ async function initializeData() {
   // {rollover}, rakeback) se PISAN con el texto vigente de la seed. Idempotente y
   // segura: sólo toca respuestas que todavía contengan una de esas marcas; un texto
   // que el owner ya editó sin esas palabras no se toca.
+  // #242 (2026-10-27): el aviso "usuario creado" al cliente pasó a arrancar VACÍO (decisión del owner);
+  // en producción ya se había sembrado con texto → se vacía SÓLO si todavía tiene uno de esos dos
+  // textos de seed (si el owner escribió el suyo, no se toca).
+  try {
+    const r = await Command.updateOne(
+      { name: '/sys_ganamos_cuenta_creada', response: { $regex: /ya está creado|¡Todo listo \{username\}! Ya podés entrar a jugar/ } },
+      { $set: { response: '' } }
+    );
+    if (r.modifiedCount) console.log('🧹 /sys_ganamos_cuenta_creada vaciado (#242: no se avisa al cliente por default)');
+  } catch (e) { console.warn(`⚠️ Migración /sys_ganamos_cuenta_creada: ${e.message}`); }
   if (PLATFORM_NO_STATS) { // #231 manual Y mijoker (ninguna tiene rollover/reembolsos/VIP/referidos)
     const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|\{referral_pct\}|referid|rakeback|nivel VIP/i; // #207 + referidos
     let fixed = 0;

@@ -185,7 +185,8 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   (`girox.requestAccountCreation`, reference `vip-signup-<userId>`) para que un agente
   cree ESE usuario con ESA clave en GANAMOS; lo marca con el botón de 2 toques del
   cartel del chat (`#chatPlatformAccountBanner`) o de Pendientes GANAMOS →
-  `_signupTaskSettled` pone `created`, borra el PIN y avisa `/sys_ganamos_cuenta_creada`.
+  `_signupTaskSettled` pone `created`, borra el PIN y manda `/sys_ganamos_cuenta_creada` SÓLO si el
+  owner le escribió un texto (arranca vacío: el cliente no se entera).
   Si GANAMOS rechaza el nombre: `POST /api/admin/users/:id/rename` (sólo mientras está
   pendiente; actualiza User/ChatStatus/Transaction/tarea y avisa `/sys_username_changed`).
   Mientras está pendiente, `/api/auth/verify` manda `platformAccountPending:true` y la
