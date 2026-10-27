@@ -985,7 +985,8 @@ VIP.ui.enterCasino = async function() {
     VIP.ui.closePlatformModal();
     // #242 alta por landing: el usuario todavía NO existe en GANAMOS (lo crea un agente).
     if (VIP.state.currentUser && VIP.state.currentUser.platformAccountPending === true) {
-      try { VIP.ui.showToast('⏳ Un agente está creando tu usuario en GANAMOS. Te avisamos por el chat en unos minutos.', 'error'); } catch (e) {}
+      // El cliente NO sabe que lo crea un agente a mano (decisión del owner): texto neutro.
+      try { VIP.ui.showToast('⏳ Tu acceso se está habilitando, probá de nuevo en unos minutos. Para cargar fichas escribinos por el chat.', 'error'); } catch (e) {}
       return;
     }
     VIP.ui._openInNewTab(VIP.platform.playUrl());

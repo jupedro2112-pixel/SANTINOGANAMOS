@@ -13,8 +13,9 @@
   resto viejo que rutea todo a server.js).
 
   #242 MODO MANUAL (GANAMOS sin API): el backend crea la cuenta LOCAL (usuario + clave
-  que se le muestran acá) y un agente crea ese mismo usuario en GANAMOS a mano; el
-  cliente entra a la app y le avisan por el chat. Requiere el interruptor
+  que se le muestran acá) y un agente crea ese mismo usuario en GANAMOS a mano. El
+  cliente NO se entera de eso (la pantalla dice "tu usuario está listo" igual que
+  siempre; `pendingAgent:true` en la respuesta sólo se usa para no abrir el casino). Requiere el interruptor
   "Alta por LANDING sin API" prendido en el panel (COMANDOS → Funciones nuevas);
   apagado, el backend responde 410 y acá se muestra el error.
 
@@ -101,7 +102,6 @@
   .creds .dato .k { font-size:12px; color:#888; }
   .creds .dato .v { font-size:24px; font-weight:900; color:#f5d76e; letter-spacing:1px; font-family:monospace; }
   .warn { color:#ffb74d; font-size:13px; text-align:center; margin-top:10px; }
-  .pend { display:none; background:rgba(255,183,77,0.10); border:1px solid rgba(255,183,77,0.45); border-radius:10px; padding:10px 12px; margin-top:12px; font-size:13px; color:#ffe0b2; line-height:1.45; text-align:center; }
   /* Popup de enganche */
   #hookPop {
     display:none; position:fixed; inset:0; background:rgba(0,0,0,0.75);
@@ -158,7 +158,6 @@
     <div class="dato"><div class="k">TU USUARIO</div><div class="v" id="credUser"></div></div>
     <div class="dato"><div class="k">TU CLAVE</div><div class="v" id="credPass"></div></div>
     <p class="warn">📌 Sacale captura o anotalos: con esto entrás desde cualquier dispositivo.</p>
-    <div class="pend" id="pendBox">⏳ <b>Un agente está activando tu usuario en GANAMOS.</b> Entrá a la app: en unos minutos te avisamos por el chat y ya podés cargar y jugar.</div>
     <button class="btn" id="enterBtn" onclick="entrar()">🎰 ENTRAR A MI CUENTA</button>
   </div>
 
@@ -289,12 +288,8 @@ async function crearCuenta() {
     accessUrl = data.accessUrl;
     document.getElementById('credUser').textContent = data.username;
     document.getElementById('credPass').textContent = data.password;
-    // #242 modo manual: un agente lo crea en GANAMOS; el cliente entra a la app y le avisan por el chat.
-    if (data.pendingAgent) {
-      document.getElementById('credsTitle').textContent = '✅ ¡Ya tenés tu usuario y tu clave!';
-      document.getElementById('pendBox').style.display = 'block';
-      document.getElementById('enterBtn').textContent = '💬 ENTRAR A LA APP';
-    }
+    // #242 modo manual: un agente lo crea en GANAMOS a mano, pero el cliente NO se entera
+    // (decisión del owner): misma pantalla "tu usuario está listo"; el access-link lo deja en el chat.
     document.getElementById('formCard').style.display = 'none';
     document.getElementById('credsCard').style.display = 'block';
     document.getElementById('gamesStrip').style.display = 'none';

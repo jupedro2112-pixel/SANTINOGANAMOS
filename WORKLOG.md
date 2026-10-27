@@ -82,9 +82,14 @@
   `platformAccount:{status:'pending_agent', pin, name, requestedAt}` (**campo nuevo en `User`**) → `PlatformTask kind:'signup'`
   (**kind nuevo**, amount 0, reference `vip-signup-<userId>`, flow `landing_signup`, `meta:{pin,name,campaignCode}`) vía
   `girox.requestAccountCreation()` (**método nuevo del adaptador manual**, idempotente) → chat abierto + bienvenida
-  `/sys_landing_cuenta_pendiente` ({name} {username} {password}) → la landing muestra usuario y clave con el aviso "un agente está
-  activando tu usuario" y el access-link **sin `ir=casino`** (cae al chat). En la PWA, mientras `platformAccountPending` (lo manda
-  `/api/auth/verify`) CASINO no abre GANAMOS: toast "un agente está creando tu usuario".
+  `/sys_landing_cuenta_pendiente` ({name} {username} {password}) → la landing muestra "✅ ¡Tu usuario está listo!" con usuario y
+  clave (igual que siempre) y el access-link **sin `ir=casino`** (cae al chat). **El cliente NO se entera de que un agente le crea el
+  usuario a mano** (decisión del owner, misma sesión): ningún texto al cliente dice "agente", "te lo estamos creando" ni "ya está
+  creado"; la bienvenida sólo da usuario/clave y lo invita a escribir para cargar; `/sys_ganamos_cuenta_creada` es un "¡Todo listo,
+  ya podés entrar a jugar!" neutro; `/sys_username_changed` dice "el nombre anterior ya estaba en uso". En la PWA, mientras
+  `platformAccountPending` (lo manda `/api/auth/verify`) CASINO no abre GANAMOS: toast neutro "tu acceso se está habilitando, probá
+  en unos minutos" (abrirlo haría fallar el login en GANAMOS y lo delataría). El chat le llega al agente solo: la bienvenida
+  crea la conversación (`new_message` a admins) y la nota interna 👤 CREAR USUARIO queda arriba, más el toast y la tarea.
 - **Panel:** la tarea aparece en ⏳ Pendientes GANAMOS como 👤 CREAR USUARIO (usuario + **clave visible** + nombre) y en el chat del
   cliente como cartel dorado (`#chatPlatformAccountBanner`, `loadPlatformAccountBanner`, `GET /api/admin/users/:id/platform-account`).
   Botón **"✅ Ya lo creé" de DOS toques** (`platformTaskDoneTwice`: el 1º arma el botón 6 s, el 2º confirma; sin `confirm()`) → `settleTask`
@@ -96,17 +101,17 @@
   `platformAccount.status:'rejected'`. Roles: `_canSettlePlatformTask(role,'signup')` → admin, depositor (cargas) y comunidad (como las
   cargas). Tabla Usuarios: badge "👤 POR CREAR EN GANAMOS" (`platformAccount.status` sumado a `USERS_LIST_FIELDS`). Socket
   `platform_task` con `kind:'signup'` o `event:'renamed'` refresca el cartel del chat abierto.
-- **Landing (`landing/index.html`):** título y textos GANAMOS, logo (`/icons/icon-192x192.png`), 3 banners rotando
+- **Landing (`landing/index.html`):** título y textos GANAMOS (sin ninguna pista de la creación manual), logo (`/icons/icon-192x192.png`), 3 banners rotando
   (`/images/banner-inicio|jackpots|futbol-ganamos.jpg`), tira de 10 juegos (`/images/games/*.jpg`), avatar de soporte: todo se carga
   desde `API_BASE` (`https://www.cargasganamos.com`, pisable con `?api=`), así no hay que copiar imágenes al dominio puente. Sellos
   "Cargás por transferencia / Retiros rápidos / Soporte 24/7"; sin bono en %, sin rollover/VIP/reembolsos. Responde a `pendingAgent:true`
-  mostrando el aviso y el botón "💬 ENTRAR A LA APP". Vercel: subir SOLO este archivo (el `vercel.json` de la raíz es un resto viejo).
+  sólo para no cambiar nada visible (misma pantalla de "usuario listo"). Vercel: subir SOLO este archivo (el `vercel.json` de la raíz es un resto viejo).
 - **Decisiones / trampas:** el PIN queda en claro en `User.platformAccount.pin` y en `PlatformTask.meta.pin` SÓLO mientras está
   pendiente (el agente lo necesita para crear la cuenta); al marcar creado se borra del User (en la tarea `done` queda en meta: si se
   quiere, limpiar también ahí). El cambio de usuario sólo está permitido antes de crearlo en GANAMOS (después, el nombre tiene que ser
   el mismo que en GANAMOS). Un reintento de la landing con el mismo userId no duplica la tarea (reference estable).
 - **Tests:** `scripts/test-ganamos-adapter.js` suma el caso 7 (tarea signup, idempotencia, settle). Corridos OK: check-tdz, adaptador
-  manual, mijoker, login del panel. SW: admin v68, PWA v136.
+  manual, mijoker, login del panel. SW: admin v68, PWA v137.
 - **Cómo lo usa el agente:** panel → COMANDOS → Funciones nuevas → tildar "Alta por LANDING sin API". Llega un cliente por la landing →
   toast + tarea + cartel en su chat → crearlo en el panel de GANAMOS con ese usuario y esa clave → tocar 2 veces "Ya lo creé". Si GANAMOS
   dice que el nombre existe → "Cambiar usuario" → crearlo con el nuevo → marcar.

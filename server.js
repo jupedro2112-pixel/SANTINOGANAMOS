@@ -639,7 +639,7 @@ async function _signupTaskSettled(event, task, userId) {
       'platformAccount.createdAt': new Date(), 'platformAccount.note': task.note || null, giroxSyncStatus: 'linked'
     } });
     const text = await renderSystemCommand('/sys_ganamos_cuenta_creada',
-      '✅ ¡Listo {username}! Tu usuario de GANAMOS ya está creado. Entrá con tu usuario *{username}* y la clave que te mostramos al registrarte. Para cargar fichas escribinos por acá. 🎰',
+      '🎰 ¡Todo listo {username}! Ya podés entrar a jugar con tu usuario *{username}* y tu clave. Para cargar fichas escribinos por acá.',
       { username: task.username });
     if (text) { try { await _sendSystemMessageToUser(userId, task.username, text); } catch (e) { logger.warn(`[landing-signup] aviso al cliente de la tarea ${task._id}: ${e.message}`); } }
     logger.info(`[landing-signup] ${task.username} creado en GANAMOS por ${task.doneBy || 'agente'}`);
@@ -4456,7 +4456,7 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
       try { await ChatStatus.create({ userId, username, status: 'open', category: 'cargas', lastMessageAt: new Date() }); } catch (_) {}
       try {
         const text = await renderSystemCommand('/sys_landing_cuenta_pendiente',
-          '👋 ¡Hola {name}! Bienvenido a GANAMOS.\n\nTu usuario es *{username}* y tu clave *{password}* (guardalos 📌).\n\n⏳ Un agente está creando tu usuario en GANAMOS: en unos minutos te avisamos por acá y ya podés cargar y jugar. 🎰',
+          '👋 ¡Hola {name}! Bienvenido a GANAMOS.\n\nTu usuario es *{username}* y tu clave *{password}* (guardalos 📌).\n\n🎰 Para cargar fichas y empezar a jugar escribinos por acá: te respondemos al toque.',
           { username, password, name: cleanName });
         if (text) await _sendSystemMessageToUser(userId, username, text);
       } catch (e) { logger.warn(`[landing-signup] bienvenida a ${username}: ${e.message}`); }
@@ -11304,23 +11304,23 @@ async function initializeData() {
     {
       // #242 alta por LANDING en modo manual: bienvenida con usuario y clave mientras el agente lo crea en GANAMOS.
       name: '/sys_landing_cuenta_pendiente',
-      description: 'ALTA POR LANDING (GANAMOS sin API): primer mensaje al cliente que se registró desde la landing; su usuario de GANAMOS todavía lo tiene que crear un agente. Variables: {name} (nombre que escribió), {username}, {password} (la clave que vio en la landing). Si lo dejás vacío, no se envía.',
+      description: 'ALTA POR LANDING (GANAMOS sin API): primer mensaje al cliente que se registró desde la landing. ⚠️ El cliente NO tiene que enterarse de que un agente le crea el usuario a mano (decisión del owner): no escribir "te lo estamos creando" ni "un agente". Variables: {name} (nombre que escribió), {username}, {password} (la clave que vio en la landing). Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '👋 ¡Hola {name}! Bienvenido a GANAMOS.\n\nTu usuario es *{username}* y tu clave *{password}* (guardalos 📌).\n\n⏳ Un agente está creando tu usuario en GANAMOS: en unos minutos te avisamos por acá y ya podés cargar y jugar. 🎰'
+      response: '👋 ¡Hola {name}! Bienvenido a GANAMOS.\n\nTu usuario es *{username}* y tu clave *{password}* (guardalos 📌).\n\n🎰 Para cargar fichas y empezar a jugar escribinos por acá: te respondemos al toque.'
     },
     {
       // #242 el agente marcó ✅ (2 toques) que creó el usuario en GANAMOS.
       name: '/sys_ganamos_cuenta_creada',
-      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente marca que YA CREÓ su usuario en GANAMOS. Variables: {username}. Si lo dejás vacío, no se envía.',
+      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente marca que YA CREÓ su usuario en GANAMOS. ⚠️ Sin decir que recién se creó (el cliente no sabe que fue a mano). Variables: {username}. Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: '✅ ¡Listo {username}! Tu usuario de GANAMOS ya está creado. Entrá con tu usuario *{username}* y la clave que te mostramos al registrarte. Para cargar fichas escribinos por acá. 🎰'
+      response: '🎰 ¡Todo listo {username}! Ya podés entrar a jugar con tu usuario *{username}* y tu clave. Para cargar fichas escribinos por acá.'
     },
     {
       // #242 el agente cambió el usuario desde el panel porque el nombre ya existía en GANAMOS.
       name: '/sys_username_changed',
-      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente le CAMBIA el usuario desde el panel (el nombre ya estaba usado en GANAMOS). Variables: {username} (nuevo), {old} (anterior). Si lo dejás vacío, no se envía.',
+      description: 'ALTA POR LANDING (GANAMOS sin API): mensaje al cliente cuando el agente le CAMBIA el usuario desde el panel (el nombre ya existía en GANAMOS). ⚠️ Sin mencionar GANAMOS ni al agente. Variables: {username} (nuevo), {old} (anterior). Si lo dejás vacío, no se envía.',
       type: 'message',
-      response: 'ℹ️ Tu usuario pasó a ser *{username}* (el nombre {old} ya estaba usado en GANAMOS). Tu clave sigue siendo la misma. ⏳ En unos minutos te avisamos cuando esté creado. 🎰'
+      response: 'ℹ️ Tu usuario ahora es *{username}* (el nombre {old} ya estaba en uso). Tu clave sigue siendo la misma. 🎰'
     },
     {
       // #190 GANAMOS: el agente marcó ✅ una tarea pendiente (carga hgcash, premio de ruleta, fueguito, etc.).
@@ -15433,7 +15433,7 @@ app.post('/api/admin/users/:userId/rename', authMiddleware, adminMiddleware, asy
       } }).catch(() => {});
     }
     const text = await renderSystemCommand('/sys_username_changed',
-      'ℹ️ Tu usuario pasó a ser *{username}* (el nombre {old} ya estaba usado en GANAMOS). Tu clave sigue siendo la misma. ⏳ En unos minutos te avisamos cuando esté creado. 🎰',
+      'ℹ️ Tu usuario ahora es *{username}* (el nombre {old} ya estaba en uso). Tu clave sigue siendo la misma. 🎰',
       { username: wanted, old });
     if (text) { try { await _sendSystemMessageToUser(user.id, wanted, text); } catch (_) {} }
     await _emitAdminOnlyChatNote(user.id, wanted, `✏️ USUARIO CAMBIADO por ${req.user.username}: "${old}" → "${wanted}". Crealo en GANAMOS con el nombre NUEVO y la misma clave, y marcalo ✅.`);
