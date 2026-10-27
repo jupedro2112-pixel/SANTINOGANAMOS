@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-27** (última entrada: #244)
+> **Última actualización: 2026-10-27** (última entrada: #245)
 
 ---
 
@@ -71,6 +71,17 @@
 ---
 
 ## Sesión 2026-10-27
+
+### 245. 🎁 La landing de GANAMOS vuelve a mostrar el BONO DE BIENVENIDA (editable en COMANDOS)
+- **Owner:** "no muestra ningún bonus la landing de GANAMOS pero sí la que teníamos vieja" (la de PICA ROJA: BONO DE BIENVENIDA / 100% /
+  EN TU PRIMERA CARGA / +50% EXTRA instalando la app). En #242 se había sacado el bono de la landing.
+- **Hecho:** card verde con el diseño de PICA ROJA arriba del formulario (etiqueta BONO DE BIENVENIDA, % grande, línea de abajo, extra chico)
+  y la leyenda "Bono sujeto a términos…" al pie. Textos del comando **`/sys_landing_bonus`** (COMANDOS, tipo info, 3 líneas: grande / debajo /
+  extra; seed `100%` / `EN TU PRIMERA CARGA` / vacío) vía `GET /api/landing/config` (público, CORS reflejado por `LANDING_OPEN_CORS_PATHS`,
+  cache 2 min). Vacío = sin bono. Si el backend no responde, la landing usa el respaldo fijo (`BONUS_BIG/SUB/EXTRA`, mismos valores). Se quitó
+  la card dorada "USUARIO GRATIS EN SEGUNDOS".
+- ⚠️ Tiene que ser la oferta REAL que el agente cumple en la primera carga (Meta ve lo mismo que el visitante: cloaking = baneo).
+- Numeración: el commit `86e5699` dice "#244" porque otra sesión tomó ese número a la vez (PWA, `3965a14`); la entrada correcta es esta, #245.
 
 ### 244. 📱 PWA: menú del inicio con 3 modos (arranca en "Reembolsos" y recuerda el último) + todos los pop-ups cerrables (réplica de CARGASGIROX #199–#205)
 - **Owner:** replicar acá "los últimos cambios de la PWA de CARGASGIROX sobre el menú que aparece al abrir la app la primera

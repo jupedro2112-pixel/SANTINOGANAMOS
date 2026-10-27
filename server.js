@@ -11452,7 +11452,7 @@ async function initializeData() {
       response: '🧾 ¡Recibimos tu comprobante de ${amount}! ✅ Lo estamos verificando: en 1 minuto vas a tener tu carga. 🙌'
     },
     {
-      // #244 NO es un mensaje: textos del bono que muestra la landing externa.
+      // #245 NO es un mensaje: textos del bono que muestra la landing externa.
       name: '/sys_landing_bonus',
       description: 'LANDING — BONO QUE MUESTRA (no es un mensaje). Tres líneas: 1) el texto GRANDE (ej. 100%), 2) el de abajo (ej. EN TU PRIMERA CARGA), 3) extra chico opcional (ej. +50% EXTRA instalando la app). Dejalo VACÍO para que la landing no muestre bono. ⚠️ Tiene que ser la oferta REAL que después se cumple: Meta ve lo mismo que el visitante. Tarda hasta 2 min en verse.',
       type: 'info',
@@ -18130,7 +18130,7 @@ app.post('/api/admin/cbu', authMiddleware, adminMiddleware, async (req, res) => 
 // CORS reflejado (LANDING_OPEN_CORS_PATHS). El pixel PROPIO nunca va al navegador de la
 // landing (recibe registro/compra por CAPI); solo van los pixels de publicistas con
 // alcance (SSM `META_PIXEL_PUBLISHER_n` o los cargados en el panel). Sin código → ninguno.
-// #244 Textos del BONO de la landing externa (público, CORS reflejado): salen del comando
+// #245 Textos del BONO de la landing externa (público, CORS reflejado): salen del comando
 // `/sys_landing_bonus` (COMANDOS; 3 líneas: grande / debajo / extra). Vacío = la landing no
 // muestra bono. Es lo que ve el visitante y lo que ve Meta: tiene que ser la oferta REAL.
 app.get('/api/landing/config', async (req, res) => {
