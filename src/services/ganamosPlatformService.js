@@ -48,8 +48,12 @@ const logger = {
 // ============================================================
 // CONFIG (lazy)
 // ============================================================
+// #247: la URL del casino se puede cambiar desde COMANDOS (/sys_casino_url). server.js la lee y
+// la deja acá con setPlayUrlOverride; vacía = vuelve a GANAMOS_PLAY_URL (o el default).
+let _playUrlOverride = null;
+function setPlayUrlOverride(url) { _playUrlOverride = url ? String(url).trim() : null; }
 function getPlayUrl() {
-  return (process.env.GANAMOS_PLAY_URL || 'https://ganamos.net').replace(/\/+$/, '');
+  return (_playUrlOverride || process.env.GANAMOS_PLAY_URL || 'https://ganamos.net').replace(/\/+$/, '');
 }
 function getBaseUrl() { return 'manual://ganamos'; }
 /** Siempre "habilitado": en modo manual no hay credenciales que puedan faltar. */
@@ -479,6 +483,7 @@ module.exports = {
   setCashierBalanceHook,
   isEnabled,
   getPlayUrl,
+  setPlayUrlOverride,
   getBaseUrl,
   validateUsername,
   setKeyResolver,

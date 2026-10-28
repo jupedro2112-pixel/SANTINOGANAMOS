@@ -56,7 +56,10 @@ const logger = {
 function getBaseUrl() { return String(process.env.MIJOKER_API_URL || '').trim().replace(/\/+$/, ''); }
 function getApiToken() { return process.env.MIJOKER_API_TOKEN || null; }
 function getAgentName() { return String(process.env.MIJOKER_AGENT_NAME || '').trim() || null; }
-function getPlayUrl() { return (process.env.MIJOKER_PLAY_URL || 'https://mijoker.com').replace(/\/+$/, ''); }
+// #247: override desde COMANDOS (/sys_casino_url), igual que en el adaptador manual.
+let _playUrlOverride = null;
+function setPlayUrlOverride(url) { _playUrlOverride = url ? String(url).trim() : null; }
+function getPlayUrl() { return (_playUrlOverride || process.env.MIJOKER_PLAY_URL || 'https://mijoker.com').replace(/\/+$/, ''); }
 /** true si el cliente puede operar (URL + token; el agentName sólo hace falta para el alta). */
 function isEnabled() { return !!(getBaseUrl() && getApiToken()); }
 function _timeoutMs() { return Number(process.env.MIJOKER_TIMEOUT_MS || 20000); }
@@ -865,6 +868,7 @@ module.exports = {
   setCashierBalanceHook,
   isEnabled,
   getPlayUrl,
+  setPlayUrlOverride,
   getBaseUrl,
   validateUsername,
   setKeyResolver,

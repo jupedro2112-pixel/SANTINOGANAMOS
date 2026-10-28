@@ -143,7 +143,7 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   no bloquear guards ni lotes; **`validateCredentials` → `valid:false` SIEMPRE**
   (seguridad: el login no puede crear cuentas locales sin validar);
   `syncUserToPlatform` → `alreadyExists:true` (el jugador ya existe en GANAMOS);
-  `createSession` → `GANAMOS_PLAY_URL` (la PWA abre una pestaña, sin iframe);
+  `createSession` → `GANAMOS_PLAY_URL` (la PWA abre una pestaña, sin iframe); **#247:** si el comando `/sys_casino_url` (COMANDOS) tiene una dirección, MANDA sobre esta variable (`setPlayUrlOverride`, relectura cada 60 s).
   `changeUserPassword` → ok sin hacer nada (la clave de GANAMOS la maneja el agente);
   `getPlatformConfig` → bonos habilitados, **único multiplicador 0, rollover
   apagado** (#196: GANAMOS NO tiene rollover; el adaptador fuerza x0 en cargas con

@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-27** (última entrada: #246)
+> **Última actualización: 2026-10-27** (última entrada: #247)
 
 ---
 
@@ -71,6 +71,17 @@
 ---
 
 ## Sesión 2026-10-28
+
+### 247. 🎰 La página del CASINO se cambia desde COMANDOS (`/sys_casino_url`)
+- **Owner:** "la página de casino que estaba cargada dejó de funcionar, quiero poder cambiarla desde COMANDOS". Antes salía sólo de
+  `GANAMOS_PLAY_URL` (EB) y cambiarla pedía tocar el entorno y redeployar.
+- **Hecho:** comando nuevo **`/sys_casino_url`** (tipo info, arranca vacío = la de siempre). `ganamosPlatformService` y `mijokerService`
+  exponen `setPlayUrlOverride(url)`; `getPlayUrl()` = override → env → default. server.js: `_cleanCasinoUrl` (sólo http/https con dominio;
+  `ganamos.vip` → `https://ganamos.vip`; texto inválido ⇒ 400 al guardar) y `_refreshCasinoUrl()` (al arrancar, cada 60 s para las otras
+  instancias de EB, y al guardar/vaciar el comando en esta instancia). Todo lo que ya usaba `girox.getPlayUrl()` toma la nueva: botón
+  PÁGINA CASINO AQUÍ (vía `/api/public/config`, que la PWA pide sin caché al abrir), `/api/auth/verify`, el enter-casino y los textos con
+  el sitio de juego. En girox no aplica (SSO; giroxService no tiene override).
+- Validado: `node --check`, `check-tdz`, tests de los adaptadores manual y mijoker. Necesita deploy EB; después se carga en COMANDOS.
 
 ### 246. "Menú cerrado" oculta también el reembolso semanal + bienvenida de la landing sin "un agente está creando"
 - **Owner:** "queda mal, en menú cerrado aparece reembolsos también". El reembolso semanal vive FUERA de `#homePanel` (#217), así que

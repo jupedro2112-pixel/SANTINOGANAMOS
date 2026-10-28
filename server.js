@@ -4429,6 +4429,31 @@ function _sanitizeUsernameBase(name, { pad = true } = {}) {
   return base;
 }
 
+// #247 URL del CASINO (botón PÁGINA CASINO AQUÍ / CASINO) editable en COMANDOS → `/sys_casino_url`.
+// Vacío = la de siempre (GANAMOS_PLAY_URL / MIJOKER_PLAY_URL en EB, o el default). Se valida que sea
+// http(s) y se pasa al cliente de plataforma (getPlayUrl es sincrónico: se guarda en memoria). Se relee
+// al arrancar, cada 60 s (las otras instancias de EB) y al guardar el comando (ésta, al instante).
+// Sólo en modo manual y mijoker: en girox el casino entra por SSO (giroxService no tiene override).
+function _cleanCasinoUrl(raw) {
+  const v = String(raw || '').trim().split(/\s+/)[0] || '';
+  if (!v) return '';
+  try {
+    const u = new URL(/^https?:\/\//i.test(v) ? v : 'https://' + v);
+    if (!/^https?:$/.test(u.protocol) || !u.hostname.includes('.')) return null;
+    return u.toString().replace(/\/+$/, '');
+  } catch (_) { return null; }
+}
+async function _refreshCasinoUrl() {
+  if (typeof girox.setPlayUrlOverride !== 'function') return;
+  try {
+    const cmd = await Command.findOne({ name: '/sys_casino_url', isActive: true }).lean();
+    const url = _cleanCasinoUrl(cmd && cmd.response);
+    const prev = girox.getPlayUrl();
+    girox.setPlayUrlOverride(url || null);
+    if (girox.getPlayUrl() !== prev) logger.info(`[casino-url] el botón del casino ahora abre ${girox.getPlayUrl()}`);
+  } catch (e) { logger.warn(`[casino-url] no se pudo leer /sys_casino_url: ${e.message}`); }
+}
+
 // #242 Prefijo del usuario de la landing (modo manual): comando `/sys_landing_prefix` (COMANDOS),
 // vacío = sin prefijo. Sólo letras, números y _ (se sanea), máximo 10. Cache 30 s.
 let _landingPrefixCache = { v: null, at: 0 };
@@ -11457,6 +11482,13 @@ async function initializeData() {
       description: 'LANDING — BONO QUE MUESTRA (no es un mensaje). Tres líneas: 1) el texto GRANDE (ej. 100%), 2) el de abajo (ej. EN TU PRIMERA CARGA), 3) extra chico opcional (ej. +50% EXTRA instalando la app). Dejalo VACÍO para que la landing no muestre bono. ⚠️ Tiene que ser la oferta REAL que después se cumple: Meta ve lo mismo que el visitante. Tarda hasta 2 min en verse.',
       type: 'info',
       response: '100%\nEN TU PRIMERA CARGA\n'
+    },
+    {
+      // #247 NO es un mensaje: a qué página manda el botón del casino.
+      name: '/sys_casino_url',
+      description: 'PÁGINA DEL CASINO (no es un mensaje). Escribí SOLO la dirección a la que manda el botón PÁGINA CASINO AQUÍ, por ejemplo https://ganamos.net. Si la página cambia o deja de andar, la cambiás acá y listo (tarda hasta 1 minuto; el cliente la toma al volver a abrir la app). Vacío = la de siempre.',
+      type: 'info',
+      response: ''
     },
     {
       // #242 NO es un mensaje: prefijo del usuario que se arma en la landing (modo manual).
@@ -20022,6 +20054,10 @@ app.post('/api/admin/commands', authMiddleware, adminMiddleware, async (req, res
     if (!name || !name.startsWith('/')) {
       return res.status(400).json({ error: 'El comando debe empezar con /' });
     }
+    // #247 la URL del casino tiene que ser una dirección web válida (vacía = la de siempre).
+    if (name === '/sys_casino_url' && String(response || '').trim() && !_cleanCasinoUrl(response)) {
+      return res.status(400).json({ error: 'Poné sólo la dirección de la página del casino, por ejemplo https://ganamos.net' });
+    }
     
     await Command.findOneAndUpdate(
       { name },
@@ -20034,6 +20070,7 @@ app.post('/api/admin/commands', authMiddleware, adminMiddleware, async (req, res
       },
       { upsert: true, new: true }
     );
+    if (name === '/sys_casino_url') await _refreshCasinoUrl(); // #247 esta instancia, al instante
     
     res.json({ success: true, message: 'Comando guardado correctamente' });
   } catch (error) {
@@ -20065,6 +20102,7 @@ app.delete('/api/admin/commands/:name', authMiddleware, adminMiddleware, async (
         return res.json({ success: true, orphanDeleted: true, message: 'Comando eliminado: no era de este proyecto.' });
       }
       await Command.updateOne({ name: cmd.name }, { $set: { response: '', updatedAt: new Date() } });
+      if (cmd.name === '/sys_casino_url') await _refreshCasinoUrl(); // #247 vuelve a la de siempre
       return res.json({
         success: true,
         systemEmptied: true,
@@ -25813,6 +25851,7 @@ app.use(errorHandler);
 if (process.env.VERCEL) {
   initializeData().then(() => {
     logger.info('Data initialized for Vercel');
+    _refreshCasinoUrl(); // #247
     // Worker periódico que reprocesa la cola de webhooks a fb-ads.
     fbAdsWebhook.startWorker();
     outboundWebhook.startWorker(); // #243 cola de webhooks salientes
@@ -25864,6 +25903,8 @@ if (process.env.VERCEL) {
     }
 
     await initializeData();
+    await _refreshCasinoUrl(); // #247 URL del casino desde COMANDOS
+    setInterval(() => { _refreshCasinoUrl(); }, 60 * 1000);
     await setupRedisAdapter();
     // Worker periódico que reprocesa la cola de webhooks a fb-ads.
     fbAdsWebhook.startWorker();
