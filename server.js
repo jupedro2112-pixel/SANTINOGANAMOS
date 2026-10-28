@@ -11695,6 +11695,15 @@ async function initializeData() {
     );
     if (r.modifiedCount) console.log('🧹 /sys_ganamos_cuenta_creada vaciado (#242: no se avisa al cliente por default)');
   } catch (e) { console.warn(`⚠️ Migración /sys_ganamos_cuenta_creada: ${e.message}`); }
+  // #246: la bienvenida de la landing se sembró primero con "Un agente está creando tu usuario…" y
+  // el cliente NO tiene que enterarse (#242). Si todavía tiene esa frase, pasa al texto neutro.
+  try {
+    const r = await Command.updateOne(
+      { name: '/sys_landing_cuenta_pendiente', response: { $regex: /agente está creando|estamos creando/i } },
+      { $set: { response: '👋 ¡Hola {name}! Bienvenido a GANAMOS.\n\nTu usuario es *{username}* y tu clave *{password}* (guardalos 📌).\n\n🎰 Para cargar fichas y empezar a jugar escribinos por acá: te respondemos al toque.' } }
+    );
+    if (r.modifiedCount) console.log('🧹 /sys_landing_cuenta_pendiente pasado al texto neutro (#246)');
+  } catch (e) { console.warn(`⚠️ Migración /sys_landing_cuenta_pendiente: ${e.message}`); }
   if (PLATFORM_NO_STATS) { // #231 manual Y mijoker (ninguna tiene rollover/reembolsos/VIP/referidos)
     const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|\{referral_pct\}|referid|rakeback|nivel VIP/i; // #207 + referidos
     let fixed = 0;

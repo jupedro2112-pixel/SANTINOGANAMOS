@@ -915,8 +915,8 @@
                      - mode-closed   → SOLO PÁGINA CASINO AQUÍ (#205 del gemelo:
                                        el casino siempre a mano) arriba de la barra.
                    ⚠️ Acá el REEMBOLSO SEMANAL (#weeklyRefundBanner) y RETIRAR MI
-                   PREMIO viven FUERA de #homePanel (#217): se ven en los TRES
-                   modos. Por eso "🎁 Reembolsos" acá = "lo mínimo + el reembolso
+                   PREMIO viven FUERA de #homePanel (#217). RETIRAR se ve en los
+                   TRES modos; el reembolso se oculta en mode-closed (#246). Por eso "🎁 Reembolsos" acá = "lo mínimo + el reembolso
                    semanal" (en el gemelo la fila de reembolsos está adentro).
                    El cartel de verificar teléfono también está afuera y hoy está
                    APAGADO (#222; app.js lo respeta igual).
@@ -933,6 +933,9 @@
                 #homePanel.mode-closed .home-dash > *:not(.dash-play) { display:none !important; }
                 /* Sin el margen de abajo el bloque queda pegado a la barra. */
                 #homePanel.mode-closed .dash-play { margin-bottom:0; }
+                /* #246 (owner): "Menú cerrado" = sólo PÁGINA CASINO AQUÍ; el reembolso semanal, que
+                   vive FUERA de #homePanel, también se oculta (lo pone app.js en el body). */
+                body.home-mode-closed #weeklyRefundBanner { display:none !important; }
                 #homePanelToggle {
                     flex:0 0 auto; display:flex; align-items:stretch; gap:4px;
                     margin:3px 8px 0; padding:3px;

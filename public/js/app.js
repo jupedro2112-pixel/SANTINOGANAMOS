@@ -283,6 +283,9 @@ function setupEventListeners() {
                     b.setAttribute('aria-pressed', on ? 'true' : 'false');
                 });
                 homePanel.dataset.mode = mode;
+                // #246: en "Menú cerrado" también se esconde el REEMBOLSO SEMANAL, que vive fuera
+                // de #homePanel (CSS body.home-mode-closed en index.html).
+                document.body.classList.toggle('home-mode-closed', mode === 'closed');
             };
             homePanelToggle.addEventListener('click', (ev) => {
                 const seg = ev.target && ev.target.closest ? ev.target.closest('.hpt-seg') : null;

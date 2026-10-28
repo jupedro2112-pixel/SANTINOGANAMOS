@@ -1508,8 +1508,9 @@ COMANDOS → "🔗 Webhooks salientes". Worker `outboundWebhook.startWorker()` (
   (ruleta + banner GANAMOS) + `.dash-play` (PÁGINA CASINO AQUÍ; el saldo lo esconde
   platformmode.js en manual) — se esconden USUARIO, `#installBonusBanner` y `#promoBonusCard`;
   `closed` = SOLO `.dash-play`. ⚠️ Acá el reembolso semanal (`#weeklyRefundBanner`) y RETIRAR
-  viven FUERA de `#homePanel` y se ven en los TRES modos (en el gemelo la fila de reembolsos
-  está adentro: por eso "Reembolsos" acá es "lo mínimo + el reembolso semanal"). La PRIMERA vez
+  viven FUERA de `#homePanel` (en el gemelo la fila de reembolsos está adentro: por eso
+  "Reembolsos" acá es "lo mínimo + el reembolso semanal"). RETIRAR se ve en los tres modos; el
+  reembolso semanal se OCULTA en `closed` (#246: `applyHomePanel` pone `body.home-mode-closed`). La PRIMERA vez
   arranca en `refunds`; al tocar otro botón se guarda `localStorage.homePanelMode` (por
   dispositivo, no viaja al server) y es el modo de arranque siguiente; `activity.js` manda ese
   valor en el ping de Datos IA (`null` = nunca lo cambió). `VIP.ui.setHomePanelMode(mode)` queda

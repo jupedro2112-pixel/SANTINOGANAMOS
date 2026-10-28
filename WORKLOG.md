@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-27** (última entrada: #245)
+> **Última actualización: 2026-10-27** (última entrada: #246)
 
 ---
 
@@ -69,6 +69,16 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-28
+
+### 246. "Menú cerrado" oculta también el reembolso semanal + bienvenida de la landing sin "un agente está creando"
+- **Owner:** "queda mal, en menú cerrado aparece reembolsos también". El reembolso semanal vive FUERA de `#homePanel` (#217), así que
+  el modo cerrado de #244 no lo tocaba. Ahora `applyHomePanel` (app.js) pone `body.home-mode-closed` y el CSS de index.html oculta
+  `#weeklyRefundBanner` en ese modo. "Menú cerrado" = PÁGINA CASINO AQUÍ + RETIRAR MI PREMIO. Completo y Reembolsos lo siguen mostrando. SW **v139**.
+- En la misma captura, la bienvenida de un alta por landing decía "⏳ Un agente está creando tu usuario en GANAMOS" (seed viejo de
+  `/sys_landing_cuenta_pendiente` que quedó en la base; el seed usa `$setOnInsert`). Migración del boot: si todavía tiene "agente está
+  creando" / "estamos creando", pasa al texto neutro actual. Un texto editado por el owner sin esas palabras no se toca. Necesita deploy EB.
 
 ## Sesión 2026-10-27
 
