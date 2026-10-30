@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-27** (última entrada: #247)
+> **Última actualización: 2026-10-30** (última entrada: #248)
 
 ---
 
@@ -69,6 +69,28 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-10-30
+
+### 248. 🔗 Webhook a PulWin: `user.source` = URL de ORIGEN fija del registro (las cargas llegaban con `cargasganamos.com/`)
+- **Reclamo de PulWin (grupo "Publi - GanaCargaX - PulWin", 30/10):** reprocesaron 112 eventos desde `www.grupoganamos.com/ganamos`
+  (107 registros + 5 primeras cargas por ARS 18.000), pero **5 primeras cargas por ARS 22.000 quedaron sin contabilizar** porque llegaron
+  con origen `cargasganamos.com/`, distinto del registrado para esos jugadores. Piden que `user.source` conserve la URL original de
+  captación (dominio, ruta y parámetros como `lpcode`) en registro, primera carga y cargas, con el mismo ID de jugador. Con y sin `www`
+  son dominios distintos para ellos.
+- **Causa:** `buildPayload` mandaba `source = User.landingUrl`, y ese campo es last-touch: el login de la PWA lo pisa con la URL donde
+  entra el cliente (`campaign.js` la captura si hay fbclid / `p=` / código de campaña inyectado por la cookie de vanity) ⇒ después del
+  alta por la landing, el primer login dejaba `https://cargasganamos.com/...` y todas las cargas salían con ese origen.
+- **Fix:** campo nuevo **`User.originUrl`** (first-touch): lo guardan los 3 registros (PWA, `/api/landing/signup` con API y sin API) con
+  el mismo valor que `landingUrl` del alta, y nada más lo escribe (el login sigue pisando `landingUrl` para Meta, sin cambios).
+  `outboundWebhookService.buildPayload`: `user.source = originUrl || landingUrl`; en `attribution`, `landing_url` = origen y `last_url` =
+  último toque (campo nuevo). Migración del boot: copia `landingUrl → originUrl` en las cuentas viejas, MENOS las altas por landing cuyo
+  `landingUrl` ya es la app (su origen real se perdió: se listan en el log `⚠️ #248: N altas por landing con el origen pisado…`).
+- **Las 5 cargas que reclama PulWin:** sus eventos ya salieron con el origen equivocado y esas cuentas probablemente tienen el origen
+  pisado. No se reenvían solos. Lo correcto es que PulWin las reprocese a mano con el origen del registro de cada jugador (ellos lo tienen:
+  es el mismo `user.id`). El `event_id` de un evento es estable (`primera_carga_<userId>_<txId>`), así que un reenvío no duplicaría.
+- Validado: `node --check` (server.js, User.js, outboundWebhookService.js), `check-tdz`, adaptador manual, flujo del reembolso semanal.
+  **Necesita deploy EB.**
 
 ## Sesión 2026-10-28
 

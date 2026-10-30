@@ -477,6 +477,14 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null
   },
+  // #248: URL de ORIGEN (first-touch) con la que se registró: se fija al crear la
+  // cuenta y NUNCA se pisa (landingUrl sí, en cada login). El webhook saliente la
+  // manda como `user.source` en registro, primera carga y cargas: el publicista
+  // (PulWin) valida que sea la MISMA URL autorizada en todos los eventos.
+  originUrl: {
+    type: String,
+    default: null
+  },
   // True cuando el usuario se registró por el flujo rápido sin OTP de teléfono.
   // El authMiddleware NO bloquea (a diferencia de mustChangePassword): el
   // usuario puede usar todo normalmente excepto retirar. Los endpoints de

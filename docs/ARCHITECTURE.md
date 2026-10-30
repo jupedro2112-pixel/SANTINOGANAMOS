@@ -5,7 +5,7 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-27** — #241: la auto-carga hgcash manda `Purchase` a Meta (§5); #240: alertas de
+> Última actualización: **2026-10-30** — #248: el webhook saliente manda `user.source` = `User.originUrl` (origen fijo del registro; §4.10.2). Antes: **2026-10-27** — #241: la auto-carga hgcash manda `Purchase` a Meta (§5); #240: alertas de
 > estafa con tope de 15 s para las stats de 1girox (§10.1). Antes: **2026-10-26** — #239: trampa de globales del panel (`window.X` que pisa una función
 > global `X`; test `scripts/test-admin-panel-login.js`; §9). Antes: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
 > clientes en TANDAS con plazo propio (`WeeklyRefund.availableAt`, `RefundBatch.partsPlan`,
@@ -1101,6 +1101,15 @@ hasta 10 intentos; 4xx (salvo 408/429) no se reintenta. **Hooks:** los 3 registr
 (`txId`), autogestión (`selfServiceOrderId`, FTD con `unrecorded:true`) y `notifyPayoutPaid` (`retiro`); `_isFirstDeposit(userId)` = exactamente
 1 depósito real (excluye `payout_refund`). Rutas `GET/POST /api/admin/webhooks`, `DELETE /:id`, `POST /:id/test` (solo admin general). Panel:
 COMANDOS → "🔗 Webhooks salientes". Worker `outboundWebhook.startWorker()` (tabla §7).
+
+**`user.source` = `User.originUrl` (#248, 2026-10-30).** PulWin valida que TODOS los eventos de un jugador (registro, primera carga,
+cargas) traigan la MISMA URL de captación (dominio + ruta + parámetros como `lpcode`; con y sin `www` son dominios distintos). Antes
+`source` salía de `landingUrl`, que el login de la PWA pisa (last-touch para Meta, `campaign.js` → `/api/auth/login`) con la URL de la
+app (`cargasganamos.com/`) ⇒ el registro llegaba con `www.grupoganamos.com/ganamos` y las cargas con la app ⇒ PulWin las dejaba
+pendientes. Ahora los 3 registros guardan `originUrl` (= el `landingUrl` del alta) y NADA lo vuelve a escribir; `buildPayload` manda
+`source = originUrl || landingUrl` y en `attribution` `landing_url` = origen y `last_url` = último toque. Migración del boot: copia
+`landingUrl → originUrl` en cuentas viejas, salvo las altas por landing con `landingUrl` ya pisado por la app (se listan en el log
+`⚠️ #248`; su origen real se perdió). **No escribir `originUrl` en el login ni en ningún otro camino.**
 
 ### 4.11 Novedades del manual Partner API v1.11 (2026-08-13) — contexto, sin código
 

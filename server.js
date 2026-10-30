@@ -4133,6 +4133,8 @@ app.post('/api/auth/register', authLimiter, registerIpLimiter, async (req, res) 
       metaFbp,
       // Landing URL: la usa fbAdsWebhookService para mandarla a fb-ads.
       landingUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
+      // #248: primer contacto INMUTABLE (el login pisa landingUrl; el webhook saliente manda éste como user.source).
+      originUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
       // Anti-multicuenta: huella de origen del registro.
       registrationIp: req.ip || req.socket?.remoteAddress || null,
       registrationUserAgent: (req.get('User-Agent') || '').slice(0, 500) || null
@@ -4339,6 +4341,8 @@ app.post('/api/auth/register-quick', authLimiter, registerIpLimiter, async (req,
       metaFbp,
       // Landing URL: la usa fbAdsWebhookService para mandarla a fb-ads.
       landingUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
+      // #248: primer contacto INMUTABLE (el login pisa landingUrl; el webhook saliente manda éste como user.source).
+      originUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
       // Anti-multicuenta: huella de origen del registro.
       registrationIp: req.ip || req.socket?.remoteAddress || null,
       registrationUserAgent: (req.get('User-Agent') || '').slice(0, 500) || null
@@ -4605,6 +4609,8 @@ app.post('/api/landing/signup', landingIpLimiter, async (req, res) => {
       metaFbc,
       metaFbp,
       landingUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
+      // #248: primer contacto INMUTABLE (el login pisa landingUrl; el webhook saliente manda éste como user.source).
+      originUrl: (typeof landingUrl === 'string' && landingUrl.length <= 2000) ? landingUrl : null,
       registrationIp: req.ip || req.socket?.remoteAddress || null,
       registrationUserAgent: (req.get('User-Agent') || '').slice(0, 500) || null,
       // #242 modo manual: pendiente de que un agente lo cree en GANAMOS (el PIN queda visible
@@ -11736,6 +11742,22 @@ async function initializeData() {
     );
     if (r.modifiedCount) console.log('🧹 /sys_landing_cuenta_pendiente pasado al texto neutro (#246)');
   } catch (e) { console.warn(`⚠️ Migración /sys_landing_cuenta_pendiente: ${e.message}`); }
+  // #248: `User.originUrl` (URL de origen first-touch, la que el webhook saliente manda como
+  // user.source) es nuevo. Para las cuentas de antes se copia `landingUrl`, SALVO las altas por la
+  // landing cuyo landingUrl ya quedó pisado por el login con la URL de la app (ese no es su origen:
+  // copiarlo congelaría el error que PulWin rechaza). Esas quedan sin originUrl y se listan en el log.
+  try {
+    const _appHost = (() => { try { return new URL(getPublicBaseUrl()).hostname.replace(/^www\./i, ''); } catch (_) { return ''; } })();
+    const _appRe = _appHost ? new RegExp('^https?://(www\\.)?' + _appHost.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?=[/:?#]|$)', 'i') : null;
+    const _f = { originUrl: { $exists: false }, landingUrl: { $type: 'string', $ne: '' } };
+    if (_appRe) _f.$nor = [{ acquisitionSource: 'landing', landingUrl: { $regex: _appRe } }];
+    const r = await User.updateMany(_f, [{ $set: { originUrl: '$landingUrl' } }]);
+    if (r.modifiedCount) console.log(`🧭 originUrl copiado de landingUrl en ${r.modifiedCount} cuentas (#248)`);
+    if (_appRe) {
+      const lost = await User.find({ originUrl: { $exists: false }, acquisitionSource: 'landing', landingUrl: { $regex: _appRe } }).select('username').limit(200).lean();
+      if (lost.length) console.warn(`⚠️ #248: ${lost.length} altas por landing con el origen pisado por la app (sin originUrl): ${lost.map(x => x.username).join(', ')}`);
+    }
+  } catch (e) { console.warn(`⚠️ Migración originUrl (#248): ${e.message}`); }
   if (PLATFORM_NO_STATS) { // #231 manual Y mijoker (ninguna tiene rollover/reembolsos/VIP/referidos)
     const STALE_RE = /1girox|reembolso|\{escalera\}|\{rollover\}|\{referral_pct\}|referid|rakeback|nivel VIP/i; // #207 + referidos
     let fixed = 0;

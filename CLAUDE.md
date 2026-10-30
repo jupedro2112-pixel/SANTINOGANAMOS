@@ -350,7 +350,7 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   **Píxeles de Meta por publicista + webhooks salientes (#243, réplica de CARGASGIROX #214/#197):** `Config['metaPixels']`
   (token cifrado) y `Config['outboundWebhooks']` (secreto cifrado) se cargan en COMANDOS; `metaCapiService` es la versión del gemelo
   (un píxel con token recibe por CAPI sólo SU alcance). Todo flujo nuevo de registro/carga/retiro pagado tiene que llamar a
-  `outboundWebhook.notify(...)` al lado de `fbAdsWebhook.notify(...)` (carga: `firstDeposit` con `_isFirstDeposit`). Nada de esto
+  `outboundWebhook.notify(...)` al lado de `fbAdsWebhook.notify(...)` (carga: `firstDeposit` con `_isFirstDeposit`). **`user.source` del webhook = `User.originUrl`** (#248: URL de captación fija desde el registro; `landingUrl` la pisa el login y PulWin rechaza eventos con origen distinto). Un alta nueva tiene que guardar `originUrl`; nada más lo escribe. Nada de esto
   depende de la API de GANAMOS. Detalle en ARCHITECTURE §4.10.1/§4.10.2.
 
 - **Lotes y Cronograma (#228):** el POST `/api/admin/notif-batches` es un wrapper de

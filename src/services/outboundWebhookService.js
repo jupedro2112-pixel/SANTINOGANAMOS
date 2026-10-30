@@ -93,7 +93,10 @@ function buildPayload({ event, eventId, user, scope, opts, dest }) {
       // `source` = URL COMPLETA de origen (dominio + ruta + parámetros con la que entró el
       // jugador; la landing manda location.href). Lo pidió PulWin (#348) para asignar el
       // tráfico por dominio/ruta; antes iba 'landing'/'panel', que ahora es `channel`.
-      source: u.landingUrl || null,
+      // #248: sale de `originUrl` (first-touch, fija desde el registro): `landingUrl` se pisa en
+      // cada login con la URL de la app (cargasganamos.com/) y PulWin rechazaba las cargas por
+      // "origen distinto del registro". Cuentas viejas sin originUrl: la migración del boot la copia.
+      source: u.originUrl || u.landingUrl || null,
       channel: u.acquisitionSource || null
     },
     amount: o.amount != null ? Number(o.amount) : null,
@@ -113,7 +116,8 @@ function buildPayload({ event, eventId, user, scope, opts, dest }) {
       utm_campaign: utm.campaign || utm.utm_campaign || null,
       utm_content: utm.content || utm.utm_content || null,
       utm_term: utm.term || utm.utm_term || null,
-      landing_url: u.landingUrl || null,
+      landing_url: u.originUrl || u.landingUrl || null,
+      last_url: u.landingUrl || null,
       registration_ip: u.registrationIp || null
     };
   }
@@ -214,7 +218,7 @@ async function _notify(event, user, opts) {
   if (u && u.id && (!u.username || u.acquisitionCampaign === undefined)) {
     try {
       const User = require('../models/User');
-      u = (await User.findOne({ id: String(u.id) }).select('id username createdAt acquisitionCampaign acquisitionInfluencer acquisitionSource lastTouchCampaign giroxOwnerCampaign acquisitionUtm metaFbc metaFbp landingUrl registrationIp email phone phoneVerified').lean()) || u;
+      u = (await User.findOne({ id: String(u.id) }).select('id username createdAt acquisitionCampaign acquisitionInfluencer acquisitionSource lastTouchCampaign giroxOwnerCampaign acquisitionUtm metaFbc metaFbp landingUrl originUrl registrationIp email phone phoneVerified').lean()) || u;
     } catch (_) {}
   }
   if (!u) return;
