@@ -313,7 +313,7 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `process.env.HGCASH_*` directo. Cambiar `JWT_SECRET` invalida lo guardado en el panel.
 - **Cuentas hgcash (hasta 3, #249 — réplica #223/#223b de CARGASGIROXactivo):** hasta 3 cuentas cargadas desde el
   panel (cifradas en `Config['hgcashAccounts']` con clave derivada de JWT_SECRET; panel > SSM; lo de una sola cuenta de antes se
-  migra solo a `a1`) y UNA activa que se rota con el botón "USAR ESTA" (card "🏦 Cuentas hgcash" de Comandos → Banco automático; también la barra de 🏦 Banco;
+  migra solo a `a1`) y UNA activa que se rota con el botón "USAR ESTA" (card "🏦 Cuentas hgcash" de la sección **🏛️ Bancos — Configuración** del panel, #250, debajo de Comandos, solo admin general; también la barra de 🏦 Banco;
   la pueden tocar admin/depositor/withdrawer). La activa paga y es lo que ve el cliente (al activar se reescribe `Config['cbu']`);
   **las cargas entran por TODAS** (el webhook acepta cualquiera de los secretos y etiqueta `BankMovement.accountKey`) salvo que el
   panel diga "solo la en uso" o pause una cuenta (`incomingMode` / `incomingEnabled` → `_hgAccountReceives`; lo pausado queda en la bandeja,

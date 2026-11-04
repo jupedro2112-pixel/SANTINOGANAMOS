@@ -5,7 +5,7 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-11-04** — **hasta 3 CUENTAS hgcash con cuenta ACTIVA rotable (#249, réplica #223/#223b de
+> Última actualización: **2026-11-04** — **sección propia "🏛️ Bancos — Configuración" en el panel (#250, réplica #224 de CARGASGIROXactivo: todo lo de bancos salió de COMANDOS; mismos ids/endpoints)** y **hasta 3 CUENTAS hgcash con cuenta ACTIVA rotable (#249, réplica #223/#223b de
 > CARGASGIROXactivo; ver "Cuentas hgcash múltiples" en la auto-carga del banco)**. Antes: **2026-10-30** — #248: el webhook saliente manda `user.source` = `User.originUrl` (origen fijo del registro; §4.10.2). Antes: **2026-10-27** — #241: la auto-carga hgcash manda `Purchase` a Meta (§5); #240: alertas de
 > estafa con tope de 15 s para las stats de 1girox (§10.1). Antes: **2026-10-26** — #239: trampa de globales del panel (`window.X` que pisa una función
 > global `X`; test `scripts/test-admin-panel-login.js`; §9). Antes: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
@@ -213,7 +213,7 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   cuentas antes de resolver (`_loadHgcashCredentials()`). Endpoints: `GET/POST /api/admin/hgcash/accounts`, `DELETE /:key`, `POST /:key/activate`,
   `POST /accounts/incoming-mode`, `POST /:key/incoming` (ver/rotar/modo/pausa: admin, depositor, withdrawer; credenciales: solo admin); legacy
   `POST/DELETE /api/admin/hgcash/credentials` siguen (escriben sobre la activa / borran todas). Panel: card "🏦 Cuentas hgcash (hasta 3)" en
-  Comandos → Banco automático + barra "Cuenta hgcash en uso" en 🏦 Banco; movimientos y bandeja llevan `hgAccount {key,label,active}`.
+  sección **🏛️ Bancos — Configuración** del panel (#250, debajo de Comandos, solo admin general; antes en Comandos → Banco automático) + barra "Cuenta hgcash en uso" en 🏦 Banco; movimientos y bandeja llevan `hgAccount {key,label,active}`.
 
 ### 0.1 REEMBOLSO SEMANAL POR PLANILLA (#215, 2026-10-02) — el único reembolso de GANAMOS
 
