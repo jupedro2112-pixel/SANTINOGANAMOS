@@ -5,7 +5,8 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-10-30** — #248: el webhook saliente manda `user.source` = `User.originUrl` (origen fijo del registro; §4.10.2). Antes: **2026-10-27** — #241: la auto-carga hgcash manda `Purchase` a Meta (§5); #240: alertas de
+> Última actualización: **2026-11-04** — **hasta 3 CUENTAS hgcash con cuenta ACTIVA rotable (#249, réplica #223/#223b de
+> CARGASGIROXactivo; ver "Cuentas hgcash múltiples" en la auto-carga del banco)**. Antes: **2026-10-30** — #248: el webhook saliente manda `user.source` = `User.originUrl` (origen fijo del registro; §4.10.2). Antes: **2026-10-27** — #241: la auto-carga hgcash manda `Purchase` a Meta (§5); #240: alertas de
 > estafa con tope de 15 s para las stats de 1girox (§10.1). Antes: **2026-10-26** — #239: trampa de globales del panel (`window.X` que pisa una función
 > global `X`; test `scripts/test-admin-panel-login.js`; §9). Antes: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
 > clientes en TANDAS con plazo propio (`WeeklyRefund.availableAt`, `RefundBatch.partsPlan`,
@@ -197,6 +198,22 @@ como DISEÑO (los flujos, referencias, idempotencia, mensajes) pero en este repo
   saldo; `refunds.js` oculta con `enabled:false`.
 - **Para volver a 1girox:** `PLATFORM_MODE=girox` + `GIROX_API_URL/KEY`. Nada del
   cliente original se tocó.
+
+  **Cuentas hgcash múltiples (#249, réplica #223/#223b de CARGASGIROXactivo):** `Config['hgcashAccounts'] = { accounts: [{ key, label,
+  tokenEnc, secretEnc, …Last4, accountId, accountName, cbu, alias, bank, titular, incomingEnabled }], activeKey, switchedBy/At, incomingMode }`,
+  cifrado igual que antes; cada instancia lo descifra en memoria a los 8 s y cada **15 s** (`_hgAccounts`, `_hgActiveKey`, `_hgIncomingMode`).
+  `Config['hgcashCredentials']` (una sola cuenta) se migra solo a `a1` la primera vez; panel > SSM (`HGCASH_API_TOKEN` / `HGCASH_WEBHOOK_SECRET`
+  valen solo sin cuentas en el panel). La **ACTIVA** paga (`hgcashPay.setTokenOverride`), responde el saldo y define lo que ve el cliente
+  (`_hgApplyActiveToConfigs` → `hgcash.accountName/cbu/accountId` y `Config['cbu']`). **TODAS reciben:** `_hgcashWebhookSecretEntries()` → el
+  webhook acepta la firma de cualquiera y guarda por cuál entró en `BankMovement.accountKey`; `_comprobanteToOurBank` reconoce el CBU/titular
+  de cualquiera que RECIBA. **Qué cuentas cargan solas:** `incomingMode 'all'|'active'` + `accounts[].incomingEnabled` → `_hgAccountReceives(a)`;
+  `_hgMovementAutoOff(m)` da el motivo y el movimiento queda `pending` con `chargeError` (`hgcashMatchFromMovement` lo saltea,
+  `hgcashMatchFromComprobante` no lo toma de candidato). **Cada pago recuerda su cuenta** (`PendingPayout.hgAccountKey`, `BankSweep.hgAccountKey`):
+  `hgcashService` acepta `token` opcional en todas las llamadas y las consultas de estado/recibo pasan `_hgTokenFor(key)`; el pago recarga las
+  cuentas antes de resolver (`_loadHgcashCredentials()`). Endpoints: `GET/POST /api/admin/hgcash/accounts`, `DELETE /:key`, `POST /:key/activate`,
+  `POST /accounts/incoming-mode`, `POST /:key/incoming` (ver/rotar/modo/pausa: admin, depositor, withdrawer; credenciales: solo admin); legacy
+  `POST/DELETE /api/admin/hgcash/credentials` siguen (escriben sobre la activa / borran todas). Panel: card "🏦 Cuentas hgcash (hasta 3)" en
+  Comandos → Banco automático + barra "Cuenta hgcash en uso" en 🏦 Banco; movimientos y bandeja llevan `hgAccount {key,label,active}`.
 
 ### 0.1 REEMBOLSO SEMANAL POR PLANILLA (#215, 2026-10-02) — el único reembolso de GANAMOS
 

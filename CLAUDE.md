@@ -311,6 +311,16 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   (cifrado con `JWT_SECRET`) y `Config['hgcashFanout']` mandan sobre SSM. Leer SIEMPRE con
   `hgcashPay.getToken()` / `_hgcashWebhookSecrets()` / `_getHgcashFanout()`, nunca
   `process.env.HGCASH_*` directo. Cambiar `JWT_SECRET` invalida lo guardado en el panel.
+- **Cuentas hgcash (hasta 3, #249 — réplica #223/#223b de CARGASGIROXactivo):** hasta 3 cuentas cargadas desde el
+  panel (cifradas en `Config['hgcashAccounts']` con clave derivada de JWT_SECRET; panel > SSM; lo de una sola cuenta de antes se
+  migra solo a `a1`) y UNA activa que se rota con el botón "USAR ESTA" (card "🏦 Cuentas hgcash" de Comandos → Banco automático; también la barra de 🏦 Banco;
+  la pueden tocar admin/depositor/withdrawer). La activa paga y es lo que ve el cliente (al activar se reescribe `Config['cbu']`);
+  **las cargas entran por TODAS** (el webhook acepta cualquiera de los secretos y etiqueta `BankMovement.accountKey`) salvo que el
+  panel diga "solo la en uso" o pause una cuenta (`incomingMode` / `incomingEnabled` → `_hgAccountReceives`; lo pausado queda en la bandeja,
+  no se carga solo — todo matcheo automático nuevo tiene que respetar `_hgMovementAutoOff(m)`). Un pago recuerda su cuenta
+  (`hgAccountKey`): toda consulta nueva a hgcash sobre un pago existente tiene que pasar `_hgTokenFor(x.hgAccountKey)`, y todo
+  flujo nuevo que pague tiene que guardar `hgAccountKey: _hgActiveKey`. No volver a leer `process.env.HGCASH_API_TOKEN` directo:
+  usar `hgcashPay.getToken()` / `_hgcashWebhookSecretEntries()`.
 - **Multi-instancia (AWS EB):** los crons son `setInterval` en CADA instancia; su
   idempotencia depende de índices únicos (EncuestaFire.slotKey, InactividadFire.fireKey,
   HgcashCharge.chargeKey, RecordatorioFire.fireKey, DailyRouletteSpin
