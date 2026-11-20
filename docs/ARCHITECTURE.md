@@ -2015,3 +2015,9 @@ bandeja traen `hgAccount {key,label,active,bank}` también para Finpro; `GET /ap
 elegido (`limits[id].next`) se prueba primero aunque sea del otro banco. Vueltas: `Config['bankRotationLap'] = { dayKey, n }` → en la vuelta N el
 tope del día vale N× (`_rotOverLimit`); el tope del mes no da vueltas. `_rotUsage` suma también los movimientos sin `accountKey` (por CVU / id de
 cuenta, o todos si ese banco tiene una sola cuenta). Todo apagado por defecto; el contador de fallas es por instancia.
+
+### Cuenta en uso: cambio manual y registro (#252)
+Cualquier rol del panel menos `comunidad` cambia la cuenta que ve el cliente con el botón fijo "🏦" (`bankQuickChip`, `admin.js`) →
+`POST /api/admin/bank-in-use` (`_bankCanSwitch`). Todo cambio MANUAL (ese botón, la barra, o "USAR ESTA" en las cards de hgcash/Finpro)
+queda en `Config['bankSwitchLog']` vía `_bankSwitchLog` (quién, rol, hora, de cuál a cuál); se lee con `GET /api/admin/bank-in-use/log`.
+Un camino nuevo que cambie la cuenta en uso a mano tiene que llamar a `_bankSwitchLog`.
