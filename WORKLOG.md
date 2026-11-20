@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-10-30** (última entrada: #248)
+> **Última actualización: 2026-11-20** (última entrada: #251)
 
 ---
 
@@ -62,13 +62,70 @@
 > **Tests que corro antes de tocar nada** (no hay node_modules, sólo esto):
 > `node scripts/test-weekly-refund.js` · `node scripts/test-weekly-refund-flow.js` ·
 > `node scripts/test-ganamos-adapter.js` · `node scripts/check-tdz.js` ·
-> `node scripts/test-cashback-formula.js` · `node scripts/test-rollover-multicuenta.js`.
+> `node scripts/test-cashback-formula.js` · `node scripts/test-rollover-multicuenta.js` ·
+> `node scripts/test-finpro-accounts.js` · `node scripts/test-finpro-webhook.js` · `node scripts/test-bank-rotation.js` (bancos, #251).
 >
 > **⚠️ Seguridad:** las capturas que el owner pegó el 2026-09-29 tenían cookies de
 > sesión VIVAS de la cuenta de agente `metawin100`. Se le avisó que cierre sesión para
 > invalidarlas.
 
 ---
+
+## Sesión 2026-11-20
+
+### 251. 🟣 FINPRO como segundo banco con API (hasta 3 cuentas) + "🏦 Bancos automáticos" + 🔁 rotación automática de cuentas + barra única en 🏦 Banco + pagar un retiro por el otro banco (réplica #202 y #207–#216 de AUTOREEMBOLSOSjygactivo) — admin-sw v72
+- **Owner:** replicar "tal cual quedó" todo lo de BANCOS de AUTOREEMBOLSOSjygactivo. Este repo ya tenía las 3 cuentas hgcash (#249) y la sección
+  "🏛️ Bancos — Configuración" (#250); faltaba Finpro entero y todo lo posterior. En el código, los comentarios de este porteo dicen `#251`
+  (allá son #202, #207, #208, #209, #210, #212, #213, #214 y #216).
+- **Tres llaves generales** en 🏛️ Bancos — Configuración → **🏦 Bancos automáticos**: (1) por dónde ENTRAN las cargas (hgcash / Finpro / los dos /
+  ninguno → `hgcash.enabled` + `Config['finpro'].enabled`), (2) por dónde SALEN los retiros (`Config['bankProvider']`, default hgcash), (3) qué
+  cuenta VE el cliente (`Config['bankShown']`: `hgcash` default = igual que antes · `finpro` · `manual`). Solo el banco elegido reescribe `Config['cbu']`.
+- **Cuentas Finpro (hasta 3)** — `Config['finproAccounts']` (cifrado con la clave derivada de JWT_SECRET; panel > SSM `FINPRO_*`), mismo modelo que
+  las de hgcash: una EN USO y las otras de respaldo; USAR ESTA / Pausar cargas / Editar / Borrar; modo "todas / solo la en uso". Antes de guardar
+  se prueba token + saldo contra Finpro. Una cuenta (hgcash o Finpro) **no se guarda sin CBU/CVU de 22 dígitos + alias**.
+- **Cargas:** mismo pipeline (`hgcashAutoCarga`: candados, `HgcashCharge`, multicuenta, bonos pendientes, bandeja, cierre). Entran por el webhook
+  `POST /api/finpro/webhook` (HMAC; la cuenta se reconoce por el CVU destino) y por la verificación del comprobante (`_finproVerifyComprobante`,
+  re-verifica cada 2 min hasta 90 min). El movimiento lleva `provider:'finpro'` + `accountKey`. Modo sombra/auto propio de Finpro.
+  **En este repo (modo manual) el resultado es el mismo que con hgcash:** en sombra → nota "COMPROBANTE OK — VERIFICADO CON EL BANCO (Finpro)" +
+  `/sys_comprobante_ok`; en auto → `PlatformTask` pendiente (flow `hgcash`, sin cambios) en "Pendientes GANAMOS". La plata va por el MISMO
+  `girox.depositToUser(...)` de siempre (la fachada de `platformService`); no se tocó ni se agregó ninguna capa de plataforma.
+- **Retiros:** `POST /api/admin/payouts/:id/pay` deriva a `_payPayoutViaFinpro` si el banco de retiros es Finpro, o si el body trae
+  `provider:'finpro'|'hgcash'` (pagar ESE retiro por el otro banco). Mismo `_deductChipsAtConfirm` y mismo guard `debitConfirmed !== true`. El pago
+  guarda `fpAccountKey` y se consulta SIEMPRE con esa cuenta (`_fpCtxFor`). Sin respuesta → queda "en proceso" y se consulta
+  (`_finproSyncPayout`, poll hasta 24 h, callback `POST /api/finpro/callback`); nunca se reenvía a ciegas. Anti doble pago entre bancos:
+  `PendingPayout.hgSendUnknown`, 409 `needsConfirm` / `confirmOtherBank`, alerta "POSIBLE PAGO DOBLE" (chat + Telegram).
+  Botones del banner del chat: **💸 Pagar $X** / **🔁 Pagar nuevamente $X** · **🏦 Pagar con otro banco** (el otro banco con API, si está listo) ·
+  **✅ Ya lo pagué por fuera** (el viejo "Pagar con otro banco" que solo marca pagado a mano).
+- **🔁 Rotación automática** (card nueva, TODO apagado por defecto): `Config['bankRotation']`, motor `_bankRotationTick` cada 2 min por instancia.
+  Rota la cuenta en uso del banco que ve el cliente por CAÍDA (N controles sin respuesta) o por TOPE de plata entrante día/mes (hora AR); destino
+  elegible por cuenta ("Al rotar pasa a"), otro banco solo con `crossBank`, mover retiros con `movePayouts` (solo por caída), vueltas (`loop`,
+  `Config['bankRotationLap']`: en la vuelta N el tope del día vale N×; el del mes no da vueltas). Candado `Config['bankRotationLock']` (5 min).
+  Avisa por Telegram. "Entró hoy/mes" cuenta también los movimientos sin `accountKey` (por CVU / única cuenta del banco).
+- **🏦 Banco:** barra única "👁️ El cliente transfiere a…" con las cuentas de los dos bancos + USAR ESTA (`GET/POST /api/admin/bank-in-use`,
+  admin/depositor/withdrawer); barra "Cuenta Finpro en uso"; etiqueta de banco/cuenta en movimientos y bandeja; filtro `?provider=` en movimientos.
+- **Nota interna nueva:** si la transferencia entró por una cuenta que NO es la que está en uso → "⚠️ OJO: transfirió a la cuenta X…"
+  (`_bankOffAccountNote`; acá se agrega también a la nota de sombra y a la de "PENDIENTE de cargar en GANAMOS", no solo a la de carga acreditada).
+- **Cambios de comportamiento sobre lo que YA estaba (hgcash):**
+  - `_hgApplyActiveToConfigs` ya NO hereda banco/titular/CBU/alias de la cuenta anterior al reescribir `Config['cbu']`, y solo lo reescribe si
+    `bankShown` es `hgcash` (default). `POST /api/admin/hgcash/accounts` exige CBU de 22 dígitos + alias (una cuenta vieja sin esos datos hay que
+    completarla para poder editarla).
+  - `handlePayoutStatusWebhook`: un ERROR/CANCELLED solo pasa a `failed` un pago que esté `paying`; un aviso de un banco no toca un pago que salió
+    por el otro (o marcado "por fuera"). `/pay` por hgcash deja `paidVia:'hgcash'` antes de enviar y marca `hgSendUnknown` si no hubo rechazo claro.
+  - El bloque de hgcash estaba DUPLICADO en el HTML desde #250 (copia oculta en COMANDOS con los mismos ids → `getElementById` agarraba la oculta).
+    Se sacó la copia de COMANDOS (eran idénticas).
+- **Distinto a la fuente (a propósito):** no existe acá `plat.*` / mudanza → no se portó; no existe la detección "CBU de otro proyecto"
+  (`ownCbus` / `_comprobanteForeignCbu`) ni `_systemFactsForAi` → esos dos retoques del #202 no aplican (solo se sumó el helper `_cbuSameAccount`
+  que usa Finpro); no se portaron `bankOldBanner` / `bankControlRow` (son de otra función de allá).
+- **Archivos:** `src/services/finproService.js` (nuevo, copia), `server.js`, modelos `BankMovement` (`provider`, `processedEvents`),
+  `PendingPayout` (`fp*`, `hgSendUnknown`), `Comprobante` (`finproVerify*`), panel (`index.html`, `admin.js`), `admin-sw.js` v72, tests nuevos.
+- **Pruebas (en frío, sin red):** `node scripts/test-finpro-accounts.js` (43/43) · `node scripts/test-finpro-webhook.js` (17) ·
+  `node scripts/test-bank-rotation.js` (19) — corren los bloques REALES de este `server.js` — + `node --check`, `check-tdz` y los 7 tests que ya había (verdes).
+- **⚠️ NO verificado:** nada corrió contra Finpro ni hgcash reales desde este repo, ni se levantó el server (no hay node_modules). **Arrancar Finpro
+  en modo SOMBRA** y con un retiro chico de prueba. La URL base por defecto (`https://mw-dev.finpro.com.ar`, bankId `creedence`) es la que el owner
+  confirmó como PRODUCCIÓN en AUTOREEMBOLSOS.
+- **Para dejarlo andando (owner):** 1) Bancos — Configuración → 🟣 Finpro → ➕ Agregar cuenta (API Key, Secret, n° de cuenta, CVU, alias, secreto de
+  webhook). 2) Darle a Finpro las dos URLs que muestra el panel (`/api/finpro/webhook` y `/api/finpro/callback`; dependen de `PUBLIC_BASE_URL`).
+  3) 🏦 Bancos automáticos → elegir cargas / retiros / cuenta que ve el cliente. 4) Sombra primero.
 
 ## Sesión 2026-11-04
 

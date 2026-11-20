@@ -121,6 +121,7 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   vacío, la API no lo informa).
 - `src/services/` — lógica (referidos, notificaciones, otp, metaCapi, fbAds, hgcash,
   comprobantes IA, analítica publicistas…).
+- `src/services/finproService.js` — cliente de Finpro, el SEGUNDO banco con API (#251; hgcash es el primero). Detalle en `docs/ARCHITECTURE.md` §11.
 - `public/` — PWA del cliente (namespace global `window.VIP`, SW único
   `firebase-messaging-sw.js`). `public/adminprivado2026/` — panel admin (~12k líneas
   de admin.js, cookie httpOnly, SW propio `admin-sw.js` con scope /adminprivado2026/).
@@ -321,6 +322,20 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   (`hgAccountKey`): toda consulta nueva a hgcash sobre un pago existente tiene que pasar `_hgTokenFor(x.hgAccountKey)`, y todo
   flujo nuevo que pague tiene que guardar `hgAccountKey: _hgActiveKey`. No volver a leer `process.env.HGCASH_API_TOKEN` directo:
   usar `hgcashPay.getToken()` / `_hgcashWebhookSecretEntries()`.
+- **Dos bancos con API: hgcash y Finpro (#251, réplica #202–#216 de AUTOREEMBOLSOSjygactivo):** tres llaves en
+  **🏛️ Bancos — Configuración → 🏦 Bancos automáticos**: por dónde ENTRAN las cargas (`hgcash.enabled` / `Config['finpro'].enabled`), por dónde
+  SALEN los retiros (`getBankProvider()`) y qué cuenta VE el cliente (`getBankShown()`: solo ese banco reescribe `Config['cbu']`, sin heredar nada
+  de la cuenta anterior). Las cuentas Finpro (`Config['finproAccounts']`, cifradas, panel > SSM) funcionan como las de hgcash: una EN USO, las
+  otras de respaldo. Reglas: un pago existente se consulta con **`_fpCtxFor(p.fpAccountKey)`**, nunca con la cuenta en uso; todo flujo nuevo que
+  pague por Finpro guarda `fpAccountKey`; `_hgMovementAutoOff(m)` ya cubre los dos bancos (seguir usándolo); un `BankMovement` sin `provider` es
+  de hgcash; nunca se reenvía un lote de Finpro sin respuesta (se consulta con `_finproSyncPayout`); un `ERROR` tardío solo actúa sobre pagos
+  `paying`; un texto nuevo sobre una carga usa `_bankLabel(m.provider)`. Finpro reusa `hgcashAutoCarga` tal cual (misma fachada `girox.*` de
+  `platformService`, misma `PlatformTask` flow `hgcash` en modo manual): NO crear otra capa de plataforma para bancos. Las credenciales NO van
+  en el repo. Detalle en `docs/ARCHITECTURE.md` §11. Tests: `node scripts/test-finpro-accounts.js` y `node scripts/test-finpro-webhook.js`
+  (recortan bloques reales de server.js por marcadores: `const FINPRO_DEFAULTS`, `async function _banksPayload`, `const _finproLastProcessByCvu`).
+- **Rotación automática de cuentas (#251):** `_bankRotationTick` puede cambiar SOLA la cuenta en uso (y, entre bancos, `bankShown` /
+  `bankProvider`). Nada debe asumir que la cuenta en uso es la misma que hace un rato: seguir usando `hgAccountKey` / `fpAccountKey` del pago.
+  Un banco o cuenta nuevos se suman a `_rotSlots()` / `_rotProbe` / `_rotSlotBlocked`. Todo apagado por defecto. Test: `node scripts/test-bank-rotation.js`.
 - **Multi-instancia (AWS EB):** los crons son `setInterval` en CADA instancia; su
   idempotencia depende de índices únicos (EncuestaFire.slotKey, InactividadFire.fireKey,
   HgcashCharge.chargeKey, RecordatorioFire.fireKey, DailyRouletteSpin
