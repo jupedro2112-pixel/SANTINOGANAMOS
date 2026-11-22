@@ -67,6 +67,15 @@ const PROMPT = [
   '  (formato XX-XXXXXXXX-X, ej: 30-71876498-6) como número de operación — el CUIT identifica a',
   '  una persona/empresa y se REPITE entre transferencias distintas. Si el comprobante NO muestra',
   '  un número de operación/referencia claro y distinto del CUIT/CBU, poné null.',
+  '- codigo_coelsa: el CÓDIGO COELSA (ID de la transferencia en la red interbancaria). Es OTRO dato, distinto del',
+  '  número de operación, y muchos comprobantes traen LOS DOS. Son 22 caracteres que MEZCLAN',
+  '  letras mayúsculas y números, todo junto (ej. "LOEJWV9JXE856Q18NQMD0G", "XJ8G7V957G41YMXDNEMPYR").',
+  '  Aparece con etiquetas como "Código de identificación", "ID COELSA", "Coelsa ID", "ID de',
+  '  transferencia", "Código de transacción", "Identificador de la operación", "N° de',
+  '  transacción", o a veces sin etiqueta al pie. NO es un CBU/CVU (esos son 22 dígitos SIN',
+  '  letras). Copialo carácter por carácter, sin espacios; cuidá O/0, I/1, S/5, B/8. Si el',
+  '  comprobante trae un número de operación corto Y este código, van cada uno en su campo.',
+  '  Si no hay un código así, null (string).',
   '- monto: el importe transferido, sólo el número sin símbolos ni puntos de miles (number).',
   '- titular_origen: nombre del que envió el dinero (string).',
   '- cbu_origen: CBU/CVU o alias de la cuenta de ORIGEN (string).',
@@ -78,10 +87,18 @@ const PROMPT = [
   'Respondé ÚNICAMENTE con un objeto JSON válido, sin texto adicional, sin markdown, con',
   'exactamente estas claves:',
   '{"es_comprobante": true|false, "confianza": 0..1, "numero_operacion": string|null,',
+  ' "codigo_coelsa": string|null,',
   ' "monto": number|null, "titular_origen": string|null, "cbu_origen": string|null,',
   ' "titular_destino": string|null, "cbu_destino": string|null,',
   ' "banco": string|null, "fecha": string|null}'
 ].join('\n');
+
+// #253 Código COELSA: 22 alfanuméricos con letras Y números (un CBU son 22 dígitos sin letras).
+// Cualquier otra cosa → null (no se usa un código dudoso para buscar una transferencia).
+function _normCoelsa(v) {
+  const c = String(v == null ? '' : v).toUpperCase().replace(/[^A-Z0-9]/g, '');
+  return (c.length === 22 && /[A-Z]/.test(c) && /\d/.test(c)) ? c : null;
+}
 
 // Extrae el primer objeto JSON de un texto (tolera fences ```json ... ``` o texto suelto).
 function parseJsonLoose(text) {
@@ -101,7 +118,7 @@ function parseJsonLoose(text) {
 /**
  * Analiza el content de un mensaje de imagen.
  * @returns {Promise<object>} { ok, isComprobante, confidence, operationNumber,
- *   amount, originHolder, originCbu, bank, paymentDate, rawText, model } o
+ *   coelsaCode, amount, originHolder, originCbu, bank, paymentDate, rawText, model } o
  *   { ok:false, error } si no se pudo analizar.
  */
 async function analyzeComprobante(content) {
@@ -150,6 +167,7 @@ async function analyzeComprobante(content) {
       isComprobante: !!parsed.es_comprobante,
       confidence: typeof parsed.confianza === 'number' ? parsed.confianza : 0,
       operationNumber: parsed.numero_operacion ? String(parsed.numero_operacion).trim() : null,
+      coelsaCode: _normCoelsa(parsed.codigo_coelsa), // #253
       amount: amountNum,
       originHolder: parsed.titular_origen ? String(parsed.titular_origen).trim() : null,
       originCbu: parsed.cbu_origen ? String(parsed.cbu_origen).trim() : null,
@@ -169,4 +187,4 @@ async function analyzeComprobante(content) {
   }
 }
 
-module.exports = { isEnabled, analyzeComprobante, getModel };
+module.exports = { isEnabled, analyzeComprobante, normCoelsa: _normCoelsa, getModel };

@@ -333,6 +333,20 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   `platformService`, misma `PlatformTask` flow `hgcash` en modo manual): NO crear otra capa de plataforma para bancos. Las credenciales NO van
   en el repo. Detalle en `docs/ARCHITECTURE.md` §11. Tests: `node scripts/test-finpro-accounts.js` y `node scripts/test-finpro-webhook.js`
   (recortan bloques reales de server.js por marcadores: `const FINPRO_DEFAULTS`, `async function _banksPayload`, `const _finproLastProcessByCvu`).
+- **Retiro "VERIFICANDO" (#255, réplica #221 de AUTOREEMBOLSOSjygactivo):** un envío a hgcash sin respuesta clara deja el retiro `failed` +
+  `hgSendUnknown` + `verifyUntil` (3 min): el pago pudo haber salido. Toda ruta que pague, marque pagado, rechace o descarte un
+  `PendingPayout` llama a `_payoutVerifyBlock(payout)` primero. El cartel del chat (`?status=chat`) muestra también EN PROCESO y FALLADO:
+  no volver a esconderlos.
+- **Salientes del banco SIEMPRE vinculados (#254, réplica #220):** una salida que el banco informa sin vínculo a un retiro o bajada
+  (`outKind:'unknown'`) dispara `_alertUnknownOutbound` (Telegram + "POSIBLE PAGO DOBLE" en el chat). Todo flujo nuevo que saque plata del
+  banco tiene que mandar su `externalID` / dejar `payoutId` o `sweepId`, o va a alertar en falso. Un pago confirmado por Finpro manda
+  `maybeSendFinproReceipt` (comprobante en texto con COELSA, `/sys_payout_receipt_finpro`).
+- **Pagos de retiros: candado anti pago doble (#253, réplica #219; incidente del 2026-11-20 en el gemelo, $2,4M):** la idempotencia del banco
+  solo vale dentro de UNA cuenta. Todo camino que mande un retiro llama a `_payoutResendGuard(...)` antes de reclamarlo,
+  `_payoutNoteSend(...)` justo antes del POST al banco y `_payoutNoteResult(...)` con la respuesta. En hgcash el token va EXPLÍCITO
+  (`createCashOut({ token })`, cuenta fijada al empezar el pedido), nunca el global de "la cuenta en uso". No aflojar la espera de 2 minutos
+  ni dar por "rechazado" un envío sin respuesta clara. Test: `node scripts/test-payout-guard.js` (recorta server.js por los marcadores
+  `const PAYOUT_RESEND_COOLDOWN_MS` y `async function _payPayoutViaFinpro`).
 - **Rotación automática de cuentas (#251):** `_bankRotationTick` puede cambiar SOLA la cuenta en uso (y, entre bancos, `bankShown` /
   `bankProvider`). Nada debe asumir que la cuenta en uso es la misma que hace un rato: seguir usando `hgAccountKey` / `fpAccountKey` del pago.
   Un banco o cuenta nuevos se suman a `_rotSlots()` / `_rotProbe` / `_rotSlotBlocked`. Todo apagado por defecto. Test: `node scripts/test-bank-rotation.js`.
