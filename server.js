@@ -19723,16 +19723,19 @@ async function _rotProbe(slot) {
   } catch (e) { return { ok: false, error: e.message }; }
 }
 // ¿Esta cuenta puede quedar EN USO y mostrarse al cliente? null = sí; texto = por qué no.
-function _rotSlotBlocked(slot, hgCfg, fpCfg) {
+// #256 `manualOk` = la cuenta EN USO hoy tampoco carga sola (la sala carga a mano): rotar hacia otra cuenta
+// "sin carga automática" no empeora nada, así que esa condición no frena (lo demás sí).
+function _rotManualOk(cur, hgCfg, fpCfg) { return !!cur && !(cur.provider === 'hgcash' ? hgCfg.enabled : fpCfg.enabled); }
+function _rotSlotBlocked(slot, hgCfg, fpCfg, manualOk) {
   const a = slot.acc;
   if (a.incomingEnabled === false) return 'está pausada para cargas';
   if (slot.provider === 'hgcash') {
-    if (!hgCfg.enabled) return 'hgcash no recibe cargas automáticas';
+    if (!hgCfg.enabled && !manualOk) return 'hgcash no recibe cargas automáticas';
     if (!a.token) return 'no tiene token';
     if (!a.cbu && !a.alias) return 'no tiene CBU ni alias para mostrarle al cliente';
     return null;
   }
-  if (!fpCfg.enabled) return 'Finpro no recibe cargas automáticas';
+  if (!fpCfg.enabled && !manualOk) return 'Finpro no recibe cargas automáticas';
   if (!_fpHasCreds(a)) return 'no tiene credenciales';
   if (String(a.fromCvu || '').length !== 22) return 'no tiene CVU para mostrarle al cliente';
   return null;
@@ -19779,7 +19782,7 @@ async function _bankRotate(cfg, cur, reason, detail, by = 'rotación automática
     skipped = []; let byDay = 0;
     for (const s of cands) {
       if (cfg.limits[s.id] && cfg.limits[s.id].skip) { skipped.push(`${s.label}: está fuera de la rotación (panel)`); continue; } // #253
-      const why = _rotSlotBlocked(s, hgCfg, fpCfg);
+      const why = _rotSlotBlocked(s, hgCfg, fpCfg, _rotManualOk(cur, hgCfg, fpCfg));
       if (why) { skipped.push(`${s.label}: ${why}`); continue; }
       const over = cfg.limits[s.id] ? _rotOverLimit(cfg, s, await _rotUsage(s)) : null; // sin tope cargado no se consulta la base
       if (over) { skipped.push(`${s.label}: ${over}`); if (/tope del DÍA/.test(over)) byDay++; continue; }
@@ -19864,7 +19867,7 @@ async function _bankRotationPayload({ probe = false } = {}) {
   for (const s of _rotSlots()) {
     const usage = await _rotUsage(s).catch(() => ({ day: 0, month: 0 }));
     const row = { id: s.id, provider: s.provider, key: s.key, label: s.label, bank: _bankLabel(s.provider), inUse: !!cur && cur.id === s.id,
-      limit: cfg.limits[s.id] || { day: 0, month: 0, next: '', skip: false }, usage, blocked: _rotSlotBlocked(s, hgCfg, fpCfg), over: _rotOverLimit(cfg, s, usage), fails: _rotFails.get(s.id) || 0 };
+      limit: cfg.limits[s.id] || { day: 0, month: 0, next: '', skip: false }, usage, blocked: _rotSlotBlocked(s, hgCfg, fpCfg, _rotManualOk(cur, hgCfg, fpCfg)), over: _rotOverLimit(cfg, s, usage), fails: _rotFails.get(s.id) || 0 };
     if (probe) { const p = await _rotProbe(s); row.probe = { ok: p.ok, unknown: !!p.unknown, error: p.error || null }; }
     slots.push(row);
   }

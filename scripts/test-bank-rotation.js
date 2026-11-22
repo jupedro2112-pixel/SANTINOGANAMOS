@@ -121,6 +121,15 @@ t('no rota hacia un banco que no recibe cargas automáticas', async () => {
   await tick(); await tick(); const r = await tick();
   assert.strictEqual(r.ok, false); assert.strictEqual(S.shown, 'hgcash');
 });
+t('#256 sala que carga A MANO (sin cargas automáticas): rota igual por tope entre sus cuentas', async () => {
+  reset({ limits: { 'hgcash:a1': { day: 1000 } } }); S.hgEnabled = false; usage['hgcash:a1'] = { day: 1500, month: 1500 };
+  const r = await tick();
+  assert.ok(r && r.ok, JSON.stringify(r)); assert.strictEqual(S._hgActiveKey, 'a2'); assert.strictEqual(S.shown, 'hgcash');
+  // una cuenta pausada sigue sin elegirse aunque la sala cargue a mano
+  reset({ limits: { 'hgcash:a1': { day: 1000 } } }); S.hgEnabled = false; S._hgAccounts[1].incomingEnabled = false; usage['hgcash:a1'] = { day: 1500, month: 1500 };
+  const r2 = await tick();
+  assert.strictEqual(r2.ok, false); assert.strictEqual(S._hgActiveKey, 'a1');
+});
 t('dos rotaciones seguidas no se encadenan (5 min de espera)', async () => {
   reset({ limits: { 'hgcash:a1': { day: 1, month: 0 }, 'hgcash:a2': { day: 1, month: 0 } }, crossBank: true });
   usage['hgcash:a1'] = { day: 5, month: 5 };

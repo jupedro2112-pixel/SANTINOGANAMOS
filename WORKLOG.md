@@ -80,6 +80,24 @@
 > hubo incidente propio: se replica el código porque este repo tiene los mismos dos bancos, las mismas cuentas múltiples y la misma rotación
 > (#249–#252). En el código, los comentarios de este porteo dicen `#253` / `#254` / `#255` (allá `#219` / `#220` / `#221`).
 
+### 256. 🔁 La rotación automática ahora funciona también en una sala que carga A MANO (sin cargas automáticas)
+Reporte de un encargado (22/11): en GANAMOS "ninguna rota, porque no hay automático", aunque el panel sí muestra cuánto entró por cada cuenta.
+- **Causa (confirmada en el código):** `_rotSlotBlocked` descartaba como destino toda cuenta de un banco con las cargas automáticas apagadas
+  ("hgcash no recibe cargas automáticas"). En GANAMOS las cargas son a mano → TODAS las cuentas quedaban descartadas y el motor nunca tenía
+  a dónde rotar.
+- **De dónde sale "lo ingresado":** de `BankMovement` (lo que el BANCO avisa que entró a cada cuenta), no de las cargas. El webhook guarda
+  el movimiento SIEMPRE, con las cargas automáticas prendidas o apagadas (lo único que se saltea con `enabled:false` es el matcheo/carga
+  sola, `hgcashMatchFromMovement`). Por eso la tabla ya mostraba montos. No conviene medirlo por `Transaction`: una carga manual no dice a
+  qué cuenta del banco entró la plata (salvo que el agente la vincule) y no cuenta lo transferido que todavía no se cargó.
+- **Qué se hizo:** `_rotManualOk(cur, hgCfg, fpCfg)`: si la cuenta EN USO hoy tampoco carga sola, esa condición ya no frena (rotar no empeora
+  nada). Se mantiene todo lo demás: cuenta pausada, sin token/CBU, fuera de la rotación, en su tope o caída no se elige; y desde un banco
+  que SÍ carga solo no se rota hacia uno que no. Lo usan `_bankRotate` y la tabla del panel (deja de decir "no rota acá").
+- **Validado:** `node --check`, `check-tdz`, `test-bank-rotation` (22, uno nuevo). **NO probado** en producción.
+- **Para que rote hace falta además:** rotación ENCENDIDA, "topes" tildado y un tope de día o mes cargado en la cuenta en uso (sin tope
+  solo rota por caída), que el cliente vea una cuenta de banco del panel (no un CBU cargado a mano) y que el webhook de cada cuenta
+  llegue a esta app (si no, "ingresado" queda en 0). El control corre cada 2 minutos.
+- **Solo en este repo** (decisión del owner 22/11): los gemelos tienen el mismo límite pero ahí las cargas son automáticas.
+
 ### 255. 🛑 Retiro "VERIFICANDO" cuando el banco no responde + el cartel del chat muestra EN PROCESO / FALLADO (réplica #221 de AUTOREEMBOLSOSjygactivo) — admin-sw v74
 Pedido del owner (en el gemelo): "a veces un pago da error y en realidad sí salió; ¿cómo evitar que viendo ese error lo paguen de nuevo?".
 - **Hallazgo:** el cartel del retiro en el chat solo pedía `pending_review`. Apenas un pago fallaba (o quedaba en proceso) el cartel

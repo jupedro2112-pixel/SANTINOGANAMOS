@@ -2059,6 +2059,11 @@ no alcanza para decidir NO pone el comprobante en `needs_review`: sigue matcheab
 En este repo el servicio de IA es el de prompt libre (sin salida estructurada): `codigo_coelsa` se pide en el prompt y en la lista de claves
 del JSON; todo valor que no pase `normCoelsa` se descarta.
 
+### Rotación en una sala que carga a mano (#256)
+`_rotSlotBlocked(slot, hgCfg, fpCfg, manualOk)`: con `manualOk` (= `_rotManualOk`: el banco de la cuenta EN USO tiene las cargas automáticas
+apagadas) la condición "no recibe cargas automáticas" no descarta al destino. `_bankInUsePayload` y el cambio manual siguen sin `manualOk`
+(ahí es solo una advertencia). El uso por cuenta (`_rotUsage`) sale de `BankMovement` Inbound, que el webhook guarda aunque `enabled:false`.
+
 ### Rotación: cuenta fuera de la rotación (#253)
 `bankRotation.limits[id].skip === true` → nunca es destino de `_bankRotate` y, si está en uso, `_bankRotationTick` no hace nada con ella.
 
