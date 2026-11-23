@@ -2072,3 +2072,9 @@ Cualquier rol del panel menos `comunidad` cambia la cuenta que ve el cliente con
 `POST /api/admin/bank-in-use` (`_bankCanSwitch`). Todo cambio MANUAL (ese botón, la barra, o "USAR ESTA" en las cards de hgcash/Finpro)
 queda en `Config['bankSwitchLog']` vía `_bankSwitchLog` (quién, rol, hora, de cuál a cuál); se lee con `GET /api/admin/bank-in-use/log`.
 Un camino nuevo que cambie la cuenta en uso a mano tiene que llamar a `_bankSwitchLog`.
+
+### Webhook saliente `visita` (#257)
+Opcional por destino (`events.visita`). `_notifyVisit(req.user, {installed})` se llama desde `/api/auth/verify` y `/api/activity/ping`;
+reclama `User.lastVisitWebhookAt` (una cada 30 min por jugador, atómico) y recién ahí hace `outboundWebhook.notify('visita', …)` con
+`eventKey` `visita_<userId>_<ms>`. Body igual al resto + `visit: { installed }`. Solo rol `user` y con sesión; si ningún destino lo pidió
+no toca la base. Un punto nuevo de "el jugador abrió la app" llama a `_notifyVisit`.

@@ -35,7 +35,10 @@ const RETRY_DELAYS_MS = [1000, 4000, 16000];
 const MAX_TOTAL_ATTEMPTS = 10;
 const QUEUE_RETRY_MS = 5 * 60 * 1000;
 const POST_TIMEOUT_MS = 8000;
-const EVENTS = ['registro', 'primera_carga', 'carga', 'retiro'];
+const EVENTS = ['registro', 'primera_carga', 'carga', 'retiro', 'visita'];
+// #257 'visita': el jugador (con sesión iniciada) abrió la página / la app. OPCIONAL por destino, a lo sumo una cada
+// VISIT_GAP_MS por jugador (lo reclama server.js con `User.lastVisitWebhookAt`). Mismo `user` que el resto de los eventos.
+const VISIT_GAP_MS = 30 * 60 * 1000;
 
 // Inyectado desde server.js: cómo leer los destinos (con el secreto ya descifrado),
 // cómo resolver publicista/campaña de un usuario y la URL pública del sitio.
@@ -103,6 +106,8 @@ function buildPayload({ event, eventId, user, scope, opts, dest }) {
     currency: o.amount != null ? 'ARS' : null,
     first_deposit: o.firstDeposit === true,
     transaction_id: o.transactionId || null,
+    // #257 solo en 'visita': desde dónde entró (app instalada o navegador)
+    ...(event === 'visita' ? { visit: { installed: o.installed === true } } : {}),
     occurred_at: (o.occurredAt ? new Date(o.occurredAt) : new Date()).toISOString()
   };
   if (dest && dest.fields && dest.fields.atribucion) {
@@ -236,6 +241,11 @@ async function _notify(event, user, opts) {
   }
 }
 
+// #257 ¿Algún destino activo quiere este evento? (lee la lista cacheada: barato, para no tocar la base si nadie lo pidió)
+async function wants(event) {
+  try { return ((await _cfg.getDestinations()) || []).some((d) => d && d.enabled && d.url && d.events && d.events[event] === true); } catch (_) { return false; }
+}
+
 /** Manda un aviso de PRUEBA a un destino (desde el panel). Devuelve el resultado del POST. */
 async function sendTest(dest) {
   const payload = buildPayload({
@@ -285,4 +295,4 @@ async function pendingCount(destId) {
   try { return await OutboundWebhookQueue.countDocuments(destId ? { destId } : {}); } catch (_) { return 0; }
 }
 
-module.exports = { EVENTS, configure, notify, sendTest, processQueue, startWorker, getStats, pendingCount, sign, buildPayload };
+module.exports = { EVENTS, VISIT_GAP_MS, wants, configure, notify, sendTest, processQueue, startWorker, getStats, pendingCount, sign, buildPayload };

@@ -771,6 +771,24 @@ outboundWebhook.configure({
   publicBaseUrl: () => getPublicBaseUrl()
 });
 
+// #257 Evento 'visita' de los webhooks salientes: el jugador con sesión iniciada abrió la página / la app.
+// Se llama desde lo que la PWA pide al abrir (`/api/auth/verify`, `/api/activity/ping`). Nunca frena al que llama.
+// Una visita cada 30 min por jugador: el reclamo es ATÓMICO sobre `User.lastVisitWebhookAt` (sirve con varias
+// instancias). Si ningún destino tiene tildado "Visitas", no toca la base.
+function _notifyVisit(reqUser, extra) {
+  setImmediate(async () => {
+    try {
+      if (!reqUser || !reqUser.userId || (reqUser.role && reqUser.role !== 'user')) return;
+      if (!(await outboundWebhook.wants('visita'))) return;
+      const now = new Date();
+      const cut = new Date(now.getTime() - outboundWebhook.VISIT_GAP_MS);
+      const r = await User.updateOne({ id: String(reqUser.userId), role: 'user', $or: [{ lastVisitWebhookAt: null }, { lastVisitWebhookAt: { $lt: cut } }] }, { $set: { lastVisitWebhookAt: now } });
+      if (!(r && (r.modifiedCount || r.nModified))) return;
+      outboundWebhook.notify('visita', { id: String(reqUser.userId) }, { occurredAt: now, eventKey: `visita_${reqUser.userId}_${now.getTime()}`, installed: !!(extra && extra.installed) });
+    } catch (e) { try { logger.warn('[webhooks] visita: ' + e.message); } catch (_) {} }
+  });
+}
+
 // Valida y normaliza un valor de cookie _fbc / _fbp de Meta antes de
 // persistirlo o reenviarlo a Conversions API. El formato real es
 // `fb.<subdomainIndex>.<creationTimeMs>.<payload>` (ej: fb.1.1747531860000.IwAR0...).
@@ -3506,7 +3524,8 @@ function _normalizeOutboundDest(d, cur) {
       registro: events.registro !== false,           // siempre por defecto
       primera_carga: events.primera_carga !== false, // siempre por defecto
       carga: events.carga === true,                  // OPCIONAL
-      retiro: events.retiro === true                 // OPCIONAL
+      retiro: events.retiro === true,                // OPCIONAL
+      visita: events.visita === true                 // OPCIONAL (#257): el jugador abrió la página / la app
     },
     fields: { atribucion: fields.atribucion === true, contacto: fields.contacto === true }, // OPCIONALES
     // Cómo se autentica el aviso ante el receptor. Siempre van los headers
@@ -6347,6 +6366,7 @@ app.post('/api/auth/admin-logout', (req, res) => {
 // Verify token
 app.get('/api/auth/verify', authMiddleware, async (req, res) => {
   try {
+    _notifyVisit(req.user); // #257 webhook saliente 'visita' (a lo sumo una cada 30 min por jugador)
     // Buscar usuario completo
     const user = await User.findOne({ id: req.user.userId }).select('-password').lean();
     
@@ -18071,6 +18091,7 @@ async function _diaFirstDepositDate() {
 // teléfono usa (lastDevice) y el ID propio del celular (deviceIds, últimos 6) que cruzan las Alertas de estafa.
 app.post('/api/activity/ping', authMiddleware, async (req, res) => {
   try {
+    _notifyVisit(req.user, { installed: !!(req.body && req.body.installed) }); // #257 webhook saliente 'visita' (va primero: sale aunque Datos IA esté apagado)
     User.updateOne({ id: req.user.userId, 'notifPrefs.fatigue': { $gt: 0 } }, { $set: { 'notifPrefs.fatigue': 0 } }).catch(() => {}); // #238: abrió la app ⇒ sin fatiga (aunque Datos IA esté apagado)
     if (!(await featureFlags.isOn('datosIa'))) return res.json({ ok: false, off: true });
     const userId = req.user.userId; const now = new Date();

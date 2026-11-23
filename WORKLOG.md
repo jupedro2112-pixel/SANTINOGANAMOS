@@ -80,6 +80,21 @@
 > hubo incidente propio: se replica el código porque este repo tiene los mismos dos bancos, las mismas cuentas múltiples y la misma rotación
 > (#249–#252). En el código, los comentarios de este porteo dicen `#253` / `#254` / `#255` (allá `#219` / `#220` / `#221`).
 
+### 257. 👀 Webhooks salientes: evento nuevo "visita" (el jugador abrió la página / la app) — réplica #235 de CARGASGIROXactivo
+Pedido de un publicista (23/11): recibir las visitas (PageView) de cada persona, identificada igual que en los demás eventos, para tener
+la actividad de último ingreso.
+- **Qué manda:** evento `visita`, OPCIONAL por destino (casilla "Visitas a la página" en 🔗 Webhooks salientes; apagado por defecto, los
+  destinos que ya existen no reciben nada nuevo). Mismo body y mismas cabeceras/firma que el resto: `user.id` identifica al jugador (el
+  username sigue sin viajar), `occurred_at` = momento del ingreso, `visit.installed` (app instalada o navegador), `amount` /
+  `transaction_id` en null. Respeta el alcance por publicista del destino y los datos extra tildados.
+- **Cuándo:** cuando un jugador CON SESIÓN INICIADA abre la página o la app: `_notifyVisit(req.user)` en `/api/auth/verify` y en
+  `/api/activity/ping` (primera línea, así sale aunque Datos IA esté apagado). **A lo sumo una cada 30 minutos por jugador**
+  (`outboundWebhook.VISIT_GAP_MS`): reclamo atómico sobre `User.lastVisitWebhookAt` (campo nuevo), sirve con varias instancias.
+  Si ningún destino lo pidió, no se toca la base (`outboundWebhook.wants('visita')`). Solo rol `user`.
+- **Lo que NO cubre:** visitantes anónimos (sin sesión no hay a quién identificar).
+- **Archivos:** `outboundWebhookService.js`, `server.js`, `User.js`, panel (index.html / admin.js, admin-sw v75), test nuevo
+  `scripts/test-webhook-visit.js` (7). **Validado:** `node --check` y tests en frío. **NO probado** con un receptor real.
+
 ### 256. 🔁 La rotación automática ahora funciona también en una sala que carga A MANO (sin cargas automáticas)
 Reporte de un encargado (22/11): en GANAMOS "ninguna rota, porque no hay automático", aunque el panel sí muestra cuánto entró por cada cuenta.
 - **Causa (confirmada en el código):** `_rotSlotBlocked` descartaba como destino toda cuenta de un banco con las cargas automáticas apagadas

@@ -472,7 +472,7 @@ let _whDests = [];
 let _whPublishers = [];
 function _whEvTxt(d) {
     const ev = d.events || {}; const out = ['registro', 'primera carga'];
-    if (ev.carga) out.push('cargas'); if (ev.retiro) out.push('retiros');
+    if (ev.carga) out.push('cargas'); if (ev.retiro) out.push('retiros'); if (ev.visita) out.push('visitas');
     return out.join(' · ');
 }
 // Texto del formato SOLO con lo que ese destino recibe (eventos y campos marcados): es lo
@@ -480,7 +480,7 @@ function _whEvTxt(d) {
 // se comparte (si el publicista ve que podemos mandar teléfono/atribución, lo pide).
 function _whFormatText(d) {
     const ev = d.events || {}; const f = d.fields || {};
-    const events = ['registro', 'primera_carga']; if (ev.carga) events.push('carga'); if (ev.retiro) events.push('retiro'); events.push('prueba');
+    const events = ['registro', 'primera_carga']; if (ev.carga) events.push('carga'); if (ev.retiro) events.push('retiro'); if (ev.visita) events.push('visita'); events.push('prueba');
     const lines = [];
     lines.push('WEBHOOK — ' + (d.name || '') + '\nURL: ' + d.url + '\n');
     lines.push('Cada aviso es un POST con JSON (Content-Type: application/json).');
@@ -509,6 +509,7 @@ function _whFormatText(d) {
     lines.push('  user: { id, created_at, campaign, publisher, influencer, source, channel }');
     lines.push('    id = identificador unico y estable del jugador; source = URL completa de origen (dominio, ruta y parametros) con la que entro el jugador');
     lines.push('  (en primera_carga' + (ev.carga ? ' / carga' : '') + (ev.retiro ? ' / retiro' : '') + ') amount, currency, first_deposit, transaction_id, occurred_at');
+    if (ev.visita) lines.push('  (en visita) occurred_at = momento del ingreso; visit: { installed } (true = app instalada, false = navegador); amount y transaction_id van en null.\n    Se manda cuando el jugador, con sesion iniciada, abre la pagina o la app: a lo sumo una visita cada 30 minutos por jugador.');
     if (f.atribucion) lines.push('  attribution: { fbclid, fbc, fbp, utm_source, utm_medium, utm_campaign, utm_content, utm_term, landing_url, registration_ip }');
     if (f.contacto) lines.push('  contact: { email, phone, phone_verified }');
     lines.push('\nResponder 2xx. Con 5xx o timeout se reintenta (hasta 10 veces); con 4xx no se reintenta.');
@@ -583,6 +584,7 @@ function webhookEdit(id) {
     webhookScopeChanged();
     document.getElementById('whEvCarga').checked = !!(d && d.events && d.events.carga);
     document.getElementById('whEvRetiro').checked = !!(d && d.events && d.events.retiro);
+    document.getElementById('whEvVisita').checked = !!(d && d.events && d.events.visita);
     document.getElementById('whFAtrib').checked = !!(d && d.fields && d.fields.atribucion);
     document.getElementById('whFContacto').checked = !!(d && d.fields && d.fields.contacto);
     document.getElementById('whEnabled').checked = d ? d.enabled !== false : true;
@@ -617,7 +619,7 @@ async function webhookSave() {
         id: document.getElementById('whId').value || undefined,
         name: document.getElementById('whName').value, url: document.getElementById('whUrl').value.trim(),
         secret: document.getElementById('whSecret').value, scope, publishers,
-        events: { registro: true, primera_carga: true, carga: document.getElementById('whEvCarga').checked, retiro: document.getElementById('whEvRetiro').checked },
+        events: { registro: true, primera_carga: true, carga: document.getElementById('whEvCarga').checked, retiro: document.getElementById('whEvRetiro').checked, visita: document.getElementById('whEvVisita').checked },
         fields: { atribucion: document.getElementById('whFAtrib').checked, contacto: document.getElementById('whFContacto').checked },
         enabled: document.getElementById('whEnabled').checked,
         auth: { mode: document.getElementById('whAuthMode').value, header: document.getElementById('whAuthHeader').value.trim(), prefix: document.getElementById('whAuthPrefix').value }

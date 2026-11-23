@@ -887,6 +887,7 @@ document.addEventListener('change', function (ev) {
                                         <label style="display:flex;align-items:center;gap:8px;font-size:13px;margin:4px 0;color:#aaa;"><input type="checkbox" checked disabled style="width:auto;"> Primera carga (siempre)</label>
                                         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whEvCarga" style="width:auto;"> Todas las cargas (opcional)</label>
                                         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whEvRetiro" style="width:auto;"> Retiros pagados (opcional)</label>
+                                        <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;" title="Cada vez que un jugador con sesión iniciada abre la página o la app. A lo sumo un aviso cada 30 minutos por jugador."><input type="checkbox" id="whEvVisita" style="width:auto;"> Visitas a la página (opcional · 1 cada 30 min por jugador)</label>
                                         <div style="font-weight:bold;font-size:13px;margin:10px 0 6px;">🧩 Datos extra (opcionales)</div>
                                         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whFAtrib" style="width:auto;"> Atribución (fbclid, _fbc/_fbp, UTM, landing, IP)</label>
                                         <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:13px;margin:4px 0;"><input type="checkbox" id="whFContacto" style="width:auto;"> Mail y teléfono del usuario</label>
@@ -903,13 +904,14 @@ document.addEventListener('change', function (ev) {
                                 <summary style="cursor:pointer;color:#d4af37;">📄 Formato completo (TODO lo que el sistema puede mandar — uso interno)</summary>
                                 <div style="margin-top:6px;color:#ffb74d;">⚠️ No le pases este bloque al publicista: lista también lo que NO le mandás (teléfono, atribución, retiros…). Usá el botón <b>📋 Copiar formato para pasarle</b> del destino: arma el texto solo con lo que ese destino recibe.</div>
                                 <pre style="white-space:pre-wrap;background:rgba(0,0,0,0.35);padding:10px;border-radius:8px;font-size:11px;line-height:1.45;margin-top:8px;">POST {URL}   Content-Type: application/json
-Headers: X-Webhook-Event (registro | primera_carga | carga | retiro | prueba)
+Headers: X-Webhook-Event (registro | primera_carga | carga | retiro | visita | prueba)
          X-Webhook-Id (único por evento: si se repite, ignorar)
          X-Webhook-Timestamp (unix, segundos)
          X-Webhook-Signature = HMAC-SHA256 hex de "{timestamp}.{body}" con el secreto
 Body: { "event", "event_id", "sent_at", "site", "test",
         "user": { "id", "created_at", "campaign", "publisher", "influencer", "source", "channel" },   (id = UUID interno, NUNCA va el username; source = URL completa de origen; channel = landing | panel…)
         "amount", "currency", "first_deposit", "transaction_id", "occurred_at",
+        "visit": { "installed" },   (solo en visita: true = app instalada, false = navegador; amount y transaction_id van en null)
         "attribution": { "fbclid", "fbc", "fbp", "utm_source", "utm_medium", "utm_campaign", "utm_content", "utm_term", "landing_url", "registration_ip" },   (si está marcado)
         "contact": { "email", "phone", "phone_verified" } }   (si está marcado)
 Responder 2xx. Con 5xx / timeout se reintenta; con 4xx no.</pre>

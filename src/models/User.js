@@ -105,6 +105,8 @@ const userSchema = new mongoose.Schema({
     type: Boolean, 
     default: true 
   },
+  // #257 último aviso de 'visita' mandado por webhook saliente (reclamo atómico: una visita cada 30 min por jugador)
+  lastVisitWebhookAt: { type: Date, default: null },
   lastLogin: { 
     type: Date, 
     default: null 
