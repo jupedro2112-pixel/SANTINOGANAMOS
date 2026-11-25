@@ -168,6 +168,12 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   reembolsos/ruleta/rakeback/VIP/referidos salían como "Carga"). Fallback automático
   a depósito libre con la MISMA reference si el bono suelto está apagado, 0 no está
   permitido o el monto sale de `fixed_min/fixed_max`. Kill switch `GIROX_GIFT_AS_BONUS=0`.
+  **#259 (réplica #237 de CARGASGIROXactivo):** con rollover >0 y el jugador con bono activo, el regalo se UNIFICA con el bono
+  anterior (bono nuevo = resto viejo + regalo, misma reference; `result.mergedOld`). Nunca usar `result.mergedTotal` como monto del
+  regalo en la contabilidad local: el regalo es el monto pedido. Modo en `Config['bonusRolloverGlobal'].fallback`
+  (`merge` default | `deposit` | `bonus0`, card de Rollover global). Un regalo nuevo guarda `..._giftMeta(result)` en su Transaction
+  y manda su descripción con `_platDesc('TIPO — detalle', 'texto de siempre')` (#261: el detallado viaja SOLO a 1girox; en manual /
+  mijoker va el de siempre). Todo esto existe solo con `PLATFORM_MODE=girox`. Test: `node scripts/test-gift-fallback.js`.
   Un `multiplier` EXPLÍCITO (>0) sí usa `/bonus` con rollover: puede quedar "a reclamar"
   (`girox.claimPendingBonus()`) y PISA un bono activo. El **fueguito** con rollover >0
   va por `/bonus` con ese multiplier (`_creditFireReward`) salvo que el jugador ya

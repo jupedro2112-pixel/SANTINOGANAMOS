@@ -59,7 +59,7 @@ check('§A.2.2 creditUserBalance con multiplier resuelve el global', /opts\.mult
 check('§A.2.2 la rama sin multiplier delega en creditGift', /return creditGift\(username, amt, \{[\s\S]*?ignoreGlobalRollover: !!\(opts && opts\.ignoreGlobalRollover\)/.test(girox), true);
 check('§A.2.3 depositToUser aplica el global solo con bonus_amount/bonus_percent', /\(body\.bonus_amount > 0 \|\| body\.bonus_percent > 0\) && !wagering\.ignoreGlobalRollover/.test(girox), true);
 check('§A.6.6 comisión de referidos EXCLUIDA', /ignoreGlobalRollover: true/.test(between(referral, 'giroxService.creditUserBalance(', ');')), true);
-check('§A.6.7 devolución de retiro rechazado (parte bono) EXCLUIDA', /vip-payoutref-bonus-\$\{payout\.id\}`, \{ ignoreGlobalRollover: true \}/.test(server), true);
+check('§A.6.7 devolución de retiro rechazado (parte bono) EXCLUIDA', /vip-payoutref-bonus-\$\{payout\.id\}`, \{ ignoreGlobalRollover: true[,} ]/.test(server), true);
 check('§A.6.7 devolución de fichas va por depósito SIN wagering', /vip-payoutref-chips-\$\{payout\.id\}`\);/.test(server), true);
 check('§A.3 resolver inyectado desde server.js', /girox\.setRolloverResolver\(async \(\) => \{[\s\S]*?g\.enabled \? g\.effective : null/.test(server), true);
 check('§A.3 getGiroxBonusMultiplier devuelve el global cuando está encendido', /async function getGiroxBonusMultiplier\(\) \{\s*try \{ const g = await getGlobalBonusRollover\(\); if \(g\.enabled\) return g\.effective;/.test(server), true);

@@ -203,6 +203,11 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
 
     const periodLabel = getPeriodLabel(periodKey);
     const description = `Ganancias por referidos - ${periodLabel}${isDeltaPayout ? ` (pago #${payoutIndex})` : ''}`;
+    // #261 (réplica #239 de CARGASGIROXactivo): a 1girox viaja con el TIPO primero. La Transaction local y el payout
+    // siguen con `description` (no cambia lo que se lee acá ni lo que ve el referidor).
+    const platformDescription = giroxService.PLATFORM_MODE === 'girox'
+      ? `COMISIÓN de referidos — ganancias por referidos de ${periodLabel}${isDeltaPayout ? ` (pago #${payoutIndex})` : ''}`
+      : description;
     const payoutCutoffEnd = new Date();
 
     // Per-referred detail for full audit trail — stored inside the payout document so the
@@ -380,7 +385,7 @@ async function executePayoutsForPeriod(periodKey, options = {}) {
         totalAmount,
         payoutReference,
         // #184: la comisión es plata del referidor, NO un bono → sin rollover global.
-        { description, ignoreGlobalRollover: true }
+        { description: platformDescription, ignoreGlobalRollover: true }
       );
 
       if (!creditResult.success) {

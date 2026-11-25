@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-11-22** (última entrada: #255)
+> **Última actualización: 2026-11-25** (última entrada: #261)
 
 ---
 
@@ -71,6 +71,80 @@
 > invalidarlas.
 
 ---
+
+## Sesión 2026-11-25
+
+> **Réplica #236–#239 de CARGASGIROXactivo** (regalos que 1girox anotaba como "Carga"). Acá llevan los números #258–#261.
+> ⚠️ **Este repo corre en `PLATFORM_MODE=manual` (GANAMOS, sin API): hoy NADA de esto se ejecuta en producción.** Todo vive en
+> `giroxService` y detrás de `girox.PLATFORM_MODE === 'girox'`; en manual / mijoker las descripciones, las Transactions y el panel
+> quedan exactamente como estaban. Queda listo para el día que una sala de este código use 1girox.
+
+### 261. 🏷️ Descripción detallada hacia 1girox de TODO bono / regalo / reembolso — réplica #239 de CARGASGIROXactivo
+Cada acreditación manda a 1girox un texto que empieza con el TIPO en mayúsculas y sigue con el detalle. Solo cambia el texto que
+viaja a 1girox: montos, references, rollover y la descripción de la Transaction local NO cambian.
+- `REEMBOLSO diario del <fecha>` / `semanal del <desde> al <hasta>` / `mensual …` · `REEMBOLSO EN VIVO — N% de la pérdida acumulada`
+  · `REEMBOLSO semanal por planilla — …` (el de #215, si alguna vez corre con 1girox).
+- `REGALO — Rakeback semanal VIP del … al …: N% de $X apostados` · `REGALO — Fueguito (racha diaria): <premio>` ·
+  `REGALO — Premio de la ruleta diaria: <premio>` · `REGALO — Fichas de regalo del lote de notificaciones "<nombre>"`.
+- `BONO manual — bonificación otorgada por el agente <usuario> desde el panel` · `BONO — Bono sorpresa por el código de bienvenida` ·
+  `BONO — Premio por alcanzar el nivel VIP <nivel>`.
+- `COMISIÓN de referidos — …` (variable aparte `platformDescription`: la Transaction y el payout siguen con el texto de antes) ·
+  `DEVOLUCIÓN de retiro rechazado — parte del retiro que era bono` (antes iba sin texto).
+- **Diferencia con el origen:** acá hay tres plataformas. El helper `_platDesc(detallado, deSiempre)` de server.js (y el chequeo
+  `girox.PLATFORM_MODE === 'girox'` en `vipLevelService` / `referralPayoutService` / bloque del reembolso por planilla) manda el texto
+  nuevo SOLO a 1girox; en manual / mijoker viaja el de siempre, porque ahí la descripción la lee el agente en "⏳ Pendientes GANAMOS"
+  / "🔁 Operaciones plataforma". No existe acá `BONO de la carga —` (no hay bono wager, #226–#228 del origen).
+- Regla: todo flujo nuevo que acredite manda `description` con ese formato vía `_platDesc`.
+
+### 260. 🏷️ Regalo que igual sale por depósito: la descripción en 1girox avisa que es un BONO — réplica #238
+- `giroxService._giftAsDepositDesc`: todo regalo que cae a `/deposit` (los dos caminos: con rollover y depósito libre) viaja con
+  `BONO (contar como BONO, NO como carga): <qué regalo es> — sale como depósito por una limitación de la API de 1girox`.
+- Los reembolsos diario / semanal / mensual ahora mandan descripción (antes llegaban a 1girox sin texto).
+- Casos que caen ahí con "Unificar" activo: regalo fuera de `fixed_min/fixed_max` (ej. $1), bono cumplido sin reclamar, total sobre el
+  máximo de bono, rechazo de la plataforma, no poder leer al jugador.
+
+### 259. 🔗 Regalo a un jugador con bono activo → se UNIFICA con el bono anterior — réplica #237
+- **Causa (confirmada con logs de producción del origen, no de acá):** con el rollover GLOBAL encendido, un regalo a un jugador que ya
+  tenía un bono activo caía a depósito con rollover (= "Carga" en 1girox) para no pisarle el bono; era la gran mayoría de los regalos
+  anotados como Carga.
+- **Cómo se unifica** ("bono sobre bono": otorgar un bono a quien ya tiene uno debita lo que le queda del viejo — "Cancelación de
+  bono" — y rige la config del nuevo): `creditGift` otorga UN bono por **resto del viejo (`bonus_locked`) + regalo** con el rollover
+  vigente y la MISMA reference. El jugador gana solo el regalo; todo queda bajo rollover, barra desde 0. El resultado trae
+  `mergedOld`, `mergedTotal`, `giftAmount`; **la contabilidad local registra SIEMPRE el monto pedido**, nunca `mergedTotal`.
+- **Modo** en `Config['bonusRolloverGlobal'].fallback`: `'merge'` (DEFAULT) | `'deposit'` | `'bonus0'`. Radios en la card
+  "🎯 Rollover GLOBAL de bonos". El POST conserva el modo anterior si el body no lo trae.
+- **No se unifica (va por depósito con rollover, marcado):** bono cumplido sin reclamar (`claimable_total > 0`), total sobre el máximo
+  de bono, monto fuera de rango, rechazo de la plataforma. Resto de bono ≤ $50: bono normal como siempre.
+- **Control de plata:** con el saldo de la respuesta de `/bonus`, si subió bastante más que el regalo (1girox no debitó el viejo) →
+  `setGiftMergeAnomalyHook`: la unificación SE APAGA sola (vuelve a `'deposit'`), log `[gift-merge]` y Telegram.
+- **Para el cierre:** la Transaction local guarda el regalo + `metadata.mergedBonus`; tarjeta "Bonos anteriores unificados".
+- El mensaje del fueguito al cliente usa el rollover realmente aplicado y, si se unificó, el objetivo sobre `mergedTotal`
+  (también `rolloverMultiplier` / `rolloverTarget` de la respuesta; en el origen esos dos campos siguen con el valor del flujo).
+
+### 258. 🎁 Regalos que 1girox anotaba como CARGA → modo elegible + marcas para el cierre — réplica #236
+- `giroxService`: `setGiftFallbackResolver` / `_giftFallbackMode()`; opción `'bonus0'` = el regalo que no puede salir como bono con
+  rollover va como BONO SIN rollover (figura como Bono, queda retirable). server.js inyecta el resolver y el hook (con guarda
+  `typeof … === 'function'`); los adaptadores manual y mijoker solo suman los dos setters como NO-OP, porque sus tests exigen que
+  tengan las mismas exports que `giroxService` (no cambia nada de lo que hacen).
+- `_giftMeta(result)` (devuelve `{}` fuera de 1girox): reembolsos diario / semanal / mensual y rakeback guardan
+  `metadata.creditedAs:'deposit'` + `giftFallback` (motivo) cuando salen por depósito, o `mergedBonus` cuando se unifican. Fueguito,
+  reembolso en vivo y ruleta ya guardaban `creditedAs`; ahora suman `mergedBonus`. **Extra respecto del origen:** el bono de nivel VIP
+  (`vipLevelService`) también guarda esa marca (en el origen no se cuenta en las tarjetas).
+- Transacciones: tarjetas **"Regalos que 1girox muestra como Carga"** (`summary.giftsAsDeposit`) y **"Bonos anteriores unificados"**
+  (`summary.mergedBonus`); el backend solo las calcula con `PLATFORM_MODE=girox` (en manual `creditedAs` no significa eso).
+- El reembolso en vivo devuelve el rollover REALMENTE aplicado (`rolloverApplied`).
+- **No arregla hacia atrás.** Lo ya anotado como Carga en 1girox queda así; los regalos viejos no tienen la marca.
+
+**Validado (#258–#261):** `node --check` de todo lo tocado, `check-tdz`, test nuevo `scripts/test-gift-fallback.js` (25: 13 con la API
+de 1girox simulada + 12 estáticos del cableado) y toda la suite `scripts/test-*.js`. admin-sw v76 (la PWA del cliente no cambió).
+**NO probado:** nada contra 1girox real (este repo ni siquiera corre en ese modo). Sin verificar en vivo: (a) que lo que 1girox debita
+al unificar sea exactamente `bonus_locked`; (b) que la cancelación le devuelva esa plata al saldo del AGENTE (si no, cada unificación
+le cuesta al cajero el resto del bono viejo); (c) cómo queda escrito en el panel de 1girox y cuántos caracteres de la descripción
+muestra; (d) que un reintento con la misma reference y OTRO monto (el bono viejo cambió entre intentos) responda `duplicate:true` y no
+un error. Hay una ventana de milisegundos entre leer el bono y otorgar el nuevo: si el jugador apuesta justo ahí, la diferencia queda
+a favor o en contra de él. En un reintento ya acreditado, `metadata.mergedBonus` puede quedar con un valor inexacto (informativo).
+**Antes de encender 1girox en una sala con este código: mirar el primer caso real** (log `[girox] unificación de X: saldo A → B`).
+Tampoco se levantó el server ni se probó el panel en un navegador (no hay node_modules).
 
 ## Sesión 2026-11-22
 

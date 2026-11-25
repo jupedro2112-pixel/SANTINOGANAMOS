@@ -65,6 +65,10 @@ let _rolloverResolver = null;
 let _cashierHook = null;
 let _keyResolver = null;
 function setRolloverResolver(fn) { _rolloverResolver = typeof fn === 'function' ? fn : null; }
+// #258/#259 Contrato de giroxService (modo del regalo con bono activo / aviso de unificación anómala): acá NO hay bonos
+// ni rollover, así que se aceptan y se ignoran. Nunca se llaman.
+function setGiftFallbackResolver() {}
+function setGiftMergeAnomalyHook() {}
 function setCashierBalanceHook(fn) { _cashierHook = (typeof fn === 'function') ? fn : null; }
 function setKeyResolver(fn) { _keyResolver = typeof fn === 'function' ? fn : null; }
 async function _globalRollover() {
@@ -500,6 +504,8 @@ module.exports = {
   depositToUser,
   creditGift,
   setRolloverResolver,
+  setGiftFallbackResolver,
+  setGiftMergeAnomalyHook,
   withdrawFromUser,
   creditUserBalance,
   getUserBalance,

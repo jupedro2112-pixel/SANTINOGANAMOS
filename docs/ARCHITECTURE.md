@@ -5,7 +5,7 @@
 > verdad y este doc puede quedar viejo. Si encontrás algo desactualizado acá, corregilo
 > (regla permanente en CLAUDE.md: este doc se actualiza junto con WORKLOG.md).
 >
-> Última actualización: **2026-11-20** — **Finpro como segundo banco con API (hasta 3 cuentas), "🏦 Bancos automáticos", rotación automática de cuentas, barra única en 🏦 Banco y pago de un retiro por el otro banco (#251, réplica #202–#216 de AUTOREEMBOLSOSjygactivo; ver §11)**. Antes: **2026-11-04** — **sección propia "🏛️ Bancos — Configuración" en el panel (#250, réplica #224 de CARGASGIROXactivo: todo lo de bancos salió de COMANDOS; mismos ids/endpoints)** y **hasta 3 CUENTAS hgcash con cuenta ACTIVA rotable (#249, réplica #223/#223b de
+> Última actualización: **2026-11-25** — **regalo a un jugador con bono activo = UNIFICAR, marcas para el cierre y descripción detallada hacia 1girox (#258–#261, réplica #236–#239 de CARGASGIROXactivo; solo `PLATFORM_MODE=girox`, ver §4.5)**. Antes: **2026-11-20** — **Finpro como segundo banco con API (hasta 3 cuentas), "🏦 Bancos automáticos", rotación automática de cuentas, barra única en 🏦 Banco y pago de un retiro por el otro banco (#251, réplica #202–#216 de AUTOREEMBOLSOSjygactivo; ver §11)**. Antes: **2026-11-04** — **sección propia "🏛️ Bancos — Configuración" en el panel (#250, réplica #224 de CARGASGIROXactivo: todo lo de bancos salió de COMANDOS; mismos ids/endpoints)** y **hasta 3 CUENTAS hgcash con cuenta ACTIVA rotable (#249, réplica #223/#223b de
 > CARGASGIROXactivo; ver "Cuentas hgcash múltiples" en la auto-carga del banco)**. Antes: **2026-10-30** — #248: el webhook saliente manda `user.source` = `User.originUrl` (origen fijo del registro; §4.10.2). Antes: **2026-10-27** — #241: la auto-carga hgcash manda `Purchase` a Meta (§5); #240: alertas de
 > estafa con tope de 15 s para las stats de 1girox (§10.1). Antes: **2026-10-26** — #239: trampa de globales del panel (`window.X` que pisa una función
 > global `X`; test `scripts/test-admin-panel-login.js`; §9). Antes: **2026-10-19** — reembolso semanal: programar el primer aviso y repartir a los
@@ -887,13 +887,30 @@ reintento manda la misma reference y la plataforma responde `duplicate:true`.
   (`effective`, `snapped`). El owner pidió x3 habilitado en la cuenta (2026-09-16), así
   que el efectivo es x3; si alguna vez la plataforma lo quita, el panel avisa y usa x5.
   Se aplica en el CLIENTE (`giroxService`, resolver inyectado), no en los endpoints:
-  `creditGift` (regalo como bono con rollover; con x0 = bono 0 de siempre; guard de
-  bono activo > $50 y fallback a depósito con multiplier), `creditUserBalance` con
+  `creditGift` (regalo como bono con rollover; con x0 = bono 0 de siempre; con bono
+  activo > $50 se UNIFICA con el anterior — #259, ver abajo — y lo que no se puede va a depósito con multiplier), `creditUserBalance` con
   `multiplier` y `depositToUser` cuando lleva `bonus_amount/bonus_percent`.
   **Excluidos:** comisiones de referidos y devolución de retiro rechazado
   (`ignoreGlobalRollover:true`). Lo que se le DICE al cliente (fueguito, reembolso en
   vivo, código de bienvenida, lotes) usa `applyGlobalRollover(valorDelFlujo)` para
   coincidir con lo acreditado; el cliente además devuelve `rolloverApplied`.
+- **Regalo a un jugador con bono activo = UNIFICAR (#259, default; réplica #237 de CARGASGIROXactivo):** `creditGift` con
+  `fallback:'merge'` otorga `/bonus` por `bonus_locked + regalo` con el rollover vigente y la MISMA reference (1girox cancela el
+  resto del viejo). Devuelve `mergedOld`, `mergedTotal`, `giftAmount`; el caller sigue registrando SOLO el regalo y agrega
+  `metadata.mergedBonus` (`_giftMeta(result)` o a mano). Control por saldo de la respuesta → `setGiftMergeAnomalyHook` apaga el modo
+  (vuelve a `'deposit'`) y alerta por Telegram. Un mensaje al cliente con el objetivo de apuesta usa `mergedTotal || monto`.
+  No se unifica (→ depósito con rollover): algo "a reclamar", total sobre `fixed_max`, monto fuera de rango, rechazo de la plataforma.
+- **Los otros dos modos (#258, réplica #236):** `Config['bonusRolloverGlobal'].fallback` = `'merge'` (default) | `'deposit'`
+  (depósito con multiplier, figura como Carga) | `'bonus0'` (`_creditDirectGift`: bono 0, figura como Bono, `rolloverApplied:0`).
+  Resolver `girox.setGiftFallbackResolver`, inyectado por server.js (en los adaptadores manual / mijoker es un no-op de contrato).
+  Todo regalo que igual salga por depósito queda con `metadata.creditedAs:'deposit'` en su Transaction (`_giftMeta(result)`, que
+  devuelve `{}` fuera de 1girox): lo suma `summary.giftsAsDeposit` de Transacciones para el cierre (junto a `summary.mergedBonus`).
+  Quien le diga al cliente el rollover de un regalo usa `result.rolloverApplied`, no el del flujo.
+- **Descripción hacia 1girox (#260/#261, réplica #238/#239):** toda acreditación manda un texto que empieza con el TIPO en mayúsculas
+  (`REEMBOLSO …`, `REGALO — …`, `BONO …`, `COMISIÓN de referidos — …`, `DEVOLUCIÓN …`) vía `_platDesc(detallado, deSiempre)`: el
+  detallado viaja SOLO con `PLATFORM_MODE=girox`; en manual / mijoker va el de siempre (lo lee el agente en la bandeja). Un regalo
+  que cae a `/deposit` lleva además el prefijo de `_giftAsDepositDesc` ("BONO (contar como BONO, NO como carga): …"). La descripción
+  de la Transaction local y lo que lee el cliente no cambian. Test: `node scripts/test-gift-fallback.js`.
 - **`opts.multiplier` EXPLÍCITO** (incluido 0) = `/bonus` ESTRICTO, sin fallback: un
   `bonus_out_of_range` se devuelve como error (botón Bonificación del panel, welcome
   code cash, lotes con regalo). Con multiplier >0 el bono queda bloqueado hasta

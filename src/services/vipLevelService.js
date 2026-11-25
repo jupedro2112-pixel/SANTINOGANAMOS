@@ -290,7 +290,7 @@ async function _applyLevels(u, total, ctx) {
     if (!level) break;
     const ref = `vip-lvl-${u.id}-${idx}`;
     const r = await girox.creditUserBalance(u.username, level.levelUpBonusArs, ref, {
-      description: `Bono por alcanzar el nivel VIP ${level.name}`
+      description: girox.PLATFORM_MODE === 'girox' ? `BONO — Premio por alcanzar el nivel VIP ${level.name}` : `Bono por alcanzar el nivel VIP ${level.name}` // #261 (réplica #239): con 1girox el TIPO va primero
     });
     if (!r.success) {
       logger.warn(`[vip] bono nivel ${level.name} de ${u.username} no se pudo acreditar (${r.error || 's/detalle'}) — se reintenta en el próximo sync con la MISMA reference`);
@@ -311,6 +311,8 @@ async function _applyLevels(u, total, ctx) {
           amount: level.levelUpBonusArs,
           description: `Nivel VIP ${level.name} alcanzado ${level.emoji}`,
           transactionId: (r.data && (r.data.transfer_id || r.data.transferId)) || null,
+          // #258/#259: cómo salió en 1girox si NO fue un bono normal (lo suman las tarjetas de Transacciones para el cierre).
+          ...(girox.PLATFORM_MODE !== 'girox' ? {} : r.mergedOld ? { metadata: { creditedAs: 'bonus', mergedBonus: Number(r.mergedOld) } } : r.creditedAs === 'deposit' ? { metadata: { creditedAs: 'deposit' } } : {}),
           timestamp: new Date()
         });
       } catch (e) {
