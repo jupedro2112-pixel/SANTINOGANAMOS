@@ -1988,6 +1988,22 @@ consulta. `handlePayoutStatusWebhook` ignora avisos de un banco distinto a `payo
 Desde #253–#255: antes de reclamar el retiro pasan `_payoutVerifyBlock` y `_payoutResendGuard`, y un pago Finpro confirmado manda
 `maybeSendFinproReceipt` (ver más abajo "Candado anti pago doble", "Retiro VERIFICANDO" y "Pagos por fuera de la app").
 
+### 11.4b De qué cuenta sale cada retiro (#262, réplica #223 de AUTOREEMBOLSOSjygactivo)
+`_payoutPickSource(body, monto)` → `{ provider, key }` (key `null` = la cuenta en uso de ese banco) o `{ error }`. Prioridad: `body.source`
+(cuenta elegida para ESE retiro, botón "🏦 Elegir cuenta") > `body.provider` (#251) > `Config['payoutSource'].mode`:
+`active` (default) · `fixed` · `richest` (mayor saldo entre `_paySlots()`, las cuentas de los dos bancos que pueden pagar;
+saldos por `_paySlotInfo`, caché 20 s). La ruta `/pay` lo deja en `req._paySrc` y los dos caminos pagan con esa cuenta
+(hgcash: `_hgKeyPay` / `_hgAcctPay`; Finpro: `_srcKey` en `_payPayoutViaFinpro`). Si la cuenta elegida ya no existe al pagar → 400, no
+se cae a la cuenta en uso. En hgcash, la cuenta REAL que debita un perfil la decide `_hgPickApiAccount` (fijada a mano `payAccountId` >
+única > CBU > titular > id guardado > adivinar): un token puede ver varias cuentas. `_hgLastApiPick` recuerda lo último resuelto (para la
+nota interna, `_hgDebitNote`). `resolveHgcashAccountId` de un perfil que no es el que está en uso no usa el fallback "último movimiento".
+Endpoints: `GET/POST /api/admin/payout-sources`, `POST /api/admin/hgcash/accounts/:key/pay-account`. El listado de pagos agrega
+`payFrom`, `paySources`, `payFromReady`. Panel: `loadPayoutSources` / `savePayoutSource` / `pinHgPayAccount` / `choosePayoutAccount`.
+**Trampas:** la rotación (#251 / #256) y "USAR ESTA" no cambian de dónde salen los retiros si el modo es `fixed` / `richest`; las bajadas
+siguen por la cuenta en uso; un flujo nuevo que pague no debe leer `_hgActiveKey` / `_fpActiveAccount()` directo si corre
+dentro de `/pay` (usar `req._paySrc`). Test: `node scripts/test-payout-source.js` (recorta server.js entre `const _hgLastApiPick` y
+`async function _payoutSourcesPayload`).
+
 ### 11.5 Endpoints (después de `authMiddleware`; credenciales = solo admin general)
 `GET/POST /api/admin/banks` · `GET/POST /api/admin/bank-provider` · `GET/POST /api/admin/finpro/config` (modo) ·
 `GET/POST /api/admin/finpro/accounts` · `DELETE /api/admin/finpro/accounts/:key` · `POST …/:key/activate` · `POST …/:key/incoming` ·

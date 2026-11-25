@@ -353,6 +353,11 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   (`createCashOut({ token })`, cuenta fijada al empezar el pedido), nunca el global de "la cuenta en uso". No aflojar la espera de 2 minutos
   ni dar por "rechazado" un envío sin respuesta clara. Test: `node scripts/test-payout-guard.js` (recorta server.js por los marcadores
   `const PAYOUT_RESEND_COOLDOWN_MS` y `async function _payPayoutViaFinpro`).
+- **De qué cuenta sale un retiro (#262, réplica #223 de AUTOREEMBOLSOSjygactivo):** lo decide `_payoutPickSource` (elegida para ese
+  retiro > `Config['payoutSource']`: en uso / fija / la de más saldo) y queda en `req._paySrc`; los dos caminos de pago usan ESA cuenta, no
+  "la que está en uso", y si esa cuenta ya no está el pago se corta (nunca salta sola a otra). Un token de hgcash puede ver varias cuentas:
+  la de un perfil la resuelve `_hgPickApiAccount` (fijada a mano > CBU > titular); nunca volver a tomar "la primera de la lista".
+  Detalle en `docs/ARCHITECTURE.md` §11.4b. Test: `node scripts/test-payout-source.js`.
 - **Rotación automática de cuentas (#251):** `_bankRotationTick` puede cambiar SOLA la cuenta en uso (y, entre bancos, `bankShown` /
   `bankProvider`). Nada debe asumir que la cuenta en uso es la misma que hace un rato: seguir usando `hgAccountKey` / `fpAccountKey` del pago.
   Un banco o cuenta nuevos se suman a `_rotSlots()` / `_rotProbe` / `_rotSlotBlocked`. Todo apagado por defecto. Test: `node scripts/test-bank-rotation.js`.

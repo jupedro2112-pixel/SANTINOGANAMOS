@@ -4,7 +4,7 @@
 > commit por commit está en `git log --oneline`. Esto captura decisiones, umbrales de
 > negocio y pendientes que NO se ven leyendo el código.
 >
-> **Última actualización: 2026-11-25** (última entrada: #261)
+> **Última actualización: 2026-11-25** (última entrada: #262)
 
 ---
 
@@ -64,7 +64,7 @@
 > `node scripts/test-ganamos-adapter.js` · `node scripts/check-tdz.js` ·
 > `node scripts/test-cashback-formula.js` · `node scripts/test-rollover-multicuenta.js` ·
 > `node scripts/test-finpro-accounts.js` · `node scripts/test-finpro-webhook.js` · `node scripts/test-bank-rotation.js` (bancos, #251) ·
-> `node scripts/test-payout-guard.js` (candado anti pago doble, #253).
+> `node scripts/test-payout-guard.js` (candado anti pago doble, #253) · `node scripts/test-payout-source.js` (de qué cuenta sale un retiro, #262).
 >
 > **⚠️ Seguridad:** las capturas que el owner pegó el 2026-09-29 tenían cookies de
 > sesión VIVAS de la cuenta de agente `metawin100`. Se le avisó que cierre sesión para
@@ -73,6 +73,65 @@
 ---
 
 ## Sesión 2026-11-25
+
+### 262. 💸 ¿De qué CUENTA salen los retiros? — en uso / fija / la de más saldo, saldos a la vista y "🏦 Elegir cuenta" en cada retiro — réplica #223 de AUTOREEMBOLSOSjygactivo — admin-sw v77
+
+**Reporte del owner (2026-11-25, en el gemelo):** se puso una cuenta de hgcash EN USO para que pague y el retiro salió de OTRA
+cuenta. Pidió: elegir de qué cuenta paga, o que pague sola la que más plata tenga, poder elegir otra si una falla, y ver el
+saldo de cada cuenta. En el gemelo ya está desplegado y el owner lo probó en producción; acá es la misma lógica.
+
+**Causa (leída en el código):** un token de hgcash puede ver VARIAS cuentas (`GET /accounts`). Al cargar un perfil se guardaba
+como suya "la primera en pesos" (`_hgValidateCreds` → `apiAccountId`) y, al pagar, `resolveHgcashAccountId` buscaba por CBU y,
+si no coincidía, por ese id guardado → varios perfiles con el mismo usuario de hgcash terminaban debitando de la misma cuenta.
+La nota interna decía el nombre del PERFIL, no la cuenta real.
+
+**Qué se hizo** (este repo ya usa hgcash + Finpro con varias cuentas y rotación, así que aplica tal cual)
+- `_hgPickApiAccount(perfil, lista, moneda)`: la cuenta de un perfil es, en orden: la **fijada a mano** (`payAccountId`, campo
+  nuevo del perfil) → la única que ve el token → la de su **CBU** → la de su **titular** (nombre normalizado, UNA sola
+  coincidencia) → el id guardado → recién ahí adivina (`how:'guess'`). Una cuenta adivinada con varias a la vista ya NO se
+  guarda como propia del perfil. Al cargar/editar un perfil con token nuevo que ve varias cuentas tampoco se toma "la primera"
+  (y se limpia `payAccountId`). `_hgLastApiPick` recuerda lo último resuelto.
+- **`Config['payoutSource'] = { mode, fixed }`** (`getPayoutSource`): `active` (default, lo de siempre: la cuenta EN USO del
+  banco de retiros) · `fixed` (siempre esa cuenta, `hgcash:a2` / `finpro:f1`) · `richest` (la que más saldo tenga en el
+  momento, entre las cuentas de los DOS bancos que pueden pagar, `_paySlots()`).
+- `_payoutPickSource(body, monto)` decide de dónde sale cada pago: `body.source` (elegida a mano para ESE retiro) >
+  `body.provider` (#251, "pagar con otro banco" de un panel viejo cacheado) > el modo. `/api/admin/payouts/:id/pay` deja el
+  resultado en `req._paySrc`; el camino de hgcash (`_hgKeyPay` / `_hgAcctPay`) y `_payPayoutViaFinpro` pagan con ESA cuenta
+  (perfil + token/credenciales). El candado #253, VERIFICANDO #255, `hgAccountKey` / `fpAccountKey` y el recibo no se tocaron:
+  ya trabajaban por cuenta y reciben la cuenta REAL que paga.
+- Saldos: `_paySlotInfo` (hgcash `netBalance`/`balance` de `GET /accounts`; Finpro `accounts/balance`), caché 20 s (8 s al pagar).
+- Panel (🏛️ Bancos — Configuración → 🏦 Bancos automáticos): bloque **"💸 ¿De qué CUENTA salen los retiros?"** con los tres
+  modos, la lista de cuentas con su saldo y la cuenta REAL que debita cada perfil; si el token ve varias, un selector para
+  fijarla. En el cartel del retiro, **"🏦 Elegir cuenta"** abre la lista con saldos (reemplaza "Pagar con otro banco" cuando hay
+  más de una cuenta). La nota interna agrega `— debitó de "X"` cuando la cuenta real no se llama como el perfil.
+- Endpoints: `GET/POST /api/admin/payout-sources` (ver: quien paga retiros; guardar: admin general) y
+  `POST /api/admin/hgcash/accounts/:key/pay-account` (admin general).
+
+**Diferencias con el gemelo (más estrictas, a propósito)**
+- Si la cuenta elegida para un pago (a mano / fija / la de más saldo) desaparece o queda sin token entre que se eligió y que se
+  paga, el pago se corta con un 400 ("ya no está disponible") en vez de caer a la cuenta en uso: nunca salta sola a otra cuenta.
+  Vale para hgcash y para Finpro.
+- `resolveHgcashAccountId` para un perfil que NO es el que está en uso ya no cae en "el accountId del último movimiento" si la
+  API de hgcash no responde (ese id puede ser de OTRA cuenta): devuelve vacío y el pago no sale. Para la cuenta en uso queda igual.
+
+**Otros lugares que mandan plata al banco (revisados):** el ÚNICO que paga un retiro por API es `/api/admin/payouts/:id/pay`
+(hgcash y Finpro). `pay-other-bank` solo marca pagado (no llama al banco). No hay pago masivo ni reintento automático que
+reenvíe: `_pollPayingPayouts` / `_finproSyncPayout` / webhooks solo CONSULTAN, con la cuenta guardada en el pago. Las bajadas
+(`BankSweep`) siguen saliendo de la cuenta en uso: no se tocaron (sí usan `resolveHgcashAccountId`, o sea que ahora también
+identifican la cuenta por titular antes que por el id guardado).
+
+**Comportamiento que NO cambia:** con el modo por defecto (`active`) todo sale como antes, salvo que la cuenta de hgcash se
+identifica por titular antes que por el id guardado. La rotación automática (#251 / #256, `_rotManualOk`) no se tocó: sigue
+cambiando la cuenta EN USO; con `fixed` / `richest` eso ya no cambia de dónde salen los retiros (está avisado en el panel).
+"La de más saldo": si ninguna cuenta alcanza, el pago se frena ANTES de descontar fichas; si no se puede
+leer ningún saldo, usa la cuenta en uso (no frena los pagos).
+
+**Validación:** `node --check` (server.js, admin.js, admin-sw.js, el test), `node scripts/check-tdz.js` OK, y los 14
+`scripts/test-*.js` en verde antes y después (nuevo: `test-payout-source.js`, 33 casos: los 29 del gemelo + 4 del cableado
+propio de arriba).
+**NO probado:** contra hgcash ni Finpro reales desde ESTE repo, ni el panel en un navegador (no hay node_modules: no se puede
+levantar el server). No se conoce la forma exacta de `GET /accounts` cuando el token ve varias cuentas (se asume que trae
+`name`): lo primero a mirar tras el deploy es el bloque nuevo del panel, que muestra qué cuenta real debita cada perfil.
 
 > **Réplica #236–#239 de CARGASGIROXactivo** (regalos que 1girox anotaba como "Carga"). Acá llevan los números #258–#261.
 > ⚠️ **Este repo corre en `PLATFORM_MODE=manual` (GANAMOS, sin API): hoy NADA de esto se ejecuta en producción.** Todo vive en
