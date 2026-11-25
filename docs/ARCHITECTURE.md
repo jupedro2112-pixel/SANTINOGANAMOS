@@ -1996,7 +1996,17 @@ saldos por `_paySlotInfo`, caché 20 s). La ruta `/pay` lo deja en `req._paySrc`
 (hgcash: `_hgKeyPay` / `_hgAcctPay`; Finpro: `_srcKey` en `_payPayoutViaFinpro`). Si la cuenta elegida ya no existe al pagar → 400, no
 se cae a la cuenta en uso. En hgcash, la cuenta REAL que debita un perfil la decide `_hgPickApiAccount` (fijada a mano `payAccountId` >
 única > CBU > titular > id guardado > adivinar): un token puede ver varias cuentas. `_hgLastApiPick` recuerda lo último resuelto (para la
-nota interna, `_hgDebitNote`). `resolveHgcashAccountId` de un perfil que no es el que está en uso no usa el fallback "último movimiento".
+nota interna, `_hgDebitNote`). `resolveHgcashAccountId({ acct })` (un pago con perfil fijado, esté o no en uso) no usa el fallback
+"último movimiento" (#262c): sin cuenta cierta devuelve null y el pago no sale.
+**Candado por cuenta REAL (#262c, réplica #223c):** el envío guarda `PendingPayout.lastSendAccountId` (id de la cuenta del banco;
+`_payoutNoteSend(id, bank, account, by, realAccountId)`) y `_payoutResendGuard(…, confirmed, realAccountId)` trata como "otra ruta" al
+mismo perfil con otra cuenta real (`sameReal`); el reintento por 403 actualiza el campo; Finpro no lo pasa (null). `richest` en un
+reintento no rechazado vuelve por la misma cuenta (`_payoutPickSource(body, monto, prev)` → `why:'retry-same'`); un perfil hgcash sin
+secreto de webhook no se elige solo si otro perfil sí tiene (`_paySlotNoWebhook`, `noWebhook` en el payload). Titulares: `_hgNameKey`
+(compacto, igualdad; incluye la etiqueta) y `_hgNameContains` (palabras enteras; solo titular y accountName); `_normName` es OTRA cosa
+(identidad bancaria / anti-multicuenta). Alta de perfil: `_hgIdForNewToken(perfil, v)` (única / CBU / titular; si no, null — nunca "la
+primera"), también en la ruta legacy `/api/admin/hgcash/credentials`. La respuesta de `/pay` trae `paidFrom`. **Sin hacer:** alarma de
+pago doble entre dos cuentas del mismo banco; retiros fallados antes del deploy no tienen `lastSendAccountId`.
 Endpoints: `GET/POST /api/admin/payout-sources`, `POST /api/admin/hgcash/accounts/:key/pay-account`. El listado de pagos agrega
 `payFrom`, `paySources`, `payFromReady`. Panel: `loadPayoutSources` / `savePayoutSource` / `pinHgPayAccount` / `choosePayoutAccount`.
 **Trampas:** la rotación (#251 / #256) y "USAR ESTA" no cambian de dónde salen los retiros si el modo es `fixed` / `richest`; las bajadas

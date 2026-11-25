@@ -357,6 +357,8 @@ Deploy: AWS Elastic Beanstalk. Dominio público: vipcargas.com. Git user: jupedr
   retiro > `Config['payoutSource']`: en uso / fija / la de más saldo) y queda en `req._paySrc`; los dos caminos de pago usan ESA cuenta, no
   "la que está en uso", y si esa cuenta ya no está el pago se corta (nunca salta sola a otra). Un token de hgcash puede ver varias cuentas:
   la de un perfil la resuelve `_hgPickApiAccount` (fijada a mano > CBU > titular); nunca volver a tomar "la primera de la lista".
+  Todo envío pasa la cuenta REAL del banco a `_payoutNoteSend` / `_payoutResendGuard` (`lastSendAccountId`, #262c); un pago con perfil
+  fijado nunca resuelve la cuenta por "el último movimiento"; para comparar titulares usar `_hgNameKey` / `_hgNameContains`, no `_normName`.
   Detalle en `docs/ARCHITECTURE.md` §11.4b. Test: `node scripts/test-payout-source.js`.
 - **Rotación automática de cuentas (#251):** `_bankRotationTick` puede cambiar SOLA la cuenta en uso (y, entre bancos, `bankShown` /
   `bankProvider`). Nada debe asumir que la cuenta en uso es la misma que hace un rato: seguir usando `hgAccountKey` / `fpAccountKey` del pago.
